@@ -520,14 +520,20 @@ struct VideoMark: View {
                 .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2))
                 .shadow(radius: 3)
         }
+        .clipped()
         .allowsHitTesting(false)
     }
 
+    /// As many holes as fit the cell: a fixed count made the strip wider than small
+    /// filmstrip cells and it spilled over the neighbouring photos.
     private var sprockets: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<24, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.75)).frame(width: 5, height: 4)
+        GeometryReader { geo in
+            HStack(spacing: 5) {
+                ForEach(0..<max(1, Int((geo.size.width + 5) / 10)), id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.75)).frame(width: 5, height: 4)
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .frame(maxWidth: .infinity, maxHeight: 9)
         .background(.black.opacity(0.7))
