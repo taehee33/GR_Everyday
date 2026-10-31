@@ -404,7 +404,10 @@ final class ConnectionModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled else { return }
-                if await CameraAPI.ping() {
+                // Over USB the cable state says it; an HTTP ping to the local server can time
+                // out while it is busy making thumbnails and showed a false "연결 끊김".
+                let alive = self.viaUSB ? self.usb.serving != nil : await CameraAPI.ping()
+                if alive {
                     if self.state == .lost { self.state = .connected; self.cameraWLANOff = false }
                     await self.refreshProps()
                 } else if self.state == .connected {
