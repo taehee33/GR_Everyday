@@ -209,7 +209,7 @@ struct StatusBox: View {
     private var title: String {
         switch connection.state {
         case .connected: return "연결됨"
-        case .lost: return "연결 끊김 — 재시도 중"
+        case .lost: return connection.cameraWLANOff ? "카메라 WLAN 꺼짐 — 다시 켜면 자동 연결" : "연결 끊김 — 재시도 중"
         case .pairing: return "페어링 중…"
         case .waking, .joining: return "연결 중…"
         case .disconnected, .failed: return "연결 안 됨"

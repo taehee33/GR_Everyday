@@ -50,6 +50,8 @@ final class ConnectionModel: ObservableObject {
     @Published var needsBondRemoval = false
     /// The camera's Wi-Fi is off and no Bluetooth link is left to switch it on.
     @Published var needsRepair = false
+    /// While lost: the camera's WLAN is not in range, i.e. the camera switched it off.
+    @Published var cameraWLANOff = false
 
     @Published private(set) var cameras: [SavedCamera] {
         didSet { UserDefaults.standard.set(try? JSONEncoder().encode(cameras), forKey: "cameras") }
@@ -175,7 +177,7 @@ final class ConnectionModel: ObservableObject {
         let task = Task {
             do {
                 try await joinCamera(credentials, camera: camera.id, waitFor: 180,
-                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속합니다…")
+                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속합니다. 사진을 받는 동안 휴대폰에서 GR WORLD를 연 채 화면이 꺼지지 않게 두세요(잠기면 카메라가 WLAN을 끕니다).")
             } catch is CancellationError {
             } catch {
                 state = .failed(error.localizedDescription)
@@ -315,6 +317,7 @@ final class ConnectionModel: ObservableObject {
         let restore = UserDefaults.standard.object(forKey: "restoreWiFi") as? Bool ?? true
         if joinedByUs, restore { await WiFi.restore() }
         joinedByUs = false
+        cameraWLANOff = false
         connectedCameraID = nil
         props = [:]
         battery = nil
@@ -353,12 +356,30 @@ final class ConnectionModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled else { return }
                 if await CameraAPI.ping() {
-                    if self.state == .lost { self.state = .connected }
+                    if self.state == .lost { self.state = .connected; self.cameraWLANOff = false }
                     await self.refreshProps()
                 } else if self.state == .connected {
                     self.state = .lost
+                } else if self.state == .lost {
+                    await self.rejoinLostCamera()
                 }
             }
+        }
+    }
+
+    /// When the camera switches its WLAN off, macOS falls back to the usual Wi-Fi. Join the
+    /// camera again whenever its WLAN is back (the phone's GR WORLD turns it on).
+    private func rejoinLostCamera() async {
+        guard let id = connectedCameraID, let credentials = cameras.first(where: { $0.id == id })?.credentials else { return }
+        do {
+            try await WiFi.join(credentials)
+            joinedByUs = true
+            DebugLog.write("lost: rejoined \(credentials.ssid)")
+        } catch let error as WiFi.WiFiError where error.notFound {
+            if !cameraWLANOff { DebugLog.write("lost: \(credentials.ssid) not in range, camera WLAN off") }
+            cameraWLANOff = true
+        } catch {
+            DebugLog.write("lost: rejoin failed: \(error.localizedDescription)")
         }
     }
 

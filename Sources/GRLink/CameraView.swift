@@ -248,7 +248,7 @@ struct CameraView: View {
             .buttonStyle(.bordered).controlSize(.large)
             .disabled(connection.isBusy)
         }
-        Text("카메라 Wi-Fi는 Bluetooth로만 켜집니다. 페어링한 Bluetooth 연결은 앱이 켜져 있는 동안 유지되고, 끊긴 뒤에는 Mac이 카메라에 다시 붙을 수 없습니다. 그때는 휴대폰의 GR WORLD에서 카메라 WLAN(Wi-Fi)을 켜고 ‘휴대폰 GR WORLD로 WLAN(Wi-Fi) 켜고 연결’을 누르세요. Wi-Fi에 연결된 동안 Mac의 인터넷은 끊깁니다.")
+        Text("카메라 Wi-Fi는 Bluetooth로만 켜집니다. 페어링한 Bluetooth 연결은 앱이 켜져 있는 동안 유지되고, 끊긴 뒤에는 Mac이 카메라에 다시 붙을 수 없습니다. 그때는 휴대폰의 GR WORLD에서 카메라 WLAN(Wi-Fi)을 켜고 ‘휴대폰 GR WORLD로 WLAN(Wi-Fi) 켜고 연결’을 누르세요. 사진을 받는 동안 휴대폰에서 GR WORLD를 연 채 화면이 꺼지지 않게 두세요(잠기면 카메라가 WLAN을 끕니다). Wi-Fi에 연결된 동안 Mac의 인터넷은 끊깁니다.")
             .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
 
         if showInfo { infoBox(camera, connected: connected) }
@@ -379,7 +379,12 @@ struct CameraView: View {
     }
 
     private func stateText(_ connected: Bool) -> String {
-        if connected { return connection.state == .lost ? "응답 없음 — 재시도 중" : "연결됨" }
+        if connected {
+            guard connection.state == .lost else { return "연결됨" }
+            return connection.cameraWLANOff
+                ? "카메라 WLAN(Wi-Fi) 꺼짐 — 휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다. 휴대폰 화면이 잠기면 카메라가 WLAN을 끕니다"
+                : "응답 없음 — 재시도 중"
+        }
         switch connection.state {
         case .pairing, .waking, .joining: return "연결 중…"
         default: return "연결 안 됨"
