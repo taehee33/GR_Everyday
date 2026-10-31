@@ -106,7 +106,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("조작")
             } footer: {
-                Text("확대 보기·현상 화면에 적용됩니다. ⌘ 또는 ⌥를 누른 채 스크롤하면 설정과 상관없이 확대/축소, 트랙패드 핀치도 항상 확대/축소입니다. 단축키는 라이브러리 툴바의 키보드 버튼에서 볼 수 있습니다.")
+                Text("확대 보기·편집 화면에 적용됩니다. ⌘ 또는 ⌥를 누른 채 스크롤하면 설정과 상관없이 확대/축소, 트랙패드 핀치도 항상 확대/축소입니다. 단축키는 라이브러리 툴바의 키보드 버튼에서 볼 수 있습니다.")
             }
 
             Section {
@@ -179,6 +179,8 @@ struct ContentView: View {
                 }
             }
         }
+        // Full screen / ⇧Tab: no title bar or sidebar button above the photo either.
+        .toolbar(library.immersive ? .hidden : .visible, for: .windowToolbar)
         // Tab / ⇧Tab / full screen in the library hide the sidebar too.
         .onChange(of: library.panels && !library.immersive) { _, show in
             withAnimation { columns = show ? .all : .detailOnly }

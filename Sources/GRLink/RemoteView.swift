@@ -100,15 +100,17 @@ struct RemoteView: View {
         .onDisappear { live.stop(); shootTask?.cancel() }
     }
 
-    private var cameraReachable: Bool { connection.state == .connected }
+    /// Over USB the camera offers its files only, no live view or shutter.
+    private var cameraReachable: Bool { connection.state == .connected && !connection.viaUSB }
 
     private var disconnectedOverlay: some View {
         ZStack {
             Color.black.opacity(0.6)
             VStack(spacing: 12) {
                 Image(systemName: "wifi.exclamationmark").font(.system(size: 44))
-                Text("카메라 연결 끊김").font(.title2.bold())
-                Text(connection.state == .lost
+                Text(connection.viaUSB ? "USB 연결에서는 원격 촬영을 쓸 수 없습니다" : "카메라 연결 끊김").font(.title2.bold())
+                Text(connection.viaUSB ? "카메라가 USB로는 사진 파일만 제공합니다. 원격 촬영은 Wi-Fi로 연결하세요."
+                     : connection.state == .lost
                      ? (connection.cameraWLANOff
                         ? "카메라 WLAN(Wi-Fi)이 꺼졌습니다.\n휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다.\n연결된 뒤 휴대폰 Bluetooth를 끄면 휴대폰을 잠가도 유지됩니다."
                         : "카메라 Wi-Fi 응답이 없습니다. 다시 연결을 시도하는 중입니다…\n카메라 전원과 Wi-Fi가 켜져 있는지 확인하세요.")

@@ -6,7 +6,8 @@ GR Relay(iOS)의 화면 구성을 참고했습니다.
 | 화면 | 기능 |
 |---|---|
 | 연결 | Bluetooth로 카메라 찾기 → 카메라 Wi-Fi 자동 켜기 → Mac 자동 접속, 마지막 카메라 다시 연결 |
-| 라이브러리 | 썸네일 그리드, 전체/JPG/RAW/영상/미저장 필터, 클릭 선택, 더블클릭 크게 보기(←/→, 스페이스=선택), **선택 저장**, 진행률·중지, 저장됨 표시 |
+| 라이브러리 | 라이트룸식 그리드(G)·확대 보기(E, 필름스트립·히스토그램·촬영 정보)·편집(D). 클릭/⌘/⇧ 선택, 드래그 영역 선택, 별점, 동영상 재생, Tab/⇧Tab/F로 패널 숨김·가득찬 화면·전체화면, **선택 저장** |
+| 편집 | 저장한 사진만(원본 유지): 회전·좌우 반전·수평 보정, 원본과 비교, 실행 취소, 설정 복사·붙여넣기, **다른 이름으로 저장**(JPEG/HEIC/TIFF/PNG). 색·톤 보정은 카메라 처리와 같게 만들 수 없어 넣지 않음 |
 | 원격 촬영 | 라이브뷰, 화면 클릭 초점, 셔터(스페이스), 즉시/2/5/10초 타이머, 3분할 구도 가이드, 노출값 표시 |
 | 카메라 설정 | 이미지 컨트롤(색감), 노출 모드·셔터·조리개·ISO·노출보정·측광·화이트밸런스, 파일 형식 |
 
@@ -26,6 +27,12 @@ open "build/GR Mac.app"
 2. 앱에서 **Bluetooth로 찾기** → 카메라 옆 **연결**
 3. macOS가 Bluetooth 권한·페어링을 물으면 허용
 4. 연결되면 라이브러리가 뜹니다. 사진을 고르고 **선택 저장** (기본 폴더 `~/Pictures/GR`, 툴바의 폴더 버튼으로 변경)
+
+### USB로 연결
+카메라를 USB-C 케이블로 Mac에 연결하고 켠 뒤 **"USB로 연결"**. Mac의 Wi-Fi는 원래 네트워크에 그대로 있어서
+인터넷과 AirPlay를 계속 쓸 수 있습니다. GR IV는 USB에서 PTP 카메라(드라이브 아님)로 잡히고 파일만 제공하므로
+라이브러리·크게 보기·영상·선택 저장은 되고, 원격 촬영과 카메라 설정은 Wi-Fi 연결에서만 됩니다.
+(확인: 210장 목록, 13.5MB 원본 0.95초, 영상 탐색·썸네일)
 
 ### 다시 연결 (촬영 다녀온 뒤)
 1. 카메라 전원을 켭니다.
@@ -66,8 +73,11 @@ Sources/GRLink/
   ConnectionModel.swift 연결 흐름 (BLE → Wi-Fi → HTTP), 끊김 감시
   BLEWaker.swift        CoreBluetooth: 전원 On, Wi-Fi AP 켜기, SSID/비번 읽기
   WiFi.swift            networksetup으로 Wi-Fi 전환/복귀
+  USBCamera.swift       USB(PTP) 카메라를 ImageCaptureCore로 읽고, 같은 HTTP API를 127.0.0.1에서 제공
   CameraAPI.swift       http://192.168.0.1/v1/* 호출
-  LibraryModel/View     목록·선택·다운로드
+  LibraryModel/View     목록·선택·다운로드, 그리드·확대 보기·필름스트립
+  Viewer.swift          확대/이동 캔버스, 스크롤·드래그·클릭 설정, 동영상 재생, 단축키
+  Develop.swift         보정 엔진(Core Image)·내보내기, DevelopView.swift 편집 화면
   RemoteView.swift      라이브뷰(MJPEG)·초점·셔터·타이머
   SettingsView.swift    촬영/색감 설정
 ```

@@ -251,14 +251,6 @@ private struct DevelopPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HistogramView(histogram: session.histogram)
-                    looks
-                    ForEach(Param.Group.allCases) { group in
-                        section(group.rawValue) {
-                            ForEach(group.params) { param in
-                                ParamSlider(param: param, value: binding(param), onBegin: snapshot)
-                            }
-                        }
-                    }
                     geometry
                 }
                 .padding(12)
@@ -277,42 +269,8 @@ private struct DevelopPanel: View {
         }
     }
 
-    private var looks: some View {
-        section("이미지 컨트롤") {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
-                ForEach(Look.allCases) { look in
-                    Button {
-                        snapshot()
-                        var a = adj
-                        a.look = look
-                        library.setAdjustments(a, for: photo)
-                    } label: {
-                        Text(look.label).font(.caption).lineLimit(1).frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                            .background(adj.look == look ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.12),
-                                        in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(adj.look == look ? .white : .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            if adj.look != .standard {
-                HStack {
-                    Text("적용량").font(.caption).foregroundStyle(.secondary)
-                    Slider(value: Binding(get: { adj.lookAmount }, set: { v in
-                        var a = adj
-                        a.lookAmount = v
-                        library.setAdjustments(a, for: photo)
-                    }), in: 0...100, onEditingChanged: { if $0 { snapshot() } })
-                    .controlSize(.small)
-                    Text("\(Int(adj.lookAmount))%").font(.caption.monospacedDigit()).frame(width: 36, alignment: .trailing)
-                }
-            }
-        }
-    }
-
     private var geometry: some View {
-        section("회전·수평") {
+        section("회전·반전·수평") {
             HStack {
                 Button { change { $0.quarterTurns -= 1 } } label: { Image(systemName: "rotate.left") }.help("왼쪽으로 90°")
                 Button { change { $0.quarterTurns += 1 } } label: { Image(systemName: "rotate.right") }.help("오른쪽으로 90°")

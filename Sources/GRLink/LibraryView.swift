@@ -26,6 +26,10 @@ struct LibraryView: View {
         }
         .background(KeyMonitor(onKey: handleKey, onScroll: handleScroll))
         .task { if library.photos.isEmpty { await library.reload() } }
+        // Left full screen another way (green button, ⌃⌘F): bring the panels back.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            library.immersive = false
+        }
         .confirmationDialog("사진을 어디에 저장할까요?", isPresented: Binding(
             get: { library.pendingSave != nil }, set: { if !$0 { library.pendingSave = nil } }
         )) {
@@ -47,7 +51,7 @@ struct LibraryView: View {
             Picker("", selection: Binding(get: { library.mode }, set: { switchMode($0) })) {
                 Image(systemName: "square.grid.3x3").help("그리드 (G)").tag(LibraryModel.Mode.grid)
                 Image(systemName: "photo").help("확대 보기 (E)").tag(LibraryModel.Mode.loupe)
-                Image(systemName: "slider.horizontal.3").help("현상 (D)").tag(LibraryModel.Mode.develop)
+                Image(systemName: "slider.horizontal.3").help("편집 (D)").tag(LibraryModel.Mode.develop)
             }
             .pickerStyle(.segmented)
             .fixedSize()
@@ -213,7 +217,7 @@ struct LibraryView: View {
 
 struct ShortcutHelp: View {
     private let rows: [(String, String)] = [
-        ("G / E / D", "그리드 / 확대 보기 / 현상"),
+        ("G / E / D", "그리드 / 확대 보기 / 편집"),
         ("Return · 더블클릭", "확대 보기로 열기"),
         ("← →", "이전 / 다음 사진"),
         ("Space · P", "선택 켜기/끄기"),
@@ -227,11 +231,11 @@ struct ShortcutHelp: View {
         ("⇧Tab", "가득찬 화면 (사진만)"),
         ("F", "전체화면"),
         ("Esc", "나가기 / 그리드로"),
-        ("\\", "현상: 원본 보기"),
-        ("Y", "현상: 원본과 나란히 비교"),
-        ("⌘Z / ⇧⌘Z", "현상: 실행 취소 / 다시 실행"),
-        ("⇧⌘C / ⇧⌘V", "현상: 설정 복사 / 붙여넣기"),
-        ("⇧⌘E", "현상: 다른 이름으로 저장"),
+        ("\\", "편집: 원본 보기"),
+        ("Y", "편집: 원본과 나란히 비교"),
+        ("⌘Z / ⇧⌘Z", "편집: 실행 취소 / 다시 실행"),
+        ("⇧⌘C / ⇧⌘V", "편집: 설정 복사 / 붙여넣기"),
+        ("⇧⌘E", "편집: 다른 이름으로 저장"),
     ]
 
     var body: some View {
@@ -460,13 +464,12 @@ struct PhotoCell: View {
             .buttonStyle(.plain)
             .help("선택 켜기/끄기 (Space)")
         }
-        .overlay(alignment: .topLeading) {
-            if photo.kind == .video {
-                Image(systemName: "play.circle.fill").font(.title3).foregroundStyle(.white).shadow(radius: 2).padding(6)
-            }
+        .overlay {
+            if photo.kind == .video { VideoMark(size: min(44, thumbSize * 0.3)) }
         }
         .overlay(alignment: .bottomLeading) {
             HStack(spacing: 4) {
+                if photo.kind == .video { Badge(text: "동영상", color: .red, icon: "video.fill") }
                 if photo.kind == .raw { Badge(text: "RAW") }
                 if saved { Badge(text: "저장됨", color: .green) }
                 if library.edits[photo.id] != nil { Badge(text: "편집됨", color: .orange) }
@@ -496,16 +499,67 @@ struct Stars: View {
     }
 }
 
+/// Darkened frame with a big play button and film-strip edges, so movies stand out in the grid.
+struct VideoMark: View {
+    var size: CGFloat = 40
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.25)
+            VStack {
+                sprockets
+                Spacer()
+                sprockets
+            }
+            Image(systemName: "play.fill")
+                .font(.system(size: size * 0.42, weight: .bold))
+                .foregroundStyle(.white)
+                .offset(x: size * 0.04)
+                .frame(width: size, height: size)
+                .background(.black.opacity(0.55), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2))
+                .shadow(radius: 3)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var sprockets: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<24, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.75)).frame(width: 5, height: 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 9)
+        .background(.black.opacity(0.7))
+        .clipped()
+    }
+}
+
 struct Badge: View {
     let text: String
     var color: Color = .black
+    var icon: String? = nil
 
     var body: some View {
-        Text(text)
+        Label {
+            Text(text)
+        } icon: {
+            if let icon { Image(systemName: icon) }
+        }
+        .labelStyle(BadgeLabelStyle())
             .font(.caption2.bold())
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(color.opacity(0.7), in: Capsule())
             .foregroundStyle(.white)
+    }
+}
+
+private struct BadgeLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 
@@ -560,6 +614,7 @@ private struct FilmCell: View {
             .frame(width: 96, height: 68)
             .background(Color.black)
             .clipped()
+            .overlay { if photo.kind == .video { VideoMark(size: 24) } }
             .opacity(isCurrent ? 1 : 0.75)
             .overlay(alignment: .topTrailing) {
                 if library.selection.contains(photo.id) {
@@ -569,7 +624,6 @@ private struct FilmCell: View {
             }
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: 2) {
-                    if photo.kind == .video { Image(systemName: "play.fill").font(.caption2).foregroundStyle(.white) }
                     if library.rating(photo) > 0 { Stars(value: library.rating(photo)) }
                 }
                 .padding(3)
@@ -696,7 +750,7 @@ struct LoupeFooter: View {
             Button(library.selection.contains(photo.id) ? "선택됨 ✓" : "선택") { library.toggle(photo) }
                 .help("Space / P")
             if photo.kind != .video {
-                Button("현상") { library.mode = .develop }.help("D")
+                Button("편집") { library.mode = .develop }.help("D")
             }
             Toggle(isOn: $library.filmstrip) { Image(systemName: "film") }
                 .toggleStyle(.button).help("필름스트립 (B)")

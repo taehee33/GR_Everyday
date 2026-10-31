@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -52,6 +53,8 @@ final class ConnectionModel: ObservableObject {
     @Published var needsRepair = false
     /// While lost: the camera's WLAN is not in range, i.e. the camera switched it off.
     @Published var cameraWLANOff = false
+    /// How the Mac reaches the camera now. USB carries files only (no live view or settings).
+    @Published private(set) var viaUSB = false
 
     @Published private(set) var cameras: [SavedCamera] {
         didSet { UserDefaults.standard.set(try? JSONEncoder().encode(cameras), forKey: "cameras") }
@@ -64,6 +67,8 @@ final class ConnectionModel: ObservableObject {
     @Published private(set) var connectedCameraID: UUID?
 
     let ble = BLEWaker()
+    let usb = USBCamera()
+    private var usbChanges: AnyCancellable?
     private var monitor: Task<Void, Never>?
     private var joinedByUs = false
     private var phoneJoin: Task<Void, Never>?
@@ -100,6 +105,15 @@ final class ConnectionModel: ObservableObject {
         }
         self.cameras = cameras
         selectedCameraID = lastID ?? cameras.first?.id
+        // Views read connection.usb.detected; pass its changes on.
+        usbChanges = usb.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        usb.onRemoved = { [weak self] in
+            guard let self, self.viaUSB else { return }
+            Task {
+                await self.disconnect()
+                self.state = .failed("USB 연결이 끊겼습니다. 케이블과 카메라 전원을 확인하세요.")
+            }
+        }
     }
 
     // MARK: Registered cameras
@@ -273,7 +287,7 @@ final class ConnectionModel: ObservableObject {
     /// `waiting` replaces the retry message while the camera's Wi-Fi is not up yet.
     private func joinCamera(_ credentials: WLANCredentials, camera: UUID?,
                             waitFor seconds: TimeInterval = 25, waiting: String? = nil) async throws {
-        if isConnected { await disconnect() }
+        if isConnected || viaUSB { await disconnect() }
         // A camera AP that was just switched on takes a few seconds to show up in the
         // Mac's scan, and one miss ends networksetup with -3912; keep looking for a while.
         let deadline = Date().addingTimeInterval(seconds)
@@ -296,8 +310,31 @@ final class ConnectionModel: ObservableObject {
         await didConnect()
     }
 
+    /// The camera on a USB cable: its files through USBCamera's local server. The Mac's
+    /// Wi-Fi stays on the usual network, so the internet and AirPlay keep working.
+    func connectUSB() async {
+        if isConnected { await disconnect() }
+        notice = nil
+        state = .joining("USB로 카메라 여는 중…")
+        do {
+            CameraAPI.base = try await usb.open()
+            viaUSB = true
+            joinedByUs = false
+            let model = usb.serving?.name
+            connectedCameraID = cameras.first { model != nil && ($0.model == model || $0.shortModel.map { model!.hasSuffix($0) } == true) }?.id
+                ?? selectedCameraID
+            await didConnect()
+        } catch {
+            usb.close()
+            CameraAPI.base = CameraAPI.wifiBase
+            viaUSB = false
+            state = .failed(error.localizedDescription)
+        }
+    }
+
     /// The Mac is already on the camera's Wi-Fi (joined by hand).
     func connectDirect() async {
+        if viaUSB { await disconnect() }
         state = .joining("카메라 응답 확인 중…")
         do {
             try await waitReachable(timeout: 5)
@@ -313,7 +350,11 @@ final class ConnectionModel: ObservableObject {
         monitor?.cancel()
         // Leave the camera's Wi-Fi on by default: a Mac cannot switch it back on over
         // Bluetooth, so turning it off here made every later reconnect fail.
-        if UserDefaults.standard.bool(forKey: "turnOffCameraWiFi") { await CameraAPI.finishWLAN() }
+        if viaUSB {
+            usb.close()
+            CameraAPI.base = CameraAPI.wifiBase
+            viaUSB = false
+        } else if UserDefaults.standard.bool(forKey: "turnOffCameraWiFi") { await CameraAPI.finishWLAN() }
         let restore = UserDefaults.standard.object(forKey: "restoreWiFi") as? Bool ?? true
         if joinedByUs, restore { await WiFi.restore() }
         joinedByUs = false
@@ -360,7 +401,7 @@ final class ConnectionModel: ObservableObject {
                     await self.refreshProps()
                 } else if self.state == .connected {
                     self.state = .lost
-                } else if self.state == .lost {
+                } else if self.state == .lost, !self.viaUSB {
                     await self.rejoinLostCamera()
                 }
             }

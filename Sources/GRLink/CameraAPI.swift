@@ -4,10 +4,14 @@ import Foundation
 /// Spec: github.com/CursedHardware/ricoh-wireless-protocol (openapi.yaml).
 struct CameraAPI {
     /// GRLINK_CAMERA_URL points the app at a mock camera for development.
-    static let base: URL = {
+    static let wifiBase: URL = {
         let env = ProcessInfo.processInfo.environment["GRLINK_CAMERA_URL"]
         return URL(string: env ?? "http://192.168.0.1")!
     }()
+
+    /// The camera over Wi-Fi, or USBCamera's local server while connected by USB.
+    /// Set only on the main actor, before requests for the new connection start.
+    nonisolated(unsafe) static var base: URL = wifiBase
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default

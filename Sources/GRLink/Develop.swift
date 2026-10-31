@@ -1,166 +1,22 @@
 import AppKit
 import CoreImage
-import CoreImage.CIFilterBuiltins
 import ImageIO
 import UniformTypeIdentifiers
 
-/// One slider in the develop panel. Values are stored by raw value, so a newer build's
-/// sliders don't break edits saved by an older one.
+/// The only slider left: straightening. Color and tone sliders were removed because the
+/// camera's own processing can't be reproduced on the Mac.
 enum Param: String, CaseIterable, Identifiable {
-    case temperature, tint
-    case exposure, contrast, highlights, shadows, whites, blacks
-    case vibrance, saturation
-    case clarity, sharpness, vignette, grain
     case straighten
 
     var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .temperature: return "색온도"
-        case .tint: return "색조"
-        case .exposure: return "노출"
-        case .contrast: return "대비"
-        case .highlights: return "하이라이트"
-        case .shadows: return "섀도"
-        case .whites: return "흰색 계열"
-        case .blacks: return "검정 계열"
-        case .vibrance: return "생동감"
-        case .saturation: return "채도"
-        case .clarity: return "명료도"
-        case .sharpness: return "선명도"
-        case .vignette: return "비네팅"
-        case .grain: return "그레인"
-        case .straighten: return "수평 보정"
-        }
-    }
-
-    var range: ClosedRange<Double> {
-        switch self {
-        case .exposure: return -4...4
-        case .sharpness, .grain: return 0...100
-        case .straighten: return -45...45
-        default: return -100...100
-        }
-    }
-
-    var step: Double {
-        switch self {
-        case .exposure: return 0.05
-        case .straighten: return 0.1
-        default: return 1
-        }
-    }
-
-    func format(_ value: Double) -> String {
-        switch self {
-        case .exposure: return String(format: "%+.2f", value)
-        case .straighten: return String(format: "%+.1f°", value)
-        default: return value == 0 ? "0" : String(format: "%+.0f", value)
-        }
-    }
-
-    enum Group: String, CaseIterable, Identifiable {
-        case whiteBalance = "화이트 밸런스", tone = "톤", presence = "색", effects = "디테일·효과"
-        var id: String { rawValue }
-        var params: [Param] {
-            switch self {
-            case .whiteBalance: return [.temperature, .tint]
-            case .tone: return [.exposure, .contrast, .highlights, .shadows, .whites, .blacks]
-            case .presence: return [.vibrance, .saturation]
-            case .effects: return [.clarity, .sharpness, .vignette, .grain]
-            }
-        }
-    }
+    var label: String { "수평 보정" }
+    var range: ClosedRange<Double> { -45...45 }
+    var step: Double { 0.1 }
+    func format(_ value: Double) -> String { String(format: "%+.1f°", value) }
 }
 
-/// Looks modelled on the GR's image controls, applied on top of the saved file.
-enum Look: String, CaseIterable, Identifiable, Codable {
-    case standard, vivid, monochrome, softMonochrome, hardMonochrome, highContrastBW
-    case positiveFilm, negativeFilm, bleachBypass, retro, hdrTone, crossProcess, cinemaYellow, cinemaGreen
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .standard: return "스탠다드"
-        case .vivid: return "비비드"
-        case .monochrome: return "모노톤"
-        case .softMonochrome: return "소프트 모노톤"
-        case .hardMonochrome: return "하드 모노톤"
-        case .highContrastBW: return "하이 콘트라스트 흑백"
-        case .positiveFilm: return "포지티브 필름"
-        case .negativeFilm: return "네거티브 필름"
-        case .bleachBypass: return "블리치 바이패스"
-        case .retro: return "레트로"
-        case .hdrTone: return "HDR 톤"
-        case .crossProcess: return "크로스 프로세스"
-        case .cinemaYellow: return "시네마(옐로)"
-        case .cinemaGreen: return "시네마(그린)"
-        }
-    }
-
-    /// `scale` is the image's long edge / 2000, so radii look the same at any size.
-    func apply(_ image: CIImage, scale: CGFloat) -> CIImage {
-        switch self {
-        case .standard:
-            return image
-        case .vivid:
-            return image.vibrance(0.25).controls(saturation: 1.3, contrast: 1.06)
-        case .monochrome:
-            return image.applyingFilter("CIPhotoEffectMono")
-        case .softMonochrome:
-            return image.applyingFilter("CIPhotoEffectMono")
-                .curve([0.06, 0.3, 0.53, 0.76, 0.95])
-        case .hardMonochrome:
-            return image.applyingFilter("CIPhotoEffectNoir")
-                .curve([0, 0.18, 0.5, 0.82, 1])
-        case .highContrastBW:
-            return image.applyingFilter("CIPhotoEffectNoir")
-                .curve([0, 0.08, 0.62, 0.95, 1])
-        case .positiveFilm:
-            return image.controls(saturation: 1.2)
-                .curve([0, 0.22, 0.5, 0.79, 1])
-                .matrix(r: 1.04, g: 1.0, b: 0.95)
-        case .negativeFilm:
-            return image.controls(saturation: 0.8)
-                .curve([0.07, 0.29, 0.52, 0.74, 0.96])
-                .matrix(r: 0.98, g: 1.0, b: 1.02, bias: (-0.005, 0.005, 0.015))
-        case .bleachBypass:
-            let color = image.controls(saturation: 0.55)
-            return image.applyingFilter("CIPhotoEffectMono")
-                .applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: color])
-                .curve([0, 0.2, 0.5, 0.8, 1])
-        case .retro:
-            return image.applyingFilter("CIPhotoEffectTransfer")
-                .applyingFilter("CISepiaTone", parameters: [kCIInputIntensityKey: 0.25])
-                .curve([0.08, 0.3, 0.52, 0.74, 0.94])
-        case .hdrTone:
-            let f = CIFilter.highlightShadowAdjust()
-            f.inputImage = image
-            f.highlightAmount = 0.4
-            f.shadowAmount = 0.8
-            f.radius = Float(10 * scale)
-            return (f.outputImage ?? image)
-                .applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 30 * scale, kCIInputIntensityKey: 0.6])
-                .controls(saturation: 1.15)
-        case .crossProcess:
-            return image.applyingFilter("CIPhotoEffectProcess")
-        case .cinemaYellow:
-            return image.matrix(r: 1.05, g: 1.02, b: 0.86, bias: (0.02, 0.01, -0.01))
-                .controls(saturation: 0.85, contrast: 1.04)
-                .curve([0.04, 0.26, 0.5, 0.76, 0.98])
-        case .cinemaGreen:
-            return image.matrix(r: 0.92, g: 1.04, b: 0.96, bias: (-0.01, 0.02, 0.015))
-                .controls(saturation: 0.8, contrast: 1.04)
-                .curve([0.04, 0.26, 0.5, 0.76, 0.98])
-        }
-    }
-}
-
+/// Geometry-only edits: rotation, mirror and straighten. No color or tone changes.
 struct Adjustments: Codable, Hashable {
-    var look: Look = .standard
-    var lookAmount: Double = 100
     var values: [String: Double] = [:]
     /// Clockwise quarter turns.
     var quarterTurns = 0
@@ -175,13 +31,13 @@ struct Adjustments: Codable, Hashable {
 
     var isDefault: Bool { self == Adjustments() }
 
-    private enum CodingKeys: String, CodingKey { case look, lookAmount, values, quarterTurns, flipped }
+    private enum CodingKeys: String, CodingKey { case values, quarterTurns, flipped }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        look = (try? c.decode(Look.self, forKey: .look)) ?? .standard
-        lookAmount = (try? c.decode(Double.self, forKey: .lookAmount)) ?? 100
-        values = (try? c.decode([String: Double].self, forKey: .values)) ?? [:]
+        // Drop values of removed sliders saved by older builds.
+        let known = Set(Param.allCases.map(\.rawValue))
+        values = ((try? c.decode([String: Double].self, forKey: .values)) ?? [:]).filter { known.contains($0.key) }
         quarterTurns = (try? c.decode(Int.self, forKey: .quarterTurns)) ?? 0
         flipped = (try? c.decode(Bool.self, forKey: .flipped)) ?? false
     }
@@ -232,80 +88,7 @@ enum DevelopEngine {
         context.createCGImage(image, from: image.extent.integral, format: .RGBA8, colorSpace: sRGB)
     }
 
-    static func apply(_ adj: Adjustments, to input: CIImage) -> CIImage {
-        var image = geometry(adj, input)
-        let extent = image.extent
-        let scale = max(extent.width, extent.height) / 2000
-
-        if adj[.temperature] != 0 || adj[.tint] != 0 {
-            let f = CIFilter.temperatureAndTint()
-            f.inputImage = image
-            f.neutral = CIVector(x: 6500, y: 0)
-            f.targetNeutral = CIVector(x: 6500 - adj[.temperature] * 30, y: adj[.tint])
-            image = f.outputImage ?? image
-        }
-        if adj[.exposure] != 0 {
-            image = image.applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: adj[.exposure]])
-        }
-        if adj.look != .standard, adj.lookAmount > 0 {
-            let looked = adj.look.apply(image, scale: scale)
-            image = adj.lookAmount >= 100 ? looked : image.applyingFilter("CIDissolveTransition", parameters: [
-                kCIInputTargetImageKey: looked, kCIInputTimeKey: adj.lookAmount / 100,
-            ])
-        }
-        if adj[.highlights] < 0 || adj[.shadows] != 0 {
-            let f = CIFilter.highlightShadowAdjust()
-            f.inputImage = image
-            f.highlightAmount = Float(1 + min(0, adj[.highlights]) / 100)
-            f.shadowAmount = Float(adj[.shadows] / 100)
-            image = f.outputImage ?? image
-        }
-        let c = adj[.contrast] / 100, h = max(0, adj[.highlights]) / 100, w = adj[.whites] / 100, b = adj[.blacks] / 100
-        if c != 0 || h != 0 || w != 0 || b != 0 {
-            let p0 = b >= 0 ? CGPoint(x: 0, y: b * 0.15) : CGPoint(x: -b * 0.1, y: 0)
-            let p4 = w >= 0 ? CGPoint(x: 1 - w * 0.12, y: 1) : CGPoint(x: 1, y: 1 + w * 0.15)
-            image = image.curve(points: [p0, CGPoint(x: 0.25, y: 0.25 - c * 0.07), CGPoint(x: 0.5, y: 0.5),
-                                         CGPoint(x: 0.75, y: 0.75 + c * 0.07 + h * 0.06), p4])
-        }
-        let clarity = adj[.clarity] / 100
-        if clarity > 0 {
-            image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 25 * scale, kCIInputIntensityKey: clarity * 0.8])
-        } else if clarity < 0 {
-            let soft = image.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 12 * scale]).cropped(to: extent)
-            image = image.applyingFilter("CIDissolveTransition", parameters: [kCIInputTargetImageKey: soft, kCIInputTimeKey: -clarity * 0.5])
-        }
-        if adj[.vibrance] != 0 { image = image.vibrance(adj[.vibrance] / 100) }
-        if adj[.saturation] != 0 { image = image.controls(saturation: 1 + adj[.saturation] / 100) }
-        if adj[.sharpness] > 0 {
-            image = image.applyingFilter("CISharpenLuminance", parameters: [
-                kCIInputSharpnessKey: adj[.sharpness] / 100 * 1.2, kCIInputRadiusKey: max(1, 1.5 * scale),
-            ])
-        }
-        if adj[.vignette] != 0 {
-            let f = CIFilter.vignetteEffect()
-            f.inputImage = image
-            f.center = CGPoint(x: extent.midX, y: extent.midY)
-            f.radius = Float(hypot(extent.width, extent.height) * 0.42)
-            f.intensity = Float(-adj[.vignette] / 100)
-            f.falloff = 0.6
-            image = f.outputImage ?? image
-        }
-        if adj[.grain] > 0 {
-            let a = adj[.grain] / 100 * 0.5
-            let noise = CIFilter.randomGenerator().outputImage!
-                .transformed(by: CGAffineTransform(scaleX: max(1, scale), y: max(1, scale)))
-                .applyingFilter("CIColorMatrix", parameters: [
-                    "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                    "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                    "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                    "inputBiasVector": CIVector(x: 0.5 - a / 2, y: 0.5 - a / 2, z: 0.5 - a / 2, w: 0),
-                ])
-                .cropped(to: extent)
-            image = noise.applyingFilter("CISoftLightBlendMode", parameters: [kCIInputBackgroundImageKey: image])
-        }
-        return image.cropped(to: extent)
-    }
+    static func apply(_ adj: Adjustments, to input: CIImage) -> CIImage { geometry(adj, input) }
 
     /// Rotation, mirror and straighten (zoomed in just enough to keep the corners filled).
     static func geometry(_ adj: Adjustments, _ input: CIImage) -> CIImage {
@@ -392,39 +175,5 @@ struct Histogram: Equatable {
         green = green.map { min(1, $0 / peak) }
         blue = blue.map { min(1, $0 / peak) }
         luma = luma.map { min(1, $0 / peak) }
-    }
-}
-
-private extension CIImage {
-    func controls(saturation: Double = 1, brightness: Double = 0, contrast: Double = 1) -> CIImage {
-        applyingFilter("CIColorControls", parameters: [
-            kCIInputSaturationKey: saturation, kCIInputBrightnessKey: brightness, kCIInputContrastKey: contrast,
-        ])
-    }
-
-    func vibrance(_ amount: Double) -> CIImage {
-        applyingFilter("CIVibrance", parameters: ["inputAmount": amount])
-    }
-
-    /// Tone curve through y values at x = 0, 0.25, 0.5, 0.75, 1.
-    func curve(_ ys: [Double]) -> CIImage {
-        curve(points: ys.enumerated().map { CGPoint(x: Double($0.offset) * 0.25, y: $0.element) })
-    }
-
-    func curve(points: [CGPoint]) -> CIImage {
-        applyingFilter("CIToneCurve", parameters: [
-            "inputPoint0": CIVector(cgPoint: points[0]), "inputPoint1": CIVector(cgPoint: points[1]),
-            "inputPoint2": CIVector(cgPoint: points[2]), "inputPoint3": CIVector(cgPoint: points[3]),
-            "inputPoint4": CIVector(cgPoint: points[4]),
-        ])
-    }
-
-    func matrix(r: Double, g: Double, b: Double, bias: (Double, Double, Double) = (0, 0, 0)) -> CIImage {
-        applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
-            "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
-            "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
-            "inputBiasVector": CIVector(x: bias.0, y: bias.1, z: bias.2, w: 0),
-        ])
     }
 }

@@ -141,8 +141,12 @@ struct CameraView: View {
     private func statusIcons(_ camera: SavedCamera) -> some View {
         let connected = isConnected(camera)
         return HStack(spacing: 16) {
-            Label(connected ? "Wi-Fi 연결됨" : "Wi-Fi 연결 안 됨", systemImage: connected ? "wifi" : "wifi.slash")
-                .foregroundStyle(connected ? .green : .secondary)
+            if connected && connection.viaUSB {
+                Label("USB 연결됨", systemImage: "cable.connector").foregroundStyle(.green)
+            } else {
+                Label(connected ? "Wi-Fi 연결됨" : "Wi-Fi 연결 안 됨", systemImage: connected ? "wifi" : "wifi.slash")
+                    .foregroundStyle(connected ? .green : .secondary)
+            }
             let linked = ble.linkedCameraID == camera.id
             Label(linked ? "Bluetooth 연결됨" : "Bluetooth 끊김", systemImage: "dot.radiowaves.left.and.right")
                 .foregroundStyle(linked ? .blue : .secondary)
@@ -207,8 +211,8 @@ struct CameraView: View {
             .disabled(connection.isBusy)
 
             HStack(spacing: 1) {
-                tile("원격 촬영", "dot.radiowaves.left.and.right", enabled: connected) { section = .remote }
-                tile("카메라 설정", "slider.horizontal.3", enabled: connected) { showCameraSettings = true }
+                tile("원격 촬영", "dot.radiowaves.left.and.right", enabled: connected && !connection.viaUSB) { section = .remote }
+                tile("카메라 설정", "slider.horizontal.3", enabled: connected && !connection.viaUSB) { showCameraSettings = true }
                 tile(showInfo ? "정보 숨기기" : "연결 정보", "info.circle", enabled: true) { showInfo.toggle() }
                 Menu {
                     Button("이름 바꾸기…") { newName = camera.displayName; renaming = camera }
@@ -247,6 +251,22 @@ struct CameraView: View {
             }
             .buttonStyle(.bordered).controlSize(.large)
             .disabled(connection.isBusy)
+
+            // A GR on a cable shows up as a PTP camera; files only, Wi-Fi stays free.
+            Button {
+                openLibraryWhenConnected = true
+                Task { await connection.connectUSB() }
+            } label: {
+                Label(connection.usb.detected == nil ? "USB로 연결 (케이블을 연결하고 카메라를 켜세요)" : "USB로 연결",
+                      systemImage: "cable.connector")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered).controlSize(.large)
+            .disabled(connection.isBusy || connection.usb.detected == nil)
+        }
+        if connected && connection.viaUSB {
+            Text("USB로 연결됨: 사진 보기·저장만 됩니다. 원격 촬영과 카메라 설정은 Wi-Fi 연결에서만 됩니다. Mac의 Wi-Fi(인터넷·AirPlay)는 그대로 쓸 수 있습니다.")
+                .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
         Text("카메라 Wi-Fi는 Bluetooth로만 켜집니다. 페어링한 Bluetooth 연결은 앱이 켜져 있는 동안 유지되고, 끊긴 뒤에는 Mac이 카메라에 다시 붙을 수 없습니다. 그때는 휴대폰의 GR WORLD에서 카메라 WLAN(Wi-Fi)을 켜고 ‘휴대폰 GR WORLD로 WLAN(Wi-Fi) 켜고 연결’을 누르세요. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지됩니다(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 끕니다). Wi-Fi에 연결된 동안 Mac의 인터넷은 끊깁니다.")
             .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -314,7 +334,7 @@ struct CameraView: View {
                         }
                     }
                 }
-                row("카메라 주소", CameraAPI.base.host() ?? "192.168.0.1")
+                row("카메라 주소", connection.viaUSB ? "USB 케이블" : CameraAPI.base.host() ?? "192.168.0.1")
                 row("Bluetooth 이름", camera.bleName)
                 row("Bluetooth 연결", ble.linkedCameraID == camera.id
                     ? "유지 중 — 이 연결로 카메라 Wi-Fi를 켭니다"
