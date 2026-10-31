@@ -110,7 +110,7 @@ struct RemoteView: View {
                 Text("카메라 연결 끊김").font(.title2.bold())
                 Text(connection.state == .lost
                      ? (connection.cameraWLANOff
-                        ? "카메라 WLAN(Wi-Fi)이 꺼졌습니다.\n휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다.\n휴대폰 화면이 잠기면 카메라가 WLAN을 끕니다."
+                        ? "카메라 WLAN(Wi-Fi)이 꺼졌습니다.\n휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다.\n연결된 뒤 휴대폰 Bluetooth를 끄면 휴대폰을 잠가도 유지됩니다."
                         : "카메라 Wi-Fi 응답이 없습니다. 다시 연결을 시도하는 중입니다…\n카메라 전원과 Wi-Fi가 켜져 있는지 확인하세요.")
                      : "카메라 탭에서 다시 연결하세요.")
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)

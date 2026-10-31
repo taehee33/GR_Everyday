@@ -177,7 +177,7 @@ final class ConnectionModel: ObservableObject {
         let task = Task {
             do {
                 try await joinCamera(credentials, camera: camera.id, waitFor: 180,
-                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속합니다. 사진을 받는 동안 휴대폰에서 GR WORLD를 연 채 화면이 꺼지지 않게 두세요(잠기면 카메라가 WLAN을 끕니다).")
+                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속합니다. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지됩니다(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 끕니다).")
             } catch is CancellationError {
             } catch {
                 state = .failed(error.localizedDescription)

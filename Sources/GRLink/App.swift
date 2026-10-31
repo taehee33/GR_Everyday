@@ -39,6 +39,14 @@ struct AppSettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 빌드"
     }
 
+    /// Stamped by scripts/build-app.sh: "빌드 3 · 85651f7 · 2026-10-31 23:55".
+    private var build: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let commit = info["GRBuildCommit"] as? String else { return "스크립트 없이 빌드됨" }
+        return ["빌드 \(info["CFBundleVersion"] as? String ?? "?")", commit, info["GRBuildDate"] as? String]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
     var body: some View {
         Form {
             Section {
@@ -116,6 +124,7 @@ struct AppSettingsView: View {
 
             Section("정보") {
                 LabeledContent("버전", value: version)
+                LabeledContent("빌드") { Text(build).textSelection(.enabled) }
                 LabeledContent("진단 로그") {
                     Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([DebugLog.url]) }
                 }
