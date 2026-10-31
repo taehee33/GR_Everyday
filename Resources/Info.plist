@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>GR Mac</string>
+    <key>CFBundleDisplayName</key><string>GR Mac</string>
+    <key>CFBundleIdentifier</key><string>local.hantaehee.grlink</string>
+    <key>CFBundleExecutable</key><string>GRLink</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocationUsageDescription</key><string>Mac 주변의 카메라 Wi-Fi 이름을 확인하는 데 사용합니다.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>Mac 주변의 카메라 Wi-Fi 이름을 확인하는 데 사용합니다.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>GR 카메라를 찾아 깨우고 Wi-Fi를 켜는 데 Bluetooth를 사용합니다.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+</dict>
+</plist>
