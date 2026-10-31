@@ -82,6 +82,14 @@ final class ConnectionModel: ObservableObject {
     }
     var selectedCamera: SavedCamera? { cameras.first { $0.id == selectedCameraID } }
 
+    /// How the Mac reaches the camera, for the status box: "USB 케이블" or "Wi-Fi · GR_HCB02EA".
+    var route: String {
+        if viaUSB { return "USB 케이블" }
+        let ssid = (props["ssid"] as? String).map(Self.clean)
+            ?? cameras.first { $0.id == connectedCameraID }?.credentials?.ssid
+        return ssid.map { "Wi-Fi · \($0)" } ?? "Wi-Fi"
+    }
+
     var storages: [CameraStorage] {
         (props["storages"] as? [[String: Any]] ?? [])
             .filter { $0["equipped"] as? Bool ?? true }

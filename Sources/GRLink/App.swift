@@ -170,9 +170,9 @@ struct ContentView: View {
                     if section == .library { LibraryView() } else { RemoteView() }
                 } else {
                     ContentUnavailableView {
-                        Label("카메라에 연결되지 않음", systemImage: "wifi.slash")
+                        Label("카메라에 연결되지 않음", systemImage: "camera")
                     } description: {
-                        Text("카메라 탭에서 Wi-Fi로 연결하세요.")
+                        Text("카메라 탭에서 Wi-Fi 또는 USB로 연결하세요.")
                     } actions: {
                         Button("카메라 탭으로") { section = .camera }.buttonStyle(.borderedProminent)
                     }
@@ -207,6 +207,8 @@ struct StatusBox: View {
                 Text(title).font(.callout.bold())
             }
             if connection.isConnected || connection.state == .lost {
+                Label(connection.route, systemImage: connection.viaUSB ? "cable.connector" : "wifi")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text(connection.model + (connection.battery.map { " · 배터리 \($0)%" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
                 Button("연결 끊기") { Task { await connection.disconnect() } }
