@@ -139,6 +139,7 @@ final class LibraryModel: ObservableObject {
             if self?.shotFilter != nil { self?.objectWillChange.send() }
         }
         infos = Self.readInfoCache()
+        infoCacheLoadedFrom = Self.infoCacheURL
         loadStore()
     }
 
@@ -308,10 +309,20 @@ final class LibraryModel: ObservableObject {
     }
 
     func reload() async {
+        // Connecting starts one and the library view another; the second would only repeat it.
+        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            photos = try await CameraAPI.photos()
+            let list = try await CameraAPI.photos()
+            // USB and Wi-Fi reach the camera at different addresses, each with its own cache;
+            // the one read at launch is for Wi-Fi.
+            if infoCacheLoadedFrom != Self.infoCacheURL {
+                infos = Self.readInfoCache()
+                infoCacheLoadedFrom = Self.infoCacheURL
+            }
+            if await cardChanged(list) { clearCaches() }
+            photos = list
             error = nil
             refreshSaved()
             loadInfos()
@@ -347,6 +358,8 @@ final class LibraryModel: ObservableObject {
         stats.scan(photos, dates: infos.compactMapValues(\.date))
     }
 
+    private var infoCacheLoadedFrom: URL?
+
     private static var infoCacheURL: URL {
         ImageCache.folder.appendingPathComponent("photo-info-\(CameraAPI.base.host ?? "camera").json")
     }
@@ -368,6 +381,20 @@ final class LibraryModel: ObservableObject {
         return (files?.allObjects as? [URL] ?? []).reduce(0) {
             $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
+    }
+
+    /// The caches (dates, thumbnails, 촬영 통계) are keyed by file name, and names come back
+    /// after a card format, or for the next shot after deleting the last one. The newest file
+    /// is the one a reused name would land on, so ask the camera for its shooting time and
+    /// compare. Costs one small request per reload.
+    private func cardChanged(_ list: [Photo]) async -> Bool {
+        // The camera lists files in shooting order.
+        guard let probe = list.last(where: { infos[$0.id]?.date != nil }),
+              let cached = infos[probe.id]?.date,
+              let fresh = try? await CameraAPI.info(probe).date,
+              abs(fresh.timeIntervalSince(cached)) >= 1 else { return false }
+        DebugLog.write("cache: \(probe.id) was shot \(cached), now \(fresh); file names were reused, clearing caches")
+        return true
     }
 
     func clearCaches() {
