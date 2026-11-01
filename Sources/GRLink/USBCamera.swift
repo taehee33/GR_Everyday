@@ -21,6 +21,10 @@ final class USBCamera: NSObject, ObservableObject {
     var onRemoved: (() -> Void)?
 
     private let browser = ICDeviceBrowser()
+    /// Battery percent read over PTP while serving, refreshed every minute.
+    private var battery: Int?
+    private var batteryTask: Task<Void, Never>?
+    private var transactionID: UInt32 = 0x1000
     /// Restarts the browser when the GR is on the bus but never reported (see watch()).
     private var watchdog: Task<Void, Never>?
     private var ready: CheckedContinuation<Void, Error>?
@@ -101,17 +105,45 @@ final class USBCamera: NSObject, ObservableObject {
             self.server = server
         }
         serving = camera
+        batteryTask?.cancel()
+        batteryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.serving === camera else { return }
+                self.battery = await self.readBattery(camera)
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
         DebugLog.write("usb: serving \(files.count) files at \(server!.base)")
         return server!.base
     }
 
     func close() {
+        batteryTask?.cancel()
+        battery = nil
         server?.stop()
         server = nil
         if let serving, serving.hasOpenSession { serving.requestCloseSession() }
         serving = nil
         files = [:]
         recent = []
+    }
+
+    /// ImageCaptureCore reports no battery for the GR (batteryLevelAvailable is false), but
+    /// the standard PTP property BatteryLevel (0x5001) answers 0–100 (GR IV HDF fw 1.20).
+    /// PTP has nothing for charging; the camera offers no other power property over USB.
+    private func readBattery(_ camera: ICCameraDevice) async -> Int? {
+        transactionID += 1
+        var command = Data()
+        func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { command.append(contentsOf: $0) } }
+        // Container: length, type 1 (command), GetDevicePropValue 0x1015, transaction, property.
+        append(UInt32(16)); append(UInt16(1)); append(UInt16(0x1015)); append(transactionID); append(UInt32(0x5001))
+        return await withCheckedContinuation { continuation in
+            camera.requestSendPTPCommand(command, outData: nil) { data, response, error in
+                // Response code 0x2001 (OK) at bytes 6–7.
+                let ok = error == nil && response.count >= 8 && response[6] == 0x01 && response[7] == 0x20
+                continuation.resume(returning: ok && data.count == 1 ? Int(data[0]) : nil)
+            }
+        }
     }
 
     private func index(_ camera: ICCameraDevice) {
@@ -182,7 +214,7 @@ final class USBCamera: NSObject, ObservableObject {
     private func props() -> [String: Any] {
         var props: [String: Any] = ["errCode": 200, "errMsg": "OK", "model": serving?.name ?? "RICOH GR"]
         if let serial = serving?.serialNumberString { props["serialNo"] = serial }
-        if let battery = serving?.batteryLevel, battery > 0 { props["battery"] = battery }
+        if let battery { props["battery"] = battery }
         props["storages"] = [["name": "in", "equipped": true, "numOfPhotos": files.count]]
         return props
     }
