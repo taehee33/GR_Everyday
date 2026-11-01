@@ -6,6 +6,7 @@ import SwiftUI
 struct StatsView: View {
     @EnvironmentObject var library: LibraryModel
     @ObservedObject var stats: ShotStats
+    @Binding var section: Pane
     @State private var day: Date?
     @State private var month = Calendar.current.startOfMonth(.now)
 
@@ -45,18 +46,16 @@ struct StatsView: View {
                     summary(day: onDay, all: all)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 20, alignment: .top)], spacing: 20) {
-                    table("노출 모드", day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"]) { $0.mode }
-                    table("이미지 컨트롤", day: onDay, all: all, label: Self.toneLabel) { $0.imageTone.map(String.init) }
-                    table("화상비율", day: onDay, all: all, fixed: ["3:2", "4:3", "1:1", "16:9"]) { $0.aspect }
-                    table("크롭", day: onDay, all: all, fixed: ["꺼짐", "35mm", "50mm"]) { r in
-                        r.focal35.map { $0 <= 28 ? "꺼짐" : "\($0)mm" }
-                    }
+                    table(.mode, day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"])
+                    table(.tone, day: onDay, all: all)
+                    table(.aspect, day: onDay, all: all, fixed: ["3:2", "4:3", "1:1", "16:9"])
+                    table(.crop, day: onDay, all: all, fixed: ["꺼짐", "35mm", "50mm"])
                     if all.contains(where: { $0.record?.hdf != nil }) {
-                        table("HDF", day: onDay, all: all, fixed: ["꺼짐", "켜짐"], label: Self.hdfLabel) { r in
-                            r.hdf.map { ["0": "꺼짐", "1": "켜짐", "2": "레드 필터"]["\($0)"] ?? "코드 \($0)" }
-                        }
+                        table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
                     }
                 }
+                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줍니다. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줍니다.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: 1100, alignment: .leading)
@@ -119,16 +118,20 @@ struct StatsView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Text("촬영 횟수").font(.headline)
+            HStack {
+                Text("촬영 횟수").font(.headline)
+                Spacer()
+                if let day = self.day {
+                    Button("이 날 사진 보기") { open(ShotFilter(day: day)) }.controlSize(.small)
+                }
+            }
         }
     }
 
     /// Rows: `fixed` always (zero or not, like GR 로그), then anything else that occurred.
-    private func table(_ title: String, day: [Entry], all: [Entry], fixed: [String] = [],
-                       label: @escaping (String) -> String = { $0 },
-                       key: @escaping (ShotRecord) -> String?) -> some View {
+    private func table(_ field: ShotFilter.Field, day: [Entry], all: [Entry], fixed: [String] = []) -> some View {
         func counts(_ entries: [Entry]) -> [String: Int] {
-            entries.compactMap { $0.record.flatMap(key) }.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+            entries.compactMap { $0.record?.key(field) }.reduce(into: [:]) { $0[$1, default: 0] += 1 }
         }
         let dayCounts = counts(day), allCounts = counts(all)
         let extra = allCounts.keys.filter { !fixed.contains($0) }
@@ -142,28 +145,40 @@ struct StatsView: View {
                 }
                 .font(.caption)
                 ForEach(fixed + extra, id: \.self) { k in
+                    let dayCount = dayCounts[k] ?? 0, allCount = allCounts[k] ?? 0
                     Divider().gridCellUnsizedAxes(.horizontal)
                     GridRow {
-                        Text(label(k)).frame(maxWidth: .infinity, alignment: .leading)
-                        Text("\(dayCounts[k] ?? 0)").monospacedDigit()
-                            .foregroundStyle((dayCounts[k] ?? 0) == 0 ? .secondary : .primary)
-                        Text("\(allCounts[k] ?? 0)").monospacedDigit()
-                            .foregroundStyle((allCounts[k] ?? 0) == 0 ? .secondary : .primary)
+                        Button { open(ShotFilter(field: field, value: k)) } label: {
+                            Text(field.label(k)).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .disabled(allCount == 0)
+                        .help("라이브러리에서 \(field.label(k)) 사진 \(allCount)장 보기")
+                        Button { open(ShotFilter(field: field, value: k, day: self.day)) } label: {
+                            Text("\(dayCount)").monospacedDigit().underline(dayCount > 0)
+                        }
+                        .disabled(dayCount == 0)
+                        .foregroundStyle(dayCount == 0 ? .secondary : .primary)
+                        .help("이 날의 \(field.label(k)) 사진만 보기")
+                        Text("\(allCount)").monospacedDigit()
+                            .foregroundStyle(allCount == 0 ? .secondary : .primary)
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(8)
         } label: {
-            Text(title).font(.headline)
+            Text(field.rawValue).font(.headline)
         }
     }
 
-    private static func toneLabel(_ key: String) -> String {
-        guard let code = Int(key) else { return key }
-        return MakerNote.imageToneNames[code] ?? "알 수 없음 (코드 \(code))"
+    /// Shows the library with only these shots; the JPG/RAW/영상 picker goes back to 전체.
+    private func open(_ filter: ShotFilter) {
+        library.shotFilter = filter
+        library.filter = .all
+        library.mode = .grid
+        section = .library
     }
 
-    private static func hdfLabel(_ key: String) -> String { key }
 }
 
 /// A month grid; days with shots are tinted by count and can be picked.

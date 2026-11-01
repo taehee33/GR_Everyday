@@ -46,6 +46,41 @@ struct LibraryView: View {
         }
     }
 
+    /// Filter by what 촬영 통계 reads from each photo (image control, exposure mode, …).
+    /// Lists only values found on this card; empty until the stats have been read once.
+    @ViewBuilder private var shotFilterMenu: some View {
+        let records = library.photos.compactMap { library.stats.records[$0.id] }
+        Menu {
+            if library.shotFilter != nil {
+                Button("촬영 정보 필터 해제") { library.shotFilter = nil }
+                Divider()
+            }
+            ForEach(ShotFilter.Field.allCases) { field in
+                let counts = records.compactMap { $0.key(field) }.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+                if !counts.isEmpty {
+                    Menu(field.rawValue) {
+                        ForEach(counts.keys.sorted { (Int($0) ?? .max, $0) < (Int($1) ?? .max, $1) }, id: \.self) { key in
+                            Button("\(field.label(key)) (\(counts[key]!))") {
+                                library.shotFilter = ShotFilter(field: field, value: key)
+                            }
+                        }
+                    }
+                }
+            }
+            if records.isEmpty {
+                Text("‘촬영 통계’를 한 번 열면 촬영 정보로 거를 수 있습니다.")
+            }
+        } label: {
+            Label(library.shotFilter?.label ?? "촬영 정보", systemImage: "camera.filters")
+        }
+        .fixedSize()
+        if library.shotFilter != nil {
+            Button { library.shotFilter = nil } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.borderless)
+                .help("촬영 정보 필터 해제")
+        }
+    }
+
     private var toolbar: some View {
         HStack(spacing: 10) {
             Picker("", selection: Binding(get: { library.mode }, set: { switchMode($0) })) {
@@ -87,6 +122,8 @@ struct LibraryView: View {
                       systemImage: "line.3.horizontal.decrease.circle")
             }
             .fixedSize()
+
+            shotFilterMenu
 
             Spacer()
 

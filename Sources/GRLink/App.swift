@@ -189,7 +189,7 @@ struct ContentView: View {
                 if connection.isConnected || connection.state == .lost {
                     switch section {
                     case .library: LibraryView()
-                    case .stats: StatsView(stats: library.stats)
+                    case .stats: StatsView(stats: library.stats, section: $section)
                     default: RemoteView()
                     }
                 } else {

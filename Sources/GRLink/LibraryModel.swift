@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 @MainActor
@@ -34,6 +35,9 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var photos: [Photo] = []
     /// Shooting statistics (촬영 통계 pane), counted from the photos above.
     let stats = ShotStats()
+    /// Set from 촬영 통계: only shots with this image control, mode, … and/or day.
+    @Published var shotFilter: ShotFilter?
+    private var statsChanges: AnyCancellable?
     @Published var selection: Set<String> = []
     @Published var filter: Filter = .all
     @Published private(set) var saved: Set<String> = []
@@ -102,6 +106,10 @@ final class LibraryModel: ObservableObject {
         skipExisting = UserDefaults.standard.object(forKey: "skipExisting") as? Bool ?? true
         revealAfterSave = UserDefaults.standard.bool(forKey: "revealAfterSave")
         filmstrip = UserDefaults.standard.object(forKey: "filmstrip") as? Bool ?? true
+        // The grid redraws as photos are read while a 촬영 통계 filter is on.
+        statsChanges = stats.objectWillChange.sink { [weak self] _ in
+            if self?.shotFilter != nil { self?.objectWillChange.send() }
+        }
         infos = Self.readInfoCache()
         loadStore()
     }
@@ -210,9 +218,28 @@ final class LibraryModel: ObservableObject {
 
     private func passesRating(_ photo: Photo) -> Bool { minRating == 0 || rating(photo) >= minRating }
 
+    /// A RAW shot with a JPEG twin is counted by the JPEG, so it is looked up there.
+    func shotRecord(_ photo: Photo) -> ShotRecord? {
+        if let record = stats.records[photo.id] { return record }
+        guard photo.kind == .raw else { return nil }
+        let base = (photo.name as NSString).deletingPathExtension
+        return ["JPG", "jpg"].lazy.compactMap { self.stats.records["\(photo.dir)/\(base).\($0)"] }.first
+    }
+
+    private func passesShot(_ photo: Photo) -> Bool {
+        guard let f = shotFilter else { return true }
+        let record = shotRecord(photo)
+        if let field = f.field, record?.key(field) != f.value { return false }
+        if let day = f.day {
+            guard let date = record?.date ?? infos[photo.id]?.date,
+                  Calendar.current.isDate(date, inSameDayAs: day) else { return false }
+        }
+        return true
+    }
+
     var visible: [Photo] {
         // The camera lists files in shooting order.
-        let filtered = photos.filter { matches($0, filter) && passesRating($0) }
+        let filtered = photos.filter { matches($0, filter) && passesRating($0) && passesShot($0) }
         switch sort {
         case .newest: return filtered.reversed()
         case .oldest: return filtered

@@ -45,6 +45,17 @@ struct ShotRecord: Codable, Equatable {
         }
     }
 
+    /// This shot's value for a 촬영 통계 table, as the table keys it.
+    func key(_ field: ShotFilter.Field) -> String? {
+        switch field {
+        case .mode: return mode
+        case .tone: return imageTone.map(String.init)
+        case .aspect: return aspect
+        case .crop: return focal35.map { $0 <= 28 ? "꺼짐" : "\($0)mm" }
+        case .hdf: return hdf.map { ["꺼짐", "켜짐", "레드 필터"].indices.contains($0) ? ["꺼짐", "켜짐", "레드 필터"][$0] : "코드 \($0)" }
+        }
+    }
+
     static func aspect(_ ratio: Double) -> String {
         let known: [(String, Double)] = [("3:2", 1.5), ("4:3", 4.0 / 3), ("1:1", 1), ("16:9", 16.0 / 9)]
         let best = known.min { abs($0.1 - ratio) < abs($1.1 - ratio) }!
@@ -124,5 +135,31 @@ final class ShotStats: ObservableObject {
         guard let data = try? JSONEncoder().encode(records) else { return }
         try? FileManager.default.createDirectory(at: ImageCache.folder, withIntermediateDirectories: true)
         try? data.write(to: Self.url, options: .atomic)
+    }
+}
+
+/// Narrows the library to what a 촬영 통계 row or day counted: one value of one field,
+/// one shooting day, or both.
+struct ShotFilter: Equatable {
+    enum Field: String, CaseIterable, Identifiable {
+        case mode = "노출 모드", tone = "이미지 컨트롤", aspect = "화상비율", crop = "크롭", hdf = "HDF"
+        var id: String { rawValue }
+
+        /// How a key reads on screen: image controls are stored by maker-note code.
+        func label(_ key: String) -> String {
+            guard self == .tone, let code = Int(key) else { return key }
+            return MakerNote.imageToneNames[code] ?? "알 수 없음 (코드 \(code))"
+        }
+    }
+
+    var field: Field?
+    var value: String?
+    var day: Date?
+
+    var label: String {
+        var parts: [String] = []
+        if let field, let value { parts.append(field.label(value)) }
+        if let day { parts.append(day.formatted(.dateTime.month().day())) }
+        return parts.joined(separator: " · ")
     }
 }
