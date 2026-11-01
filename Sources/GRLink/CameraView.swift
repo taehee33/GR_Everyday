@@ -21,6 +21,9 @@ struct CameraView: View {
     @State private var openLibraryWhenConnected = false
     /// Bumped after a removal so the Bluetooth row re-reads the bond.
     @State private var bondCheck = 0
+    /// Whether the Mac lists the camera in its Bluetooth settings; nil while checking.
+    /// Looked up off the main thread: IOBluetooth's paired-device list can block for minutes.
+    @State private var macBond: Bool?
     @State private var bondMessage: String?
 
     private var cameras: [SavedCamera] { connection.cameras }
@@ -80,7 +83,7 @@ struct CameraView: View {
                 }
             }
         } message: {
-            if let c = removing, connection.hasMacBond(c) {
+            if removing != nil, macBond == true {
                 Text("저장된 Wi-Fi 암호도 지워집니다. 다시 쓰려면 새로 등록해야 합니다.\n이 카메라가 아직 Mac Bluetooth에 남아 있습니다. 다시 등록하기 전에 ‘기기 지우기’도 해 두세요.")
             } else {
                 Text("저장된 Wi-Fi 암호도 지워집니다. 다시 쓰려면 ‘+’에서 새로 등록해야 합니다.")
@@ -341,10 +344,8 @@ struct CameraView: View {
                 GridRow {
                     Text("Mac Bluetooth").foregroundStyle(.secondary)
                     HStack {
-                        let _ = bondCheck
-                        let paired = connection.hasMacBond(camera)
-                        Text(paired ? "기기 등록됨" : "등록 안 됨")
-                        if paired {
+                        Text(macBond.map { $0 ? "기기 등록됨" : "등록 안 됨" } ?? "확인 중…")
+                        if macBond == true {
                             Button("기기 지우기") { Task { await removeBond(camera) } }.buttonStyle(.link)
                         }
                         if let bondMessage { Text(bondMessage).font(.caption).foregroundStyle(.secondary) }
@@ -375,6 +376,11 @@ struct CameraView: View {
                     .help(connected ? "연결을 끊은 뒤 지울 수 있습니다" : "이 카메라의 등록을 삭제합니다")
             }
             .padding(8)
+        }
+        .task(id: "\(camera.id)#\(bondCheck)") {
+            macBond = nil
+            let name = camera.bleName
+            macBond = await Task.detached { BLEWaker.pairedDevice(named: name) != nil }.value
         }
     }
 

@@ -241,7 +241,7 @@ final class BLEWaker: NSObject, ObservableObject {
     }
 
     /// The camera as listed in the Mac's Bluetooth settings, if it is there.
-    static func pairedDevice(named name: String) -> IOBluetoothDevice? {
+    nonisolated static func pairedDevice(named name: String) -> IOBluetoothDevice? {
         (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []).first { $0.name == name }
     }
 
