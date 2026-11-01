@@ -236,6 +236,7 @@ struct ShortcutHelp: View {
         ("⌘Z / ⇧⌘Z", "편집: 실행 취소 / 다시 실행"),
         ("⇧⌘C / ⇧⌘V", "편집: 설정 복사 / 붙여넣기"),
         ("⇧⌘E", "편집: 다른 이름으로 저장"),
+        ("R / Return", "편집: 자르기 시작 / 완료"),
     ]
 
     var body: some View {
@@ -814,12 +815,14 @@ struct InfoPanel: View {
     let photo: Photo
     let histogram: Histogram?
     let image: NSImage?
-    @State private var exif: [(String, String)] = []
+    @State private var metadata: PhotoMetadata?
+    @State private var loading = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if photo.kind != .video { HistogramView(histogram: histogram) }
+                if let metadata { ShotChips(metadata: metadata) }
                 Text(photo.name).font(.headline)
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 5) {
                     ForEach(rows, id: \.0) { row in
@@ -830,6 +833,12 @@ struct InfoPanel: View {
                         .font(.caption)
                     }
                 }
+                if loading {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("카메라에서 촬영 정보 읽는 중…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if let url = library.localURL(photo) {
                     Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                         .controlSize(.small)
@@ -838,49 +847,41 @@ struct InfoPanel: View {
             .padding(12)
         }
         .frame(width: 250)
-        .task(id: library.localURL(photo)) { exif = Self.readExif(library.localURL(photo)) }
+        .task(id: "\(photo.id)#\(library.localURL(photo)?.path ?? "")") { await load() }
     }
 
     private var rows: [(String, String)] {
         var out: [(String, String)] = [("폴더", photo.dir)]
-        let info = library.infos[photo.id]
-        if let date = info?.date {
+        if let date = library.infos[photo.id]?.date {
             out.append(("촬영", date.formatted(date: .abbreviated, time: .standard)))
         }
-        if exif.isEmpty, let extras = info?.extras {
-            let labels = [("cameraModel", "카메라"), ("tv", "셔터"), ("av", "조리개"), ("sv", "ISO"), ("xv", "노출 보정"),
-                          ("focalLength", "초점 거리"), ("size", "크기"), ("aspectRatio", "비율")]
-            for (key, label) in labels { if let v = extras[key] { out.append((label, v)) } }
-        }
-        out.append(contentsOf: exif)
-        if exif.isEmpty, let image, let rep = image.representations.first {
-            out.append(("표시 크기", "\(rep.pixelsWide) × \(rep.pixelsHigh)"))
-        }
+        if let camera = metadata?.camera { out.append(("카메라", camera)) }
+        let size = [metadata?.pixelSize, metadata?.fileSize].compactMap { $0 }
+        if !size.isEmpty { out.append(("크기", size.joined(separator: "\n"))) }
         out.append(("저장", library.localURL(photo).map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") } ?? "미저장"))
         return out
     }
 
-    private static func readExif(_ url: URL?) -> [(String, String)] {
-        guard let url, let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return [] }
-        let exif = p[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
-        let tiff = p[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
-        var out: [(String, String)] = []
-        if let model = tiff[kCGImagePropertyTIFFModel] as? String { out.append(("카메라", model)) }
-        if let t = exif[kCGImagePropertyExifExposureTime] as? Double {
-            out.append(("셔터", t >= 1 ? String(format: "%.1f초", t) : "1/\(Int((1 / t).rounded()))초"))
+    /// Saved file first; otherwise the head of the original from the camera.
+    private func load() async {
+        loading = false
+        if let url = library.localURL(photo) {
+            metadata = await Task.detached { PhotoMetadata.read(url) }.value
+            return
         }
-        if let f = exif[kCGImagePropertyExifFNumber] as? Double { out.append(("조리개", String(format: "f/%.1f", f))) }
-        if let iso = (exif[kCGImagePropertyExifISOSpeedRatings] as? [Int])?.first { out.append(("ISO", "\(iso)")) }
-        if let xv = exif[kCGImagePropertyExifExposureBiasValue] as? Double { out.append(("노출 보정", String(format: "%+.1f EV", xv))) }
-        if let fl = exif[kCGImagePropertyExifFocalLength] as? Double { out.append(("초점 거리", String(format: "%.1f mm", fl))) }
-        if let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int {
-            out.append(("크기", "\(w) × \(h)"))
+        if let cached = MetadataCache.entries[photo.id] {
+            metadata = cached
+            return
         }
-        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-            out.append(("파일 크기", ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))
-        }
-        return out
+        metadata = nil
+        guard photo.kind != .video else { return }
+        loading = true
+        defer { loading = false }
+        let fileSize = library.infos[photo.id]?.extras["size"].flatMap { Int64($0) }
+        guard let head = try? await CameraAPI.head(photo), !Task.isCancelled else { return }
+        let read = await Task.detached { PhotoMetadata.read(head: head, fileSize: fileSize) }.value
+        if let read { MetadataCache.entries[photo.id] = read }
+        metadata = read
     }
 }
 

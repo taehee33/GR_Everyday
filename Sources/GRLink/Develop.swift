@@ -3,24 +3,91 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 
-/// The only slider left: straightening. Color and tone sliders were removed because the
-/// camera's own processing can't be reproduced on the Mac.
+/// One slider in the edit panel. Each maps to one documented Apple Core Image filter
+/// (named in `filter`), the same engine Photos and Preview use. None of them imitates the
+/// camera's own processing.
 enum Param: String, CaseIterable, Identifiable {
+    case exposure, contrast, highlights, shadows
+    case temperature, tint, vibrance, saturation
+    case sharpness
     case straighten
 
     var id: String { rawValue }
-    var label: String { "수평 보정" }
-    var range: ClosedRange<Double> { -45...45 }
-    var step: Double { 0.1 }
-    func format(_ value: Double) -> String { String(format: "%+.1f°", value) }
+
+    var label: String {
+        switch self {
+        case .exposure: return "노출"
+        case .contrast: return "대비"
+        case .highlights: return "하이라이트"
+        case .shadows: return "섀도"
+        case .temperature: return "색온도"
+        case .tint: return "색조"
+        case .vibrance: return "생동감"
+        case .saturation: return "채도"
+        case .sharpness: return "선명도"
+        case .straighten: return "수평 보정"
+        }
+    }
+
+    var filter: String {
+        switch self {
+        case .exposure: return "CIExposureAdjust (EV)"
+        case .contrast, .saturation: return "CIColorControls"
+        case .highlights, .shadows: return "CIHighlightShadowAdjust"
+        case .temperature, .tint: return "CITemperatureAndTint"
+        case .vibrance: return "CIVibrance"
+        case .sharpness: return "CISharpenLuminance"
+        case .straighten: return "회전 변환"
+        }
+    }
+
+    var range: ClosedRange<Double> {
+        switch self {
+        case .exposure: return -3...3
+        case .highlights: return -100...0
+        case .sharpness: return 0...100
+        case .straighten: return -45...45
+        default: return -100...100
+        }
+    }
+
+    var step: Double {
+        switch self {
+        case .exposure: return 0.05
+        case .straighten: return 0.1
+        default: return 1
+        }
+    }
+
+    func format(_ value: Double) -> String {
+        switch self {
+        case .exposure: return String(format: "%+.2f EV", value)
+        case .straighten: return String(format: "%+.1f°", value)
+        default: return value == 0 ? "0" : String(format: "%+.0f", value)
+        }
+    }
+
+    enum Group: String, CaseIterable, Identifiable {
+        case light = "빛", color = "색", detail = "디테일"
+        var id: String { rawValue }
+        var params: [Param] {
+            switch self {
+            case .light: return [.exposure, .contrast, .highlights, .shadows]
+            case .color: return [.temperature, .tint, .vibrance, .saturation]
+            case .detail: return [.sharpness]
+            }
+        }
+    }
 }
 
-/// Geometry-only edits: rotation, mirror and straighten. No color or tone changes.
+/// Edits kept per photo; the saved file itself is never changed.
 struct Adjustments: Codable, Hashable {
     var values: [String: Double] = [:]
     /// Clockwise quarter turns.
     var quarterTurns = 0
     var flipped = false
+    /// x, y, width, height as fractions of the rotated / straightened image, origin top-left.
+    var crop: [Double]?
 
     init() {}
 
@@ -31,7 +98,22 @@ struct Adjustments: Codable, Hashable {
 
     var isDefault: Bool { self == Adjustments() }
 
-    private enum CodingKeys: String, CodingKey { case values, quarterTurns, flipped }
+    var cropRect: CGRect? {
+        get { crop.map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) } }
+        set {
+            guard let r = newValue, r.width < 0.999 || r.height < 0.999 else { crop = nil; return }
+            crop = [r.minX, r.minY, r.width, r.height]
+        }
+    }
+
+    /// Same edits without the crop, for showing the whole frame while cropping.
+    var uncropped: Adjustments {
+        var a = self
+        a.crop = nil
+        return a
+    }
+
+    private enum CodingKeys: String, CodingKey { case values, quarterTurns, flipped, crop }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -40,6 +122,7 @@ struct Adjustments: Codable, Hashable {
         values = ((try? c.decode([String: Double].self, forKey: .values)) ?? [:]).filter { known.contains($0.key) }
         quarterTurns = (try? c.decode(Int.self, forKey: .quarterTurns)) ?? 0
         flipped = (try? c.decode(Bool.self, forKey: .flipped)) ?? false
+        crop = (try? c.decode([Double].self, forKey: .crop)).flatMap { $0.count == 4 ? $0 : nil }
     }
 }
 
@@ -88,7 +171,52 @@ enum DevelopEngine {
         context.createCGImage(image, from: image.extent.integral, format: .RGBA8, colorSpace: sRGB)
     }
 
-    static func apply(_ adj: Adjustments, to input: CIImage) -> CIImage { geometry(adj, input) }
+    static func apply(_ adj: Adjustments, to input: CIImage) -> CIImage {
+        var image = geometry(adj, input)
+        if let r = adj.cropRect {
+            let e = image.extent
+            let rect = CGRect(x: e.minX + r.minX * e.width, y: e.minY + (1 - r.maxY) * e.height,
+                              width: r.width * e.width, height: r.height * e.height).integral
+            image = image.cropped(to: rect).transformed(by: CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
+        }
+        let extent = image.extent
+        if adj[.temperature] != 0 || adj[.tint] != 0 {
+            // A higher target neutral renders cooler, so +색온도 lowers it (warmer).
+            image = image.applyingFilter("CITemperatureAndTint", parameters: [
+                "inputNeutral": CIVector(x: 6500, y: 0),
+                // Same for tint: a negative target tint renders magenta, so +색조 = magenta.
+                "inputTargetNeutral": CIVector(x: 6500 - adj[.temperature] * 30, y: -adj[.tint]),
+            ])
+        }
+        if adj[.exposure] != 0 {
+            image = image.applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: adj[.exposure]])
+        }
+        if adj[.highlights] != 0 || adj[.shadows] != 0 {
+            image = image.applyingFilter("CIHighlightShadowAdjust", parameters: [
+                "inputHighlightAmount": 1 + adj[.highlights] / 100,
+                "inputShadowAmount": adj[.shadows] / 100,
+            ])
+        }
+        if adj[.contrast] != 0 {
+            // Pivot on perceptual mid-gray: in Core Image's linear space it would mostly darken.
+            image = image.applyingFilter("CILinearToSRGBToneCurve")
+                .applyingFilter("CIColorControls", parameters: [kCIInputContrastKey: 1 + adj[.contrast] / 200])
+                .applyingFilter("CISRGBToneCurveToLinear")
+        }
+        if adj[.saturation] != 0 {
+            image = image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1 + adj[.saturation] / 100])
+        }
+        if adj[.vibrance] != 0 {
+            image = image.applyingFilter("CIVibrance", parameters: ["inputAmount": adj[.vibrance] / 100])
+        }
+        if adj[.sharpness] > 0 {
+            let scale = max(extent.width, extent.height) / 2000
+            image = image.applyingFilter("CISharpenLuminance", parameters: [
+                kCIInputSharpnessKey: adj[.sharpness] / 100, kCIInputRadiusKey: max(1, 1.5 * scale),
+            ])
+        }
+        return image.cropped(to: extent)
+    }
 
     /// Rotation, mirror and straighten (zoomed in just enough to keep the corners filled).
     static func geometry(_ adj: Adjustments, _ input: CIImage) -> CIImage {
@@ -171,9 +299,11 @@ struct Histogram: Equatable {
         }
         // Ignore the clipped end bins when scaling, so a blown sky doesn't flatten the rest.
         let peak = max(1, [red, green, blue, luma].flatMap { $0[1..<63] }.max() ?? 1)
-        red = red.map { min(1, $0 / peak) }
-        green = green.map { min(1, $0 / peak) }
-        blue = blue.map { min(1, $0 / peak) }
-        luma = luma.map { min(1, $0 / peak) }
+        // Square-root scale, so one dark or bright peak doesn't flatten the rest.
+        let scale: (Double) -> Double = { min(1, ($0 / peak).squareRoot()) }
+        red = red.map(scale)
+        green = green.map(scale)
+        blue = blue.map(scale)
+        luma = luma.map(scale)
     }
 }

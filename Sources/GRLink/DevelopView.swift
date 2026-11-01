@@ -30,11 +30,17 @@ struct DevelopView: View {
                 return
             }
             await session.load(url)
-            session.render(library.adjustments(photo))
+            renderCurrent()
         }
-        .onChange(of: library.current.map { library.adjustments($0) }) { _, adj in
-            if let adj { session.render(adj) }
-        }
+        .onChange(of: library.current.map { library.adjustments($0) }) { _, _ in renderCurrent() }
+        .onChange(of: session.cropping) { _, _ in renderCurrent() }
+    }
+
+    /// While cropping, the whole frame is shown so the box can be moved anywhere.
+    private func renderCurrent() {
+        guard let photo = library.current else { return }
+        let adj = library.adjustments(photo)
+        session.render(session.cropping ? adj.uncropped : adj)
     }
 
     @ViewBuilder private var main: some View {
@@ -68,6 +74,26 @@ struct DevelopView: View {
     }
 
     @ViewBuilder private var canvas: some View {
+        if session.cropping, let photo = library.current {
+            CropEditor(image: session.rendered, rect: Binding(
+                get: { library.adjustments(photo).cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1) },
+                set: { r in
+                    var a = library.adjustments(photo)
+                    a.cropRect = r
+                    library.setAdjustments(a, for: photo)
+                }
+            ), aspect: session.uncroppedSize.flatMap {
+                session.cropAspect.ratio(original: $0.width / $0.height, portrait: session.cropPortrait)
+            }, onBegin: {
+                session.undoStack.append(library.adjustments(photo))
+                session.redoStack = []
+            })
+        } else {
+            compareCanvas
+        }
+    }
+
+    @ViewBuilder private var compareCanvas: some View {
         let after = library.showOriginal ? session.original : session.rendered
         switch library.compare {
         case .off:
@@ -135,6 +161,11 @@ final class DevelopSession: ObservableObject {
     @Published private(set) var rendered: NSImage?
     @Published private(set) var histogram: Histogram?
     @Published var busy: String?
+    @Published var cropping = false
+    @Published var cropAspect = CropAspect.free
+    @Published var cropPortrait = false
+    /// Pixel size of the frame before cropping (rotation and straighten applied).
+    @Published private(set) var uncroppedSize: CGSize?
 
     private var proxy: CIImage?
     private var rendering = false
@@ -150,6 +181,8 @@ final class DevelopSession: ObservableObject {
         rendered = nil
         histogram = nil
         loadedURL = nil
+        cropping = false
+        uncroppedSize = nil
     }
 
     func load(_ url: URL) async {
@@ -179,6 +212,7 @@ final class DevelopSession: ObservableObject {
             }.value
             if let (cg, histogram) = out, self.proxy === proxy {
                 rendered = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
+                if adj.crop == nil { uncroppedSize = CGSize(width: cg.width, height: cg.height) }
                 self.histogram = histogram
             }
             rendering = false
@@ -225,6 +259,25 @@ private struct DevelopFooter: View {
 /// Copied settings, shared across photos (⇧⌘C / ⇧⌘V).
 @MainActor private var copiedAdjustments: Adjustments?
 
+enum CropAspect: String, CaseIterable, Identifiable {
+    case free = "자유", original = "원본 비율", square = "1:1", fourThree = "4:3", threeTwo = "3:2", sixteenNine = "16:9"
+    var id: String { rawValue }
+
+    /// Width / height in pixels, or nil for free.
+    func ratio(original: CGFloat, portrait: Bool) -> CGFloat? {
+        let r: CGFloat
+        switch self {
+        case .free: return nil
+        case .original: return original
+        case .square: return 1
+        case .fourThree: r = 4.0 / 3
+        case .threeTwo: r = 3.0 / 2
+        case .sixteenNine: r = 16.0 / 9
+        }
+        return portrait ? 1 / r : r
+    }
+}
+
 private struct DevelopPanel: View {
     @EnvironmentObject var library: LibraryModel
     let photo: Photo
@@ -235,6 +288,7 @@ private struct DevelopPanel: View {
     @AppStorage("exportQuality") private var quality = 0.92
     @State private var message: String?
     @State private var hasCopy = copiedAdjustments != nil
+    @State private var metadata: PhotoMetadata?
 
     private var adj: Adjustments { library.adjustments(photo) }
 
@@ -249,37 +303,96 @@ private struct DevelopPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
                     HistogramView(histogram: session.histogram)
+                    if let metadata { ShotChips(metadata: metadata) }
+                    ForEach(Param.Group.allCases) { group in
+                        PanelBox(title: group.rawValue, canReset: group.params.contains { adj[$0] != 0 }) {
+                            change { a in group.params.forEach { a[$0] = 0 } }
+                        } content: {
+                            ForEach(group.params) { param in
+                                ParamSlider(param: param, value: binding(param), onBegin: snapshot)
+                            }
+                        }
+                    }
                     geometry
+                    Text("보정은 Apple Core Image 기본 필터(macOS 사진 앱과 같은 엔진)로 처리하며, 카메라의 이미지 컨트롤이나 카메라 내부 처리와는 다릅니다. 슬라이더 이름에 마우스를 올리면 쓰는 필터가 보입니다.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(12)
             }
             Divider()
             actions
         }
-        .frame(width: 290)
+        .frame(width: 300)
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline.bold())
-            content()
+        .task(id: source) {
+            let url = source
+            metadata = await Task.detached { PhotoMetadata.read(url) }.value
         }
     }
 
     private var geometry: some View {
-        section("회전·반전·수평") {
-            HStack {
-                Button { change { $0.quarterTurns -= 1 } } label: { Image(systemName: "rotate.left") }.help("왼쪽으로 90°")
-                Button { change { $0.quarterTurns += 1 } } label: { Image(systemName: "rotate.right") }.help("오른쪽으로 90°")
-                Button { change { $0.flipped.toggle() } } label: { Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right") }
-                    .help("좌우 반전")
-                Spacer()
+        PanelBox(title: "자르기·회전",
+                 canReset: adj.quarterTurns != 0 || adj.flipped || adj.crop != nil || adj[.straighten] != 0) {
+            change { $0.quarterTurns = 0; $0.flipped = false; $0.crop = nil; $0[.straighten] = 0 }
+        } content: {
+            HStack(spacing: 6) {
+                Button { change { $0.quarterTurns -= 1; $0.crop = nil } } label: {
+                    Label("왼쪽", systemImage: "rotate.left")
+                }
+                .help("왼쪽으로 90° (자르기는 초기화)")
+                Button { change { $0.quarterTurns += 1; $0.crop = nil } } label: {
+                    Label("오른쪽", systemImage: "rotate.right")
+                }
+                .help("오른쪽으로 90° (자르기는 초기화)")
+                Button { change { $0.flipped.toggle(); $0.crop = nil } } label: {
+                    Label("반전", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                }
+                .help("좌우 반전 (자르기는 초기화)")
             }
+            .controlSize(.small)
+            .labelStyle(.titleAndIcon)
+
+            HStack(spacing: 6) {
+                Button {
+                    if !session.cropping { snapshot() }
+                    session.cropping.toggle()
+                } label: {
+                    Label(session.cropping ? "자르기 완료" : "자르기", systemImage: "crop")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(session.cropping ? .accentColor : .gray)
+                .keyboardShortcut(session.cropping ? .return : "r", modifiers: [])
+                .help("R: 자르기 시작, Return: 완료")
+                Picker("", selection: $session.cropAspect) {
+                    ForEach(CropAspect.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                Toggle("세로", isOn: $session.cropPortrait)
+                    .toggleStyle(.checkbox)
+                    .disabled(session.cropAspect == .free || session.cropAspect == .square)
+            }
+            .controlSize(.small)
+            .onChange(of: session.cropAspect) { _, _ in applyAspect() }
+            .onChange(of: session.cropPortrait) { _, _ in applyAspect() }
+
             ParamSlider(param: .straighten, value: binding(.straighten), onBegin: snapshot)
         }
+    }
+
+    /// Fits the largest box of the chosen ratio inside the current crop, centered.
+    private func applyAspect() {
+        guard let image = session.uncroppedSize,
+              let ratio = session.cropAspect.ratio(original: image.width / image.height, portrait: session.cropPortrait) else { return }
+        let current = adj.cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let normalized = ratio * image.height / image.width
+        var w = current.width, h = w / normalized
+        if h > current.height { h = current.height; w = h * normalized }
+        change { $0.cropRect = CGRect(x: current.midX - w / 2, y: current.midY - h / 2, width: w, height: h) }
+        if !session.cropping { session.cropping = true }
     }
 
     private var actions: some View {
@@ -299,7 +412,7 @@ private struct DevelopPanel: View {
                     library.setAdjustments(Adjustments(), for: photo)
                 }
                 .disabled(adj.isDefault)
-                .help("모든 조정을 지웁니다 (실행 취소 가능)")
+                .help("모든 편집을 지웁니다 (실행 취소 가능)")
                 Spacer()
                 Menu {
                     Button("설정 복사") {
@@ -326,6 +439,7 @@ private struct DevelopPanel: View {
                 .labelsHidden()
                 .fixedSize()
                 if ExportFormat(rawValue: formatRaw)?.isLossy ?? true {
+                    Text("품질").font(.caption).foregroundStyle(.secondary)
                     Slider(value: $quality, in: 0.5...1).controlSize(.small)
                     Text("\(Int(quality * 100))").font(.caption.monospacedDigit()).frame(width: 26)
                 } else {
@@ -403,6 +517,29 @@ private struct DevelopPanel: View {
     }
 }
 
+/// A titled group in the edit panel with its own reset.
+private struct PanelBox<Content: View>: View {
+    let title: String
+    var canReset: Bool
+    var reset: () -> Void
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.subheadline.bold())
+                Spacer()
+                if canReset {
+                    Button("초기화", action: reset).buttonStyle(.link).font(.caption)
+                }
+            }
+            content
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
 /// Label (double-click resets), slider and an editable number.
 private struct ParamSlider: View {
     let param: Param
@@ -412,21 +549,21 @@ private struct ParamSlider: View {
     @FocusState private var editing: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text(param.label)
-                .font(.caption)
+                .font(.callout)
                 .foregroundStyle(value == 0 ? .secondary : .primary)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
                 .onTapGesture(count: 2) { onBegin(); value = 0 }
-                .help("더블클릭하면 0으로")
+                .help("\(param.filter) · 더블클릭하면 0으로")
             Slider(value: Binding(get: { value }, set: { value = ($0 / param.step).rounded() * param.step }),
                    in: param.range, onEditingChanged: { if $0 { onBegin() } })
-                .controlSize(.mini)
+                .controlSize(.small)
             TextField("", text: $text)
                 .font(.caption.monospacedDigit())
                 .multilineTextAlignment(.trailing)
                 .textFieldStyle(.plain)
-                .frame(width: 46)
+                .frame(width: 58)
                 .focused($editing)
                 .onSubmit(commit)
                 .onChange(of: editing) { _, now in if !now { commit() } }
@@ -437,10 +574,117 @@ private struct ParamSlider: View {
 
     private func commit() {
         let cleaned = text.replacingOccurrences(of: "°", with: "").replacingOccurrences(of: "+", with: "")
+            .replacingOccurrences(of: "EV", with: "")
         if let v = Double(cleaned.trimmingCharacters(in: .whitespaces)) {
             onBegin()
             value = min(max(v, param.range.lowerBound), param.range.upperBound)
         }
         text = param.format(value)
+    }
+}
+
+/// Crop box over the whole (uncropped) frame: drag inside to move, corners to resize.
+private struct CropEditor: View {
+    let image: NSImage?
+    @Binding var rect: CGRect
+    let aspect: CGFloat?
+    var onBegin: () -> Void
+    @State private var start: CGRect?
+
+    private enum Corner: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    var body: some View {
+        GeometryReader { geo in
+            let fit = fitRect(in: geo.size)
+            let box = CGRect(x: fit.minX + rect.minX * fit.width, y: fit.minY + rect.minY * fit.height,
+                             width: rect.width * fit.width, height: rect.height * fit.height)
+            ZStack(alignment: .topLeading) {
+                Color.black
+                if let image {
+                    Image(nsImage: image).resizable()
+                        .frame(width: fit.width, height: fit.height)
+                        .position(x: fit.midX, y: fit.midY)
+                }
+                Path { p in p.addRect(fit); p.addRect(box) }
+                    .fill(Color.black.opacity(0.6), style: FillStyle(eoFill: true))
+                    .allowsHitTesting(false)
+                Path { p in
+                    for i in 1...2 {
+                        let x = box.minX + box.width * CGFloat(i) / 3, y = box.minY + box.height * CGFloat(i) / 3
+                        p.move(to: CGPoint(x: x, y: box.minY)); p.addLine(to: CGPoint(x: x, y: box.maxY))
+                        p.move(to: CGPoint(x: box.minX, y: y)); p.addLine(to: CGPoint(x: box.maxX, y: y))
+                    }
+                }
+                .stroke(Color.white.opacity(0.4), lineWidth: 0.5)
+                .allowsHitTesting(false)
+                Rectangle()
+                    .strokeBorder(Color.white, lineWidth: 1.5)
+                    .contentShape(Rectangle())
+                    .frame(width: box.width, height: box.height)
+                    .position(x: box.midX, y: box.midY)
+                    .gesture(DragGesture().onChanged { v in move(v.translation, fit: fit) }.onEnded { _ in start = nil })
+                    .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
+                ForEach(Corner.allCases, id: \.self) { corner in
+                    let p = point(corner, of: box)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.white)
+                        .frame(width: 14, height: 14)
+                        .shadow(radius: 1)
+                        .position(p)
+                        .gesture(DragGesture().onChanged { v in resize(corner, v.translation, fit: fit) }.onEnded { _ in start = nil })
+                }
+            }
+        }
+    }
+
+    private func fitRect(in size: CGSize) -> CGRect {
+        guard let rep = image?.representations.first, rep.pixelsWide > 0 else { return .zero }
+        let pw = CGFloat(rep.pixelsWide), ph = CGFloat(rep.pixelsHigh)
+        let s = min((size.width - 40) / pw, (size.height - 40) / ph)
+        let w = pw * s, h = ph * s
+        return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
+    }
+
+    private func point(_ c: Corner, of r: CGRect) -> CGPoint {
+        switch c {
+        case .topLeft: return CGPoint(x: r.minX, y: r.minY)
+        case .topRight: return CGPoint(x: r.maxX, y: r.minY)
+        case .bottomLeft: return CGPoint(x: r.minX, y: r.maxY)
+        case .bottomRight: return CGPoint(x: r.maxX, y: r.maxY)
+        }
+    }
+
+    private func begin() -> CGRect {
+        if let start { return start }
+        onBegin()
+        start = rect
+        return rect
+    }
+
+    private func move(_ t: CGSize, fit: CGRect) {
+        guard fit.width > 0 else { return }
+        let s = begin()
+        let x = min(max(s.minX + t.width / fit.width, 0), 1 - s.width)
+        let y = min(max(s.minY + t.height / fit.height, 0), 1 - s.height)
+        rect = CGRect(x: x, y: y, width: s.width, height: s.height)
+    }
+
+    private func resize(_ c: Corner, _ t: CGSize, fit: CGRect) {
+        guard fit.width > 0 else { return }
+        let s = begin()
+        let left = c == .topLeft || c == .bottomLeft, top = c == .topLeft || c == .topRight
+        // The opposite corner stays put.
+        let fx = left ? s.maxX : s.minX, fy = top ? s.maxY : s.minY
+        let mx = min(max((left ? s.minX : s.maxX) + t.width / fit.width, 0), 1)
+        let my = min(max((top ? s.minY : s.maxY) + t.height / fit.height, 0), 1)
+        var w = max(abs(fx - mx), 0.05), h = max(abs(fy - my), 0.05)
+        if let aspect {
+            let n = aspect * fit.height / fit.width
+            h = w / n
+            let maxH = top ? fy : 1 - fy, maxW = left ? fx : 1 - fx
+            if h > maxH { h = maxH; w = h * n }
+            if w > maxW { w = maxW; h = w / n }
+        }
+        rect = CGRect(x: left ? fx - w : fx, y: top ? fy - h : fy, width: w, height: h)
     }
 }
