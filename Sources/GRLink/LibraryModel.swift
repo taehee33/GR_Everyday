@@ -100,6 +100,7 @@ final class LibraryModel: ObservableObject {
         skipExisting = UserDefaults.standard.object(forKey: "skipExisting") as? Bool ?? true
         revealAfterSave = UserDefaults.standard.bool(forKey: "revealAfterSave")
         filmstrip = UserDefaults.standard.object(forKey: "filmstrip") as? Bool ?? true
+        infos = Self.readInfoCache()
         loadStore()
     }
 
@@ -263,16 +264,54 @@ final class LibraryModel: ObservableObject {
     }
 
     /// One small request per photo, newest first, so the top of the grid fills in first.
+    /// Shooting time and orientation don't change once a photo exists, so they're kept on
+    /// disk; only photos not seen before are asked for, one small request each, newest first.
     private func loadInfos() {
         infoTask?.cancel()
         let pending = photos.reversed().filter { infos[$0.id] == nil }
         infoTask = Task { [weak self] in
+            var sinceWrite = 0
             for photo in pending {
-                if Task.isCancelled { return }
+                if Task.isCancelled { break }
                 guard let info = try? await CameraAPI.info(photo) else { continue }
                 self?.infos[photo.id] = info
+                sinceWrite += 1
+                if sinceWrite >= 20 { self?.writeInfoCache(); sinceWrite = 0 }
             }
+            self?.writeInfoCache()
         }
+    }
+
+    private static var infoCacheURL: URL {
+        ImageCache.folder.appendingPathComponent("photo-info-\(CameraAPI.base.host ?? "camera").json")
+    }
+
+    private static func readInfoCache() -> [String: PhotoInfo] {
+        guard let data = try? Data(contentsOf: infoCacheURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: PhotoInfo].self, from: data)) ?? [:]
+    }
+
+    private func writeInfoCache() {
+        guard let data = try? JSONEncoder().encode(infos) else { return }
+        try? FileManager.default.createDirectory(at: ImageCache.folder, withIntermediateDirectories: true)
+        try? data.write(to: Self.infoCacheURL, options: .atomic)
+    }
+
+    /// Thumbnails, dates and downloaded movies kept in ~/Library/Caches/GR Mac.
+    var cacheSize: Int64 {
+        let files = FileManager.default.enumerator(at: ImageCache.folder, includingPropertiesForKeys: [.fileSizeKey])
+        return (files?.allObjects as? [URL] ?? []).reduce(0) {
+            $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    func clearCaches() {
+        infoTask?.cancel()
+        try? FileManager.default.removeItem(at: ImageCache.folder)
+        ImageCache.shared.clear()
+        MetadataCache.entries = [:]
+        infos = [:]
+        if !photos.isEmpty { loadInfos() }
     }
 
     /// File names in the save folder and its date subfolders (one level down).
@@ -429,19 +468,61 @@ enum Downloader {
 }
 
 /// Thumbnail / preview cache. The camera serves 160×120 thumbs and 720×480 / 1920×1280 previews.
+/// Each image is downloaded once and rotated locally for each orientation; thumbnails are
+/// also kept on disk, so reopening the library doesn't ask the camera for them again.
 @MainActor
 final class ImageCache {
     static let shared = ImageCache()
-    private let cache = NSCache<NSString, NSImage>()
+    private let originals = NSCache<NSString, NSImage>()
+    private let oriented = NSCache<NSString, NSImage>()
+    private var inFlight: [URL: Task<NSImage?, Never>] = [:]
+
+    static var folder: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("GR Mac", isDirectory: true)
+    }
 
     func image(for url: URL, orientation: Int = 1) async -> NSImage? {
         let key = "\(url.absoluteString)#\(orientation)" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
-        guard let (data, _) = try? await CameraAPI.session.data(from: url),
-              let image = NSImage(data: data) else { return nil }
-        let oriented = image.upright(orientation)
-        cache.setObject(oriented, forKey: key)
-        return oriented
+        if let hit = oriented.object(forKey: key) { return hit }
+        guard let image = await original(url) else { return nil }
+        let result = image.upright(orientation)
+        oriented.setObject(result, forKey: key)
+        return result
+    }
+
+    func clear() {
+        originals.removeAllObjects()
+        oriented.removeAllObjects()
+    }
+
+    private func original(_ url: URL) async -> NSImage? {
+        let key = url.absoluteString as NSString
+        if let hit = originals.object(forKey: key) { return hit }
+        if let running = inFlight[url] { return await running.value }
+        let task = Task { () -> NSImage? in
+            let disk = Self.diskURL(url)
+            if let disk, let data = try? Data(contentsOf: disk), let image = NSImage(data: data) { return image }
+            guard let (data, response) = try? await CameraAPI.session.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let image = NSImage(data: data) else { return nil }
+            if let disk {
+                try? FileManager.default.createDirectory(at: disk.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? data.write(to: disk, options: .atomic)
+            }
+            return image
+        }
+        inFlight[url] = task
+        let image = await task.value
+        inFlight[url] = nil
+        if let image { originals.setObject(image, forKey: key) }
+        return image
+    }
+
+    /// Only thumbnails go to disk (a few KB each); previews stay in memory.
+    private static func diskURL(_ url: URL) -> URL? {
+        guard url.query?.contains("size=thumb") == true else { return nil }
+        let parts = url.pathComponents.suffix(2).joined(separator: "_")
+        return folder.appendingPathComponent("thumbs/\(url.host ?? "camera")/\(parts).jpg")
     }
 }
 

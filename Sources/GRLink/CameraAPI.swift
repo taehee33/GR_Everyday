@@ -95,6 +95,31 @@ struct CameraAPI {
                          orientation: json["orientation"] as? Int ?? 1, extras: extras)
     }
 
+    /// The first `limit` bytes of the original file: enough for its EXIF and maker note.
+    /// Asks for a byte range and stops reading at the limit either way, so it works whether
+    /// or not the camera honours ranges.
+    static func head(_ photo: Photo, limit: Int = 512 * 1024) async throws -> Data {
+        var req = URLRequest(url: photoURL(photo), timeoutInterval: 15)
+        req.setValue("bytes=0-\(limit - 1)", forHTTPHeaderField: "Range")
+        let (bytes, response) = try await session.bytes(for: req)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 || status == 206 else { throw APIError(message: "HTTP \(status)") }
+        var data = Data()
+        data.reserveCapacity(limit)
+        var buffer = [UInt8]()
+        buffer.reserveCapacity(16 * 1024)
+        for try await byte in bytes {
+            buffer.append(byte)
+            if buffer.count == buffer.capacity {
+                data.append(contentsOf: buffer)
+                buffer.removeAll(keepingCapacity: true)
+                if data.count >= limit { break }
+            }
+        }
+        data.append(contentsOf: buffer)
+        return data.prefix(limit)
+    }
+
     /// The focus method lives under /params/lens; everything else under /params/camera.
     static func setParams(_ params: [String: String]) async throws {
         var camera = params
@@ -135,7 +160,7 @@ struct Photo: Identifiable, Hashable {
     }
 }
 
-struct PhotoInfo: Hashable {
+struct PhotoInfo: Hashable, Codable {
     let date: Date?
     let orientation: Int
     var extras: [String: String] = [:]

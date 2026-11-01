@@ -152,9 +152,9 @@ struct PhotoCanvas: View {
     var split: CGFloat? = nil
     var onNavigate: (Int) -> Void = { _ in }
 
-    @AppStorage("loupeScroll") private var scrollAction = ScrollAction.pan
-    @AppStorage("loupeDrag") private var dragAction = DragAction.panSwipe
-    @AppStorage("loupeClick") private var clickAction = ClickAction.single
+    @AppStorage("loupeScroll") private var scrollAction = ScrollAction.zoom
+    @AppStorage("loupeDrag") private var dragAction = DragAction.pan
+    @AppStorage("loupeClick") private var clickAction = ClickAction.double
     @AppStorage("invertNavigateScroll") private var invertNavigate = false
 
     @State private var dragStartOffset: CGSize?
@@ -372,10 +372,7 @@ struct VideoViewer: View {
         .onDisappear { player?.pause() }
     }
 
-    static var cacheFolder: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("GR Mac/videos", isDirectory: true)
-    }
+    static var cacheFolder: URL { ImageCache.folder.appendingPathComponent("videos", isDirectory: true) }
 
     private func open() async {
         player?.pause()

@@ -27,10 +27,11 @@ struct AppSettingsView: View {
     @EnvironmentObject var library: LibraryModel
     @AppStorage("thumbSize") private var thumbSize = 150.0
     @AppStorage("restoreWiFi") private var restoreWiFi = true
+    @State private var cacheSize: Int64 = 0
     @AppStorage("turnOffCameraWiFi") private var turnOffCameraWiFi = false
-    @AppStorage("loupeScroll") private var loupeScroll = ScrollAction.pan
-    @AppStorage("loupeDrag") private var loupeDrag = DragAction.panSwipe
-    @AppStorage("loupeClick") private var loupeClick = ClickAction.single
+    @AppStorage("loupeScroll") private var loupeScroll = ScrollAction.zoom
+    @AppStorage("loupeDrag") private var loupeDrag = DragAction.pan
+    @AppStorage("loupeClick") private var loupeClick = ClickAction.double
     @AppStorage("invertNavigateScroll") private var invertNavigate = false
     @AppStorage("gridDrag") private var gridDrag = GridDragAction.select
     @AppStorage("modifierScrollResizesGrid") private var modifierScrollResizes = true
@@ -121,6 +122,24 @@ struct AppSettingsView: View {
             } footer: {
                 Text("카메라 등록·이름 바꾸기·삭제와 Wi-Fi 정보는 ‘카메라’ 탭에서 합니다. 등록된 카메라 \(connection.cameras.count)대.")
             }
+
+            Section {
+                LabeledContent("저장된 캐시") {
+                    HStack {
+                        Text(ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
+                            .foregroundStyle(.secondary)
+                        Button("비우기") {
+                            library.clearCaches()
+                            cacheSize = library.cacheSize
+                        }
+                    }
+                }
+            } header: {
+                Text("캐시")
+            } footer: {
+                Text("썸네일, 촬영 날짜·방향, 재생하려고 받은 동영상을 Mac에 남겨 두어 라이브러리를 다시 열 때 카메라에 묻지 않습니다. 카메라 메모리 카드를 포맷해 파일 이름(R000xxxx)이 다시 쓰이면 비워 주세요.")
+            }
+            .task { cacheSize = library.cacheSize }
 
             Section("정보") {
                 LabeledContent("버전", value: version)
