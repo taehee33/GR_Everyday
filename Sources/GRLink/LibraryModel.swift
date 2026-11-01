@@ -66,6 +66,8 @@ final class LibraryModel: ObservableObject {
     @Published var minRating = 0
     /// Saved files by name (the save folder and its date subfolders).
     @Published private(set) var localFiles: [String: URL] = [:]
+    /// EXIF orientation of saved files, by file name.
+    @Published private(set) var localOrientation: [String: Int] = [:]
     @Published var sort: Sort {
         didSet { UserDefaults.standard.set(sort.rawValue, forKey: "sort") }
     }
@@ -177,6 +179,29 @@ final class LibraryModel: ObservableObject {
 
     func setAdjustments(_ adj: Adjustments, for photo: Photo) {
         edits[photo.id] = adj.isDefault ? nil : adj
+    }
+
+    /// Turns photos a quarter at a time from the grid or loupe (⌘R / ⌥⌘R), without opening
+    /// 편집. Kept with the edits; written into the file's orientation when a camera photo is
+    /// saved (see download). Positive is clockwise.
+    func rotate(_ photos: [Photo], by turns: Int) {
+        for photo in photos where photo.kind != .video {
+            var adj = adjustments(photo)
+            adj.quarterTurns = ((adj.quarterTurns + turns) % 4 + 4) % 4
+            adj.crop = nil
+            setAdjustments(adj, for: photo)
+        }
+    }
+
+    /// EXIF orientation to show the camera's thumbnails and previews with: the saved file's
+    /// when there is one (it carries rotations made here or in other apps), else the camera's.
+    func orientation(_ photo: Photo) -> Int {
+        localOrientation[photo.name] ?? infos[photo.id]?.orientation ?? 1
+    }
+
+    /// Upright on screen taller than wide, counting a quarter turn made here.
+    func isPortrait(_ photo: Photo) -> Bool {
+        [5, 6, 7, 8].contains(orientation(photo)) != (adjustments(photo).quarterTurns % 2 != 0)
     }
 
     func rating(_ photo: Photo) -> Int { ratings[photo.id] ?? 0 }
@@ -424,6 +449,16 @@ final class LibraryModel: ObservableObject {
         }
         localFiles = files
         saved = Set(files.keys)
+        Task {
+            let read = await Task.detached(priority: .utility) {
+                files.compactMapValues { url -> Int? in
+                    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                          let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
+                    return p[kCGImagePropertyOrientation] as? Int
+                }
+            }.value
+            if read != localOrientation { localOrientation = read }
+        }
     }
 
     func selectAll() { selection = Set(visible.map(\.id)) }
@@ -519,8 +554,90 @@ final class LibraryModel: ObservableObject {
             throw CameraAPI.APIError(message: "크기 불일치 (\(size)/\(response.expectedContentLength))")
         }
         try? FileManager.default.removeItem(at: target)
+        // A rotation made in the library goes into the saved JPEG's orientation tag; the image
+        // data is copied as is, so nothing is recompressed. The edit is then dropped, since
+        // the file itself now shows the photo upright.
+        let adj = adjustments(photo)
+        let rotate = photo.kind == .jpeg && (adj.quarterTurns % 4 != 0 || adj.flipped)
+        if rotate {
+            let current = infos[photo.id]?.orientation ?? 1
+            try Self.writeOrientation(Self.orientation(current, turns: adj.quarterTurns, flipped: adj.flipped), of: file)
+        }
         try FileManager.default.moveItem(at: file, to: target)
+        if rotate {
+            var rest = adjustments(photo)
+            rest.quarterTurns = 0
+            rest.flipped = false
+            setAdjustments(rest, for: photo)
+        }
         progress(1)
+    }
+
+    /// EXIF orientation after turning an image `turns` quarters clockwise, then mirroring it
+    /// left to right, as DevelopEngine.geometry does. Orientations as 2×2 maps from stored to
+    /// shown pixels (y down).
+    nonisolated static func orientation(_ exif: Int, turns: Int, flipped: Bool) -> Int {
+        let maps: [Int: [Int]] = [1: [1, 0, 0, 1], 2: [-1, 0, 0, 1], 3: [-1, 0, 0, -1], 4: [1, 0, 0, -1],
+                                  5: [0, 1, 1, 0], 6: [0, -1, 1, 0], 7: [0, -1, -1, 0], 8: [0, 1, -1, 0]]
+        func times(_ a: [Int], _ b: [Int]) -> [Int] {
+            [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3]]
+        }
+        var m = maps[exif] ?? maps[1]!
+        for _ in 0..<(((turns % 4) + 4) % 4) { m = times(maps[6]!, m) }
+        if flipped { m = times(maps[2]!, m) }
+        return maps.first { $0.value == m }?.key ?? 1
+    }
+
+    /// Changes only the orientation value: the two bytes of tag 0x0112 in the JPEG's EXIF are
+    /// patched in place, so the image data, maker note and Ricoh's APP7 segment stay as the
+    /// camera wrote them. (ImageIO's lossless copy drops APP7.) Falls back to that copy only
+    /// when the file has no orientation tag.
+    nonisolated static func writeOrientation(_ value: Int, of url: URL) throws {
+        let failed = CameraAPI.APIError(message: "사진 방향을 저장하지 못했습니다")
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        let head = [UInt8](try handle.read(upToCount: 128 * 1024) ?? Data())
+        if let offset = orientationOffset(head) {
+            try handle.seek(toOffset: UInt64(offset.position))
+            let v = UInt16(value)
+            try handle.write(contentsOf: offset.littleEndian ? [UInt8(v & 0xFF), UInt8(v >> 8)] : [UInt8(v >> 8), UInt8(v & 0xFF)])
+            return
+        }
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let type = CGImageSourceGetType(src) else { throw failed }
+        let out = url.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+        guard let dest = CGImageDestinationCreateWithURL(out as CFURL, type, 1, nil) else { throw failed }
+        let options: [CFString: Any] = [kCGImageDestinationMergeMetadata: true, kCGImageDestinationOrientation: value]
+        guard CGImageDestinationCopyImageSource(dest, src, options as CFDictionary, nil) else {
+            try? FileManager.default.removeItem(at: out)
+            throw failed
+        }
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: out)
+    }
+
+    /// Where IFD0's Orientation (0x0112, SHORT) value sits in a JPEG's Exif segment.
+    nonisolated static func orientationOffset(_ b: [UInt8]) -> (position: Int, littleEndian: Bool)? {
+        guard b.count > 4, b[0] == 0xFF, b[1] == 0xD8 else { return nil }
+        var i = 2
+        while i + 10 < b.count, b[i] == 0xFF {
+            let length = Int(b[i + 2]) << 8 | Int(b[i + 3])
+            if b[i + 1] == 0xE1, b[(i + 4)..<(i + 10)].elementsEqual(Array("Exif\0\0".utf8)) {
+                let t = i + 10
+                guard t + 8 <= b.count else { return nil }
+                let le = b[t] == 0x49
+                func u16(_ p: Int) -> Int { le ? Int(b[p]) | Int(b[p + 1]) << 8 : Int(b[p]) << 8 | Int(b[p + 1]) }
+                func u32(_ p: Int) -> Int { le ? u16(p) | u16(p + 2) << 16 : u16(p) << 16 | u16(p + 2) }
+                let ifd = t + u32(t + 4)
+                guard ifd + 2 <= b.count else { return nil }
+                for k in 0..<u16(ifd) {
+                    let e = ifd + 2 + k * 12
+                    guard e + 12 <= b.count else { return nil }
+                    if u16(e) == 0x0112, u16(e + 2) == 3 { return (e + 8, le) }
+                }
+                return nil
+            }
+            i += 2 + length
+        }
+        return nil
     }
 }
 

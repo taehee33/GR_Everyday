@@ -91,6 +91,10 @@ struct LibraryView: View {
             .pickerStyle(.segmented)
             .fixedSize()
 
+            // A way of viewing, so it sits with the view modes; 선택 저장 stays rightmost.
+            Button { toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .help("전체화면 (F)")
+
             Button {
                 Task { await library.reload() }
             } label: { Image(systemName: "arrow.clockwise") }
@@ -155,8 +159,6 @@ struct LibraryView: View {
             .buttonStyle(.borderedProminent)
             .disabled(library.selection.isEmpty || library.isTransferring)
 
-            Button { toggleFullScreen() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                .help("전체화면 (F)")
             Button { showShortcuts.toggle() } label: { Image(systemName: "keyboard") }
                 .help("단축키")
                 .popover(isPresented: $showShortcuts) { ShortcutHelp() }
@@ -180,6 +182,11 @@ struct LibraryView: View {
 
     private func handleKey(_ e: NSEvent) -> Bool {
         let mods = e.modifierFlags.intersection([.command, .option, .control])
+        // ⌘R / ⌥⌘R, as in Photos.
+        if e.charactersIgnoringModifiers?.lowercased() == "r", mods == .command || mods == [.command, .option] {
+            library.rotate(targets, by: mods.contains(.option) ? -1 : 1)
+            return true
+        }
         guard mods.isEmpty else { return false }
         let shift = e.modifierFlags.contains(.shift)
         switch e.keyCode {
@@ -222,9 +229,6 @@ struct LibraryView: View {
         case "y": library.compare = library.compare == .sideBySide ? .off : .sideBySide
         case "0", "1", "2", "3", "4", "5":
             let n = Int(e.charactersIgnoringModifiers ?? "0") ?? 0
-            let targets = library.mode == .grid && library.selection.count > 1
-                ? library.visible.filter { library.selection.contains($0.id) }
-                : library.current.map { [$0] } ?? []
             library.setRating(n, for: targets)
         case "=", "+":
             if library.mode == .grid { thumbSize = min(320, thumbSize + 20) } else { library.zoom.set(library.zoom.scale * 1.25) }
@@ -233,6 +237,13 @@ struct LibraryView: View {
         default: return false
         }
         return true
+    }
+
+    /// What a rating or rotation key acts on: the selection in the grid, else the current photo.
+    private var targets: [Photo] {
+        library.mode == .grid && library.selection.count > 1
+            ? library.visible.filter { library.selection.contains($0.id) }
+            : library.current.map { [$0] } ?? []
     }
 
     /// ⌘/⌥ + scroll over the grid resizes the thumbnails.
@@ -274,6 +285,7 @@ struct ShortcutHelp: View {
         ("⇧⌘C / ⇧⌘V", "편집: 설정 복사 / 붙여넣기"),
         ("⇧⌘E", "편집: 다른 이름으로 저장"),
         ("R / Return", "편집: 자르기 시작 / 완료"),
+        ("⌘R / ⌥⌘R", "오른쪽 / 왼쪽으로 회전 (선택한 사진)"),
     ]
 
     var body: some View {
@@ -483,10 +495,9 @@ struct PhotoCell: View {
             .frame(height: thumbSize * 0.72)
             .overlay {
                 // Portrait shots are shown whole and upright, letterboxed in the cell.
-                let info = library.infos[photo.id]
                 RemoteImage(url: CameraAPI.photoURL(photo, size: .thumb),
-                            contentMode: info?.isPortrait == true ? .fit : .fill,
-                            orientation: info?.orientation ?? 1,
+                            contentMode: library.isPortrait(photo) ? .fit : .fill,
+                            orientation: library.orientation(photo),
                             adjustments: library.edits[photo.id],
                             placeholder: photo.kind == .video ? "video" : "photo")
             }
@@ -524,6 +535,15 @@ struct PhotoCell: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .help(photo.id)
         .contentShape(Rectangle())
+        .contextMenu {
+            if photo.kind != .video {
+                // The whole selection when this photo is part of it, as in Finder.
+                let photos = selected ? library.visible.filter { library.selection.contains($0.id) } : [photo]
+                let what = photos.count > 1 ? "\(photos.count)장 " : ""
+                Button("\(what)오른쪽으로 회전") { library.rotate(photos, by: 1) }
+                Button("\(what)왼쪽으로 회전") { library.rotate(photos, by: -1) }
+            }
+        }
     }
 }
 
@@ -648,11 +668,10 @@ private struct FilmCell: View {
     let photo: Photo
 
     var body: some View {
-        let info = library.infos[photo.id]
         let isCurrent = library.current == photo
         RemoteImage(url: CameraAPI.photoURL(photo, size: .thumb),
-                    contentMode: info?.isPortrait == true ? .fit : .fill,
-                    orientation: info?.orientation ?? 1,
+                    contentMode: library.isPortrait(photo) ? .fit : .fill,
+                    orientation: library.orientation(photo),
                     adjustments: library.edits[photo.id],
                     placeholder: photo.kind == .video ? "video" : "photo")
             .frame(width: 96, height: 68)
@@ -722,14 +741,22 @@ struct LoupeView: View {
     /// Camera thumbnail first, then the saved file (with edits) or the camera's 1920 px preview.
     private func load(_ photo: Photo) async {
         guard photo.kind != .video else { image = nil; histogram = nil; return }
-        let orientation = library.infos[photo.id]?.orientation ?? 1
+        let orientation = library.orientation(photo)
+        // Camera previews get the library's rotation; the saved file goes through DevelopEngine.
+        let adj = library.adjustments(photo)
+        func turned(_ image: NSImage?) async -> NSImage? {
+            guard let image, !adj.isDefault, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return image }
+            let out = await Task.detached(priority: .userInitiated) {
+                DevelopEngine.cgImage(DevelopEngine.apply(adj, to: CIImage(cgImage: cg)))
+            }.value
+            return out.map { NSImage(cgImage: $0, size: CGSize(width: $0.width, height: $0.height)) } ?? image
+        }
         if image == nil || !cameraOriginal {
-            image = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb), orientation: orientation)
+            image = await turned(await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb), orientation: orientation))
         }
         histogram = nil
         var best: NSImage?
         if let local = library.localURL(photo) {
-            let adj = library.adjustments(photo)
             best = await Task.detached(priority: .userInitiated) { () -> NSImage? in
                 guard let src = DevelopEngine.load(local, maxEdge: 4000),
                       let cg = DevelopEngine.cgImage(DevelopEngine.apply(adj, to: src)) else { return nil }
@@ -737,7 +764,7 @@ struct LoupeView: View {
             }.value
         }
         if best == nil {
-            best = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: cameraOriginal ? nil : .xs), orientation: orientation)
+            best = await turned(await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: cameraOriginal ? nil : .xs), orientation: orientation))
         }
         if Task.isCancelled { return }
         if let best { image = best }
@@ -748,7 +775,7 @@ struct LoupeView: View {
         let list = library.visible
         if let i = list.firstIndex(of: photo), list.indices.contains(i + 1), list[i + 1].kind != .video {
             _ = await ImageCache.shared.image(for: CameraAPI.photoURL(list[i + 1], size: .xs),
-                                              orientation: library.infos[list[i + 1].id]?.orientation ?? 1)
+                                              orientation: library.orientation(list[i + 1]))
         }
     }
 }
@@ -781,7 +808,13 @@ struct LoupeFooter: View {
                 .disabled(index >= library.visible.count - 1)
             Text("\(index + 1) / \(library.visible.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
 
-            if photo.kind != .video { ZoomControls() }
+            if photo.kind != .video {
+                ZoomControls()
+                Button { library.rotate([photo], by: -1) } label: { Image(systemName: "rotate.left") }
+                    .help("왼쪽으로 회전 (⌥⌘R)")
+                Button { library.rotate([photo], by: 1) } label: { Image(systemName: "rotate.right") }
+                    .help("오른쪽으로 회전 (⌘R)")
+            }
             if photo.kind != .video, library.localURL(photo) == nil {
                 Toggle("카메라 원본", isOn: $cameraOriginal)
                     .toggleStyle(.checkbox)

@@ -454,6 +454,10 @@ private struct DevelopPanel: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("e", modifiers: [.command, .shift])
             .disabled(session.busy != nil)
+            Label("편집은 이 Mac에만 저장됩니다. 카메라의 사진과 저장 폴더의 원본은 바뀌지 않으며, ‘다른 이름으로 저장’하면 새 파일로 만들어집니다.",
+                  systemImage: "info.circle")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
     }
