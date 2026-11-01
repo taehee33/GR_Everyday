@@ -35,6 +35,12 @@ struct AppSettingsView: View {
     @AppStorage("invertNavigateScroll") private var invertNavigate = false
     @AppStorage("gridDrag") private var gridDrag = GridDragAction.select
     @AppStorage("modifierScrollResizesGrid") private var modifierScrollResizes = true
+    @AppStorage(LibraryModel.AutoSave.enabled) private var autoSave = false
+    @AppStorage(LibraryModel.AutoSave.jpeg) private var autoSaveJPEG = true
+    @AppStorage(LibraryModel.AutoSave.raw) private var autoSaveRAW = true
+    @AppStorage(LibraryModel.AutoSave.video) private var autoSaveVideo = false
+    @AppStorage(LibraryModel.AutoSave.usb) private var autoSaveUSB = true
+    @AppStorage(LibraryModel.AutoSave.wifi) private var autoSaveWiFi = true
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 빌드"
@@ -69,6 +75,31 @@ struct AppSettingsView: View {
                 Text("사진 저장")
             } footer: {
                 Text("‘미저장’은 카메라 사진의 파일 이름(예: R0000209.JPG)이 저장 폴더나 그 안의 날짜 폴더에 있는지로 판단합니다. 저장한 파일을 다른 곳으로 옮기거나 이름을 바꾸면 다시 미저장으로 표시됩니다.")
+            }
+
+            Section {
+                Toggle("카메라를 연결하면 새 사진 자동 저장", isOn: $autoSave)
+                if autoSave {
+                    LabeledContent("파일 종류") {
+                        HStack(spacing: 14) {
+                            Toggle("JPG", isOn: $autoSaveJPEG)
+                            Toggle("RAW (DNG)", isOn: $autoSaveRAW)
+                            Toggle("동영상", isOn: $autoSaveVideo)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                    LabeledContent("연결 방식") {
+                        HStack(spacing: 14) {
+                            Toggle("USB", isOn: $autoSaveUSB)
+                            Toggle("Wi-Fi", isOn: $autoSaveWiFi)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            } header: {
+                Text("자동 저장")
+            } footer: {
+                Text("연결할 때마다 ‘미저장’ 사진을 위 저장 폴더로 받습니다. 카메라의 사진은 지우지 않습니다. 처음 켜면 카드에 있는 미저장 사진을 모두 받으니, 원하지 않으면 먼저 저장 폴더를 정리하거나 파일 종류를 줄이세요. Wi-Fi는 USB보다 훨씬 느리고, 동영상은 크기가 큽니다.")
             }
 
             Section("라이브러리") {
@@ -216,7 +247,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: connection.state) { _, state in
-            if state == .connected { Task { await library.reload() } }
+            if state == .connected {
+                library.prepareAutoSave(viaUSB: connection.viaUSB)
+                Task { await library.reload() }
+            }
         }
     }
 }

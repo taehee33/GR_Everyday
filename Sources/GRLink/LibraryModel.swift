@@ -91,6 +91,34 @@ final class LibraryModel: ObservableObject {
         didSet { UserDefaults.standard.set(revealAfterSave, forKey: "revealAfterSave") }
     }
 
+    /// Settings → 사진 저장 → 자동 저장. All off/limited by default; see autoSaveIfWanted().
+    enum AutoSave {
+        static let enabled = "autoSave", jpeg = "autoSaveJPEG", raw = "autoSaveRAW", video = "autoSaveVideo"
+        static let usb = "autoSaveUSB", wifi = "autoSaveWiFi"
+        static let defaults: [String: Bool] = [enabled: false, jpeg: true, raw: true, video: false, usb: true, wifi: true]
+        static func value(_ key: String) -> Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? defaults[key]! }
+    }
+
+    /// Set on connecting: save new photos once their dates are known (for date folders).
+    private var autoSaveOnLoad = false
+
+    /// Called when a camera connects, before its library loads.
+    func prepareAutoSave(viaUSB: Bool) {
+        autoSaveOnLoad = AutoSave.value(AutoSave.enabled) && AutoSave.value(viaUSB ? AutoSave.usb : AutoSave.wifi)
+    }
+
+    /// Saves the photos not yet in the save folder, of the kinds chosen in Settings.
+    /// Copies only; nothing on the camera changes.
+    private func autoSaveIfWanted() {
+        guard autoSaveOnLoad else { return }
+        autoSaveOnLoad = false
+        let kinds: Set<Photo.Kind> = Set([(Photo.Kind.jpeg, AutoSave.jpeg), (.raw, AutoSave.raw), (.video, AutoSave.video)]
+            .filter { AutoSave.value($0.1) }.map(\.0))
+        let queue = photos.filter { kinds.contains($0.kind) && !saved.contains($0.name) }
+        DebugLog.write("auto-save: \(queue.count) new of \(photos.count)")
+        save(queue)
+    }
+
     static let defaultDestination = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/GR")
 
     private var transferTask: Task<Void, Never>?
@@ -308,6 +336,7 @@ final class LibraryModel: ObservableObject {
                 if sinceWrite >= 20 { self?.writeInfoCache(); sinceWrite = 0 }
             }
             self?.writeInfoCache()
+            self?.autoSaveIfWanted()
             self?.refreshStats()
         }
     }
