@@ -132,6 +132,7 @@ final class ConnectionModel: ObservableObject {
 
     func remove(_ id: UUID) {
         cameras.removeAll { $0.id == id }
+        CameraPictures.shared.remove(id)
         if selectedCameraID == id { selectedCameraID = cameras.first?.id }
         if connectedCameraID == id { connectedCameraID = nil }
     }

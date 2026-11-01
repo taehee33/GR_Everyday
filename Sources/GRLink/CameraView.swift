@@ -100,9 +100,7 @@ struct CameraView: View {
                     Text(camera.displayName).font(.largeTitle.bold())
                     Text(camera.shortModel ?? "RICOH GR").font(.title3).foregroundStyle(.secondary)
                     statusIcons(camera)
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 110))
-                        .foregroundStyle(.linearGradient(colors: [.gray, .primary.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                    CameraPicture(camera: camera)
                         .padding(.vertical, 18)
                 } else {
                     Text("새 카메라").font(.largeTitle.bold())
@@ -216,6 +214,7 @@ struct CameraView: View {
                 tile(showInfo ? "정보 숨기기" : "연결 정보", "info.circle", enabled: true) { showInfo.toggle() }
                 Menu {
                     Button("이름 바꾸기…") { newName = camera.displayName; renaming = camera }
+                    CameraPictureMenu(camera: camera)
                     Button("다시 페어링 (Bluetooth 다시 연결)") { Task { await connection.repair(camera) } }
                     Button("Mac Bluetooth에서 기기 지우기") { Task { await removeBond(camera) } }
                     Divider()
