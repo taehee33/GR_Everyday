@@ -8,6 +8,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/GRLink "$APP/Contents/MacOS/GRLink"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Stamp the build so Settings → 정보 shows exactly which source this app came from:
 # build number = commit count, plus the commit and a mark for uncommitted changes.
 PLIST="$APP/Contents/Info.plist"
