@@ -71,9 +71,10 @@ struct LibraryView: View {
                 Text("‘촬영 통계’를 한 번 열면 촬영 정보로 거를 수 있습니다.")
             }
         } label: {
-            Label(library.shotFilter?.label ?? "촬영 정보", systemImage: "camera.filters")
+            Label("필터: " + (library.shotFilter?.label ?? "전체"), systemImage: "line.3.horizontal.decrease.circle")
         }
         .fixedSize()
+        .help("노출 모드·이미지 컨트롤·비율·크롭·HDF로 거르기")
         if library.shotFilter != nil {
             Button { library.shotFilter = nil } label: { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.borderless)
@@ -122,10 +123,11 @@ struct LibraryView: View {
                 Divider()
                 Toggle("날짜별로 묶기", isOn: $library.groupByDate)
             } label: {
-                Label(library.minRating > 0 ? "\(library.sort.rawValue) · ★\(library.minRating)+" : library.sort.rawValue,
-                      systemImage: "line.3.horizontal.decrease.circle")
+                Label("정렬: " + library.sort.rawValue + (library.minRating > 0 ? " · ★\(library.minRating)+" : ""),
+                      systemImage: "arrow.up.arrow.down")
             }
             .fixedSize()
+            .help("정렬 순서, 별점으로 거르기, 날짜별로 묶기")
 
             shotFilterMenu
 
@@ -710,6 +712,7 @@ struct LoupeView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     viewer(photo)
+                        .overlay(alignment: .topLeading) { BackToGrid() }
                     if library.panels, !library.immersive {
                         Divider()
                         InfoPanel(photo: photo, histogram: histogram, image: image)
@@ -995,6 +998,27 @@ struct TransferPanel: View {
             }
             .frame(maxHeight: 120)
         }
+        .padding(12)
+    }
+}
+
+/// "‹ 사진 목록" floating on the photo in 확대 보기 and 편집, so the toolbar keeps its layout.
+struct BackToGrid: View {
+    @EnvironmentObject var library: LibraryModel
+
+    var body: some View {
+        Button {
+            library.zoom.reset()
+            library.mode = .grid
+        } label: {
+            Label("사진 목록", systemImage: "chevron.left")
+                .font(.callout.weight(.medium))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.regularMaterial, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("사진 목록으로 돌아가기 (Esc)")
         .padding(12)
     }
 }

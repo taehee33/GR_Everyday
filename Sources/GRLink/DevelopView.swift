@@ -10,7 +10,10 @@ struct DevelopView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                main
+                // The empty states don't stretch on their own; without this the whole library
+                // shrinks to their height and floats in the middle of the window.
+                main.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .topLeading) { BackToGrid() }
                 if library.panels, !library.immersive, let photo = library.current, let url = library.localURL(photo),
                    photo.kind != .video {
                     Divider()
