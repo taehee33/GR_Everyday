@@ -63,8 +63,8 @@ struct ShotRecord: Codable, Equatable {
     }
 }
 
-/// Shooting statistics like GR WORLD's GR 로그, counted from the files still on the card.
-/// Each photo is read once and kept on disk next to the other caches.
+/// Shooting statistics like GR WORLD's GR 로그: the files on the card, plus shots seen on it
+/// before and deleted since. Each photo is read once and kept on disk next to the other caches.
 @MainActor
 final class ShotStats: ObservableObject {
     @Published private(set) var records: [String: ShotRecord] = [:]
@@ -74,25 +74,40 @@ final class ShotStats: ObservableObject {
     /// USB and Wi-Fi reach the camera at different hosts, each with its own cache file.
     private var loadedFrom: URL?
 
-    /// Reads every photo not seen before, newest first. One JPEG of a RAW+JPEG pair is enough.
-    func scan(_ photos: [Photo]) {
+    /// Every shot seen on a card, kept after it is deleted so the totals add up like GR 로그.
+    /// Lives in Application Support: clearing the cache leaves it.
+    @Published private(set) var history: [String: HistoryEntry] = ShotStats.readHistory()
+
+    struct HistoryEntry: Codable {
+        let id: String
+        let date: Date
+        let video: Bool
+        var record: ShotRecord?
+    }
+
+    /// The shots a card's file list stands for: a RAW+JPEG pair is one shot, its JPEG.
+    static func shots(_ photos: [Photo]) -> [Photo] {
+        let jpegs = Set(photos.filter { $0.kind == .jpeg }.map { ($0.name as NSString).deletingPathExtension })
+        return photos.filter { photo in
+            switch photo.kind {
+            case .jpeg, .video: return true
+            case .raw: return !jpegs.contains((photo.name as NSString).deletingPathExtension)
+            case .other: return false
+            }
+        }
+    }
+
+    /// Reads every photo not seen before, newest first, then adds the card to `history`.
+    /// `dates` are the camera's shooting times (videos have no EXIF to read).
+    func scan(_ photos: [Photo], dates: [String: Date]) {
         task?.cancel()
         if loadedFrom != Self.url {
             records = Self.read()
             loadedFrom = Self.url
         }
-        let jpegs = Set(photos.filter { $0.kind == .jpeg }.map { ($0.name as NSString).deletingPathExtension })
-        let todo = photos.reversed().filter { photo in
-            guard records[photo.id] == nil else { return false }
-            switch photo.kind {
-            case .jpeg: return true
-            case .raw: return !jpegs.contains((photo.name as NSString).deletingPathExtension)
-            case .video, .other: return false
-            }
-        }
+        let todo = Self.shots(photos).reversed().filter { $0.kind != .video && records[$0.id] == nil }
         pending = todo.count
-        guard !todo.isEmpty else { return }
-        scanning = true
+        scanning = !todo.isEmpty
         task = Task { [weak self] in
             var sinceWrite = 0
             for photo in todo {
@@ -105,9 +120,62 @@ final class ShotStats: ObservableObject {
                 }
                 self?.pending -= 1
             }
-            self?.write()
+            if !todo.isEmpty { self?.write() }
             self?.scanning = false
+            self?.remember(photos, dates: dates)
         }
+    }
+
+    /// History key: file and shooting time, since file names come back after a format.
+    /// Photos use their EXIF time, videos the camera's, so each shot always gets the same key.
+    private func key(_ photo: Photo, dates: [String: Date]) -> String? {
+        let date = photo.kind == .video ? dates[photo.id] : records[photo.id]?.date
+        return date.map { "\(photo.id)@\(Int($0.timeIntervalSince1970))" }
+    }
+
+    private func remember(_ photos: [Photo], dates: [String: Date]) {
+        var changed = false
+        for photo in Self.shots(photos) {
+            guard let key = key(photo, dates: dates) else { continue }
+            let record = records[photo.id]
+            if history[key] == nil {
+                let date = photo.kind == .video ? dates[photo.id]! : record!.date!
+                history[key] = HistoryEntry(id: photo.id, date: date, video: photo.kind == .video, record: record)
+                changed = true
+            }
+        }
+        if changed { writeHistory() }
+    }
+
+    /// Shots in `history` that are no longer on the card. A file whose time isn't known yet
+    /// is assumed to still be there.
+    func deleted(from photos: [Photo], dates: [String: Date]) -> [HistoryEntry] {
+        var onCard = Set<String>(), undated = Set<String>()
+        for photo in Self.shots(photos) {
+            if let key = key(photo, dates: dates) { onCard.insert(key) } else { undated.insert(photo.id) }
+        }
+        return history.filter { !onCard.contains($0.key) && !undated.contains($0.value.id) }.map(\.value)
+    }
+
+    func clearHistory() {
+        history = [:]
+        try? FileManager.default.removeItem(at: Self.historyURL)
+    }
+
+    private static var historyURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GR Mac/shot-history.json")
+    }
+
+    private static func readHistory() -> [String: HistoryEntry] {
+        guard let data = try? Data(contentsOf: historyURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: HistoryEntry].self, from: data)) ?? [:]
+    }
+
+    private func writeHistory() {
+        guard let data = try? JSONEncoder().encode(history) else { return }
+        try? FileManager.default.createDirectory(at: Self.historyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: Self.historyURL, options: .atomic)
     }
 
     func cancel() {

@@ -2,33 +2,37 @@ import SwiftUI
 
 /// 촬영 통계, modelled on GR WORLD's GR 로그: a month calendar of shooting days, then counts
 /// by exposure mode, image control, aspect ratio and crop for the chosen day and in total.
-/// Counted from the files on the card, so deleted shots are not included.
+/// Counted from the files on the card plus, if wanted, shots seen before and deleted since.
 struct StatsView: View {
     @EnvironmentObject var library: LibraryModel
     @ObservedObject var stats: ShotStats
     @Binding var section: Pane
     @State private var day: Date?
     @State private var month = Calendar.current.startOfMonth(.now)
+    @AppStorage("statsIncludeDeleted") private var includeDeleted = true
+    @State private var confirmClear = false
 
     private struct Entry {
         let date: Date?
         let video: Bool
         let record: ShotRecord?
+        var deleted = false
     }
 
-    /// One entry per shot: a RAW+JPEG pair counts once, as its JPEG.
+    /// One entry per shot (a RAW+JPEG pair counts once, as its JPEG), then deleted ones.
     private var entries: [Entry] {
-        let jpegs = Set(library.photos.filter { $0.kind == .jpeg }.map { ($0.name as NSString).deletingPathExtension })
-        return library.photos.compactMap { photo in
+        let card = ShotStats.shots(library.photos).map { photo in
             let date = library.infos[photo.id]?.date
-            switch photo.kind {
-            case .video: return Entry(date: date, video: true, record: nil)
-            case .raw where jpegs.contains((photo.name as NSString).deletingPathExtension), .other: return nil
-            case .jpeg, .raw:
-                let record = stats.records[photo.id]
-                return Entry(date: record?.date ?? date, video: false, record: record)
-            }
+            if photo.kind == .video { return Entry(date: date, video: true, record: nil) }
+            let record = stats.records[photo.id]
+            return Entry(date: record?.date ?? date, video: false, record: record)
         }
+        return card + (includeDeleted ? deleted : [])
+    }
+
+    private var deleted: [Entry] {
+        stats.deleted(from: library.photos, dates: library.infos.compactMapValues(\.date))
+            .map { Entry(date: $0.date, video: $0.video, record: $0.record, deleted: true) }
     }
 
     var body: some View {
@@ -54,15 +58,19 @@ struct StatsView: View {
                         table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
                     }
                 }
-                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줍니다. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줍니다.")
+                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줍니다. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줍니다. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없습니다.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .onAppear { stats.scan(library.photos) }
-        .onChange(of: library.photos) { _, photos in stats.scan(photos) }
+        .onAppear { library.refreshStats() }
+        .confirmationDialog("지운 사진 기록을 지울까요?", isPresented: $confirmClear) {
+            Button("기록 지우기", role: .destructive) { stats.clearHistory() }
+        } message: {
+            Text("카드에서 지운 사진의 통계가 사라집니다. 카드에 남아 있는 사진은 다음에 연결할 때 다시 기록됩니다.")
+        }
         .onChange(of: all.compactMap(\.date).max()) { _, latest in
             // Open on the latest shooting day until the user picks one.
             guard day == nil, let latest else { return }
@@ -81,8 +89,16 @@ struct StatsView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("촬영 통계").font(.largeTitle.bold())
-                Text("카드에 남아 있는 사진 기준입니다. 지운 사진은 세지 않으므로 GR WORLD의 GR 로그와 숫자가 다를 수 있습니다.")
+                Text(includeDeleted
+                     ? "GR Mac이 카드에서 한 번이라도 본 사진은 지운 뒤에도 셉니다. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있습니다."
+                     : "카드에 남아 있는 사진만 셉니다.")
                     .font(.callout).foregroundStyle(.secondary)
+                Picker("", selection: $includeDeleted) {
+                    Text("지운 사진 포함").tag(true)
+                    Text("카드에 있는 사진만").tag(false)
+                }
+                .pickerStyle(.segmented).fixedSize().labelsHidden()
+                .padding(.top, 4)
             }
             Spacer()
             if stats.scanning {
@@ -90,7 +106,7 @@ struct StatsView: View {
                 Text("촬영 정보 읽는 중 · \(stats.pending)장 남음").foregroundStyle(.secondary)
                 Button("중지") { stats.cancel() }
             } else if stats.pending > 0 {
-                Button("이어서 읽기 (\(stats.pending)장)") { stats.scan(library.photos) }
+                Button("이어서 읽기 (\(stats.pending)장)") { library.refreshStats() }
             }
         }
     }
@@ -106,17 +122,26 @@ struct StatsView: View {
                 .font(.callout)
                 GridRow {
                     Image(systemName: "photo").font(.title2)
-                    Text("\(day.filter { !$0.video }.count)").font(.system(size: 34, weight: .bold).monospacedDigit())
-                    Text("\(all.filter { !$0.video }.count)").font(.system(size: 34, weight: .bold).monospacedDigit())
+                    bigCount(day.filter { !$0.video })
+                    bigCount(all.filter { !$0.video })
                 }
                 GridRow {
                     Image(systemName: "video").font(.title2)
-                    Text("\(day.filter(\.video).count)").font(.system(size: 34, weight: .bold).monospacedDigit())
-                    Text("\(all.filter(\.video).count)").font(.system(size: 34, weight: .bold).monospacedDigit())
+                    bigCount(day.filter(\.video))
+                    bigCount(all.filter(\.video))
                 }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            if includeDeleted, !stats.history.isEmpty {
+                HStack {
+                    Text("카드에서 지운 사진 \(deleted.count)장 포함 · 흐린 숫자가 지운 사진입니다")
+                    Spacer()
+                    Button("기록 지우기…") { confirmClear = true }.buttonStyle(.link)
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                .padding([.horizontal, .bottom], 12)
+            }
         } label: {
             HStack {
                 Text("촬영 횟수").font(.headline)
@@ -128,12 +153,31 @@ struct StatsView: View {
         }
     }
 
+    /// A big total with, when some are deleted, "지움 n" under it.
+    private func bigCount(_ entries: [Entry]) -> some View {
+        let gone = entries.filter(\.deleted).count
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("\(entries.count)").font(.system(size: 34, weight: .bold).monospacedDigit())
+            Text(gone > 0 ? "지움 \(gone)" : " ").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+    }
+
+    /// "12" or "12 +3": the card count, then deleted shots greyed.
+    private func split(_ card: Int, _ gone: Int) -> some View {
+        HStack(spacing: 3) {
+            Text("\(card)").foregroundStyle(card + gone == 0 ? .secondary : .primary)
+            if gone > 0 { Text("+\(gone)").foregroundStyle(.tertiary) }
+        }
+        .monospacedDigit()
+    }
+
     /// Rows: `fixed` always (zero or not, like GR 로그), then anything else that occurred.
     private func table(_ field: ShotFilter.Field, day: [Entry], all: [Entry], fixed: [String] = []) -> some View {
         func counts(_ entries: [Entry]) -> [String: Int] {
             entries.compactMap { $0.record?.key(field) }.reduce(into: [:]) { $0[$1, default: 0] += 1 }
         }
         let dayCounts = counts(day), allCounts = counts(all)
+        let dayGone = counts(day.filter(\.deleted)), allGone = counts(all.filter(\.deleted))
         let extra = allCounts.keys.filter { !fixed.contains($0) }
             .sorted { (Int($0) ?? .max, $0) < (Int($1) ?? .max, $1) }
         return GroupBox {
@@ -146,21 +190,22 @@ struct StatsView: View {
                 .font(.caption)
                 ForEach(fixed + extra, id: \.self) { k in
                     let dayCount = dayCounts[k] ?? 0, allCount = allCounts[k] ?? 0
+                    let dayDeleted = dayGone[k] ?? 0, allDeleted = allGone[k] ?? 0
+                    // The library only has what is on the card.
+                    let dayOnCard = dayCount - dayDeleted, allOnCard = allCount - allDeleted
                     Divider().gridCellUnsizedAxes(.horizontal)
                     GridRow {
                         Button { open(ShotFilter(field: field, value: k)) } label: {
                             Text(field.label(k)).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
-                        .disabled(allCount == 0)
-                        .help("라이브러리에서 \(field.label(k)) 사진 \(allCount)장 보기")
+                        .disabled(allOnCard == 0)
+                        .help("라이브러리에서 \(field.label(k)) 사진 \(allOnCard)장 보기")
                         Button { open(ShotFilter(field: field, value: k, day: self.day)) } label: {
-                            Text("\(dayCount)").monospacedDigit().underline(dayCount > 0)
+                            split(dayOnCard, dayDeleted).underline(dayOnCard > 0)
                         }
-                        .disabled(dayCount == 0)
-                        .foregroundStyle(dayCount == 0 ? .secondary : .primary)
+                        .disabled(dayOnCard == 0)
                         .help("이 날의 \(field.label(k)) 사진만 보기")
-                        Text("\(allCount)").monospacedDigit()
-                            .foregroundStyle(allCount == 0 ? .secondary : .primary)
+                        split(allOnCard, allDeleted)
                     }
                     .buttonStyle(.plain)
                 }

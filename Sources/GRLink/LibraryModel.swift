@@ -308,7 +308,14 @@ final class LibraryModel: ObservableObject {
                 if sinceWrite >= 20 { self?.writeInfoCache(); sinceWrite = 0 }
             }
             self?.writeInfoCache()
+            self?.refreshStats()
         }
+    }
+
+    /// Reads 촬영 통계 for new photos and records the card in its history, so shots deleted
+    /// later still count. Runs after the dates, which videos need.
+    func refreshStats() {
+        stats.scan(photos, dates: infos.compactMapValues(\.date))
     }
 
     private static var infoCacheURL: URL {
