@@ -224,25 +224,37 @@ final class BLEWaker: NSObject, ObservableObject {
     /// ⓘ → 이 기기 지우기). CoreBluetooth's unpairPeer: is refused for apps, so this goes
     /// through IOBluetooth's device record, found by the camera's Bluetooth name.
     func removeMacBond(_ cameraID: UUID, name: String) async -> Bool {
-        guard let device = Self.pairedDevice(named: name) else { return true }
-        let remove = NSSelectorFromString("remove")
-        if device.responds(to: remove) {
+        let sent = await Task.detached { () -> Bool? in
+            guard let device = Self.pairedDevice(named: name) else { return nil }
+            let remove = NSSelectorFromString("remove")
+            guard device.responds(to: remove) else { return false }
             _ = device.perform(remove)
-            DebugLog.write("forget: IOBluetooth remove sent for \(name)")
-        } else {
-            DebugLog.write("forget: IOBluetoothDevice has no remove")
+            return true
+        }.value
+        switch sent {
+        case nil: return true
+        case false?: DebugLog.write("forget: IOBluetoothDevice has no remove")
+        case true?: DebugLog.write("forget: IOBluetooth remove sent for \(name)")
         }
-        for _ in 0..<10 where Self.pairedDevice(named: name) != nil {
+        var gone = false
+        for _ in 0..<10 {
+            gone = await !Self.isPaired(named: name)
+            if gone { break }
             try? await Task.sleep(for: .milliseconds(300))
         }
-        let gone = Self.pairedDevice(named: name) == nil
         DebugLog.write("forget: \(name) removed=\(gone)")
         return gone
     }
 
-    /// The camera as listed in the Mac's Bluetooth settings, if it is there.
+    /// The camera as listed in the Mac's Bluetooth settings, if it is there. Blocking: while
+    /// the Mac's Bluetooth keeps restarting this can take minutes, so call it off the main
+    /// thread (isPaired) or the window freezes.
     nonisolated static func pairedDevice(named name: String) -> IOBluetoothDevice? {
         (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []).first { $0.name == name }
+    }
+
+    nonisolated static func isPaired(named name: String) async -> Bool {
+        await Task.detached { pairedDevice(named: name) != nil }.value
     }
 
     /// Whether macOS holds a pairing key for the camera. There is no public call for this;

@@ -143,7 +143,7 @@ final class ConnectionModel: ObservableObject {
     }
 
     /// Whether the Mac's Bluetooth still lists the camera as paired.
-    func hasMacBond(_ camera: SavedCamera) -> Bool { BLEWaker.pairedDevice(named: camera.bleName) != nil }
+    func hasMacBond(_ camera: SavedCamera) async -> Bool { await BLEWaker.isPaired(named: camera.bleName) }
 
     /// "Bluetooth에서 기기 지우기". Returns false when macOS kept it; the caller then opens
     /// Bluetooth settings so the user can remove it there.
@@ -250,7 +250,7 @@ final class ConnectionModel: ObservableObject {
     func repair(_ camera: SavedCamera) async {
         notice = nil
         needsRepair = false
-        if hasMacBond(camera) {
+        if await hasMacBond(camera) {
             needsBondRemoval = true
             state = .failed("먼저 Mac Bluetooth에 남은 \(camera.bleName)을(를) 지워야 합니다. 열린 Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤, 카메라를 페어링 화면(메뉴 → 무선 통신 → Bluetooth → 페어링)에 두고 ‘다시 페어링’을 다시 누르세요.")
             needsRepair = true

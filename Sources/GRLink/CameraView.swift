@@ -22,7 +22,6 @@ struct CameraView: View {
     /// Bumped after a removal so the Bluetooth row re-reads the bond.
     @State private var bondCheck = 0
     /// Whether the Mac lists the camera in its Bluetooth settings; nil while checking.
-    /// Looked up off the main thread: IOBluetooth's paired-device list can block for minutes.
     @State private var macBond: Bool?
     @State private var bondMessage: String?
 
@@ -379,8 +378,7 @@ struct CameraView: View {
         }
         .task(id: "\(camera.id)#\(bondCheck)") {
             macBond = nil
-            let name = camera.bleName
-            macBond = await Task.detached { BLEWaker.pairedDevice(named: name) != nil }.value
+            macBond = await connection.hasMacBond(camera)
         }
     }
 
