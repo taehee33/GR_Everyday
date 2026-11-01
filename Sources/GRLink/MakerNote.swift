@@ -18,6 +18,9 @@ enum MakerNote {
         var imageControl: ImageControl?
         /// 0 off, 1 on, 2 red filter (GR IV Monochrome).
         var hdf: Int?
+        /// Tag 0x0033 ("PictureMode"): P [0,0,1], Tv [4,0,1], Av [5,0,1], Sn [0,32,1] on the
+        /// GR IV. Sn is ExposureProgram 2 in EXIF, the same as P; only this tells them apart.
+        var pictureMode: [Int]?
 
         var hdfLabel: String? {
             switch hdf {
@@ -67,12 +70,62 @@ enum MakerNote {
                 shot.imageControl = ImageControl(code: code, name: imageToneNames[code])
             } else if tag == 0x009e, type == 1 {
                 shot.hdf = Int(note[e + 8])
+            } else if tag == 0x0033, type == 1 || type == 7, read32(note, e + 4, le) == 3 {
+                shot.pictureMode = note[(e + 8)..<(e + 11)].map(Int.init)
             }
         }
-        return shot.imageControl == nil && shot.hdf == nil ? nil : shot
+        return shot.imageControl == nil && shot.hdf == nil && shot.pictureMode == nil ? nil : shot
     }
 
     static func imageControl(_ url: URL) -> ImageControl? { shot(url)?.imageControl }
+
+    /// The EXIF fields the shooting statistics need, read straight from the TIFF structure:
+    /// ImageIO wants the JPEG frame header too, which the GR IV puts ~100 KB in (after a
+    /// 59 KB APP7), while these sit in the first 40 KB.
+    struct Exif {
+        var program: Int?
+        var focal35: Int?
+        var width: Int?
+        var height: Int?
+        /// "2026:11:01 12:17:25", camera local time.
+        var dateOriginal: String?
+    }
+
+    static func exif(_ data: Data) -> Exif? {
+        guard data.count > 16 else { return nil }
+        let b = [UInt8](data)
+        guard let tiff = tiffStart(b), tiff + 8 <= b.count else { return nil }
+        let le = b[tiff] == 0x49
+        guard let exifIFD = ifd(b, tiff: tiff, at: read32(b, tiff + 4, le), le).first(where: { $0.tag == 0x8769 })
+        else { return nil }
+        var out = Exif()
+        for e in ifd(b, tiff: tiff, at: exifIFD.value, le) {
+            // SHORT values sit in the first two bytes of the value field.
+            let number = e.type == 3 ? read16(b, e.offset + 8, le) : e.value
+            switch e.tag {
+            case 0x8822: out.program = number
+            case 0xA405: out.focal35 = number
+            case 0xA002: out.width = number
+            case 0xA003: out.height = number
+            case 0x9003 where e.type == 2 && e.count >= 19:
+                let start = tiff + e.value
+                if start + 19 <= b.count { out.dateOriginal = String(decoding: b[start..<(start + 19)], as: UTF8.self) }
+            default: break
+            }
+        }
+        return out
+    }
+
+    private static func ifd(_ b: [UInt8], tiff: Int, at ifd: Int, _ le: Bool)
+        -> [(tag: Int, type: Int, count: Int, value: Int, offset: Int)] {
+        let start = tiff + ifd
+        guard ifd > 0, start + 2 <= b.count else { return [] }
+        return (0..<read16(b, start, le)).compactMap { k in
+            let e = start + 2 + k * 12
+            guard e + 12 <= b.count else { return nil }
+            return (read16(b, e, le), read16(b, e + 2, le), read32(b, e + 4, le), read32(b, e + 8, le), e)
+        }
+    }
 
     /// Offset of the TIFF header: inside the Exif APP1 segment of a JPEG, or 0 for DNG/TIFF.
     private static func tiffStart(_ b: [UInt8]) -> Int? {

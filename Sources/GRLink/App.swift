@@ -154,13 +154,14 @@ struct AppSettingsView: View {
 }
 
 enum Pane: String, CaseIterable, Identifiable {
-    case camera = "카메라", library = "라이브러리", remote = "원격 촬영", settings = "설정"
+    case camera = "카메라", library = "라이브러리", remote = "원격 촬영", stats = "촬영 통계", settings = "설정"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .camera: return "camera"
         case .library: return "photo.on.rectangle"
         case .remote: return "camera.aperture"
+        case .stats: return "chart.bar.xaxis"
         case .settings: return "gearshape"
         }
     }
@@ -184,9 +185,13 @@ struct ContentView: View {
             switch section {
             case .camera: CameraView(ble: connection.ble, section: $section)
             case .settings: AppSettingsView()
-            case .library, .remote:
+            case .library, .remote, .stats:
                 if connection.isConnected || connection.state == .lost {
-                    if section == .library { LibraryView() } else { RemoteView() }
+                    switch section {
+                    case .library: LibraryView()
+                    case .stats: StatsView(stats: library.stats)
+                    default: RemoteView()
+                    }
                 } else {
                     ContentUnavailableView {
                         Label("카메라에 연결되지 않음", systemImage: "camera")

@@ -32,6 +32,8 @@ final class LibraryModel: ObservableObject {
     }
 
     @Published private(set) var photos: [Photo] = []
+    /// Shooting statistics (촬영 통계 pane), counted from the photos above.
+    let stats = ShotStats()
     @Published var selection: Set<String> = []
     @Published var filter: Filter = .all
     @Published private(set) var saved: Set<String> = []
@@ -310,6 +312,7 @@ final class LibraryModel: ObservableObject {
         try? FileManager.default.removeItem(at: ImageCache.folder)
         ImageCache.shared.clear()
         MetadataCache.entries = [:]
+        stats.clear()
         infos = [:]
         if !photos.isEmpty { loadInfos() }
     }
