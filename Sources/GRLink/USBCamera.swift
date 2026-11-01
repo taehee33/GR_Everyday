@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import ImageCaptureCore
 import ImageIO
+import IOKit
 import Network
 
 /// A GR on a USB cable. It shows up as a PTP camera (USB class 6), not as a drive, and
@@ -20,6 +21,8 @@ final class USBCamera: NSObject, ObservableObject {
     var onRemoved: (() -> Void)?
 
     private let browser = ICDeviceBrowser()
+    /// Restarts the browser when the GR is on the bus but never reported (see watch()).
+    private var watchdog: Task<Void, Never>?
     private var ready: CheckedContinuation<Void, Error>?
     private var files: [String: ICCameraFile] = [:]
     private var server: LocalServer?
@@ -36,6 +39,41 @@ final class USBCamera: NSObject, ObservableObject {
         browser.delegate = self
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
         browser.start()
+        watch()
+    }
+
+    /// Once (2026-11-01) the browser stayed silent while macOS listed the GR on USB, after
+    /// the Mac's Bluetooth had been restarting for an hour; a new browser (app relaunch)
+    /// found it at once. So while nothing is detected, look at the USB registry and start
+    /// the browser again if a Ricoh device is there, at most every 30 s.
+    private func watch() {
+        watchdog = Task { [weak self] in
+            var lastRestart = Date.distantPast
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.detected == nil, Date().timeIntervalSince(lastRestart) > 30 else { continue }
+                guard await Task.detached(operation: { Self.ricohOnUSB() }).value, self.detected == nil else { continue }
+                DebugLog.write("usb: GR on the bus but not reported; restarting the device browser")
+                lastRestart = Date()
+                self.browser.stop()
+                self.browser.start()
+            }
+        }
+    }
+
+    /// Whether a Ricoh device (USB vendor 0x25FB) is attached, from the IOKit registry.
+    nonisolated static func ricohOnUSB() -> Bool {
+        let match = IOServiceMatching("IOUSBHostDevice") as NSMutableDictionary
+        // A plain "idVendor" key matches nothing for IOUSBHostDevice; it has to be a property match.
+        match[kIOPropertyMatchKey] = ["idVendor": 0x25FB]
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, match as CFDictionary, &iterator) == KERN_SUCCESS
+        else { return false }
+        defer { IOObjectRelease(iterator) }
+        let service = IOIteratorNext(iterator)
+        guard service != 0 else { return false }
+        IOObjectRelease(service)
+        return true
     }
 
     /// Open the camera's PTP session, read its file list and start the local server.
