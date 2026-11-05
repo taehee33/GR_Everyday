@@ -3,3 +3,5 @@ build/
 *.part
 # Bluetooth traces hold pairing keys and the camera Wi-Fi password
 *.pklg
+xcuserdata/
+*.xcworkspace/xcuserdata/

@@ -99,9 +99,9 @@ final class BLEWaker: NSObject, ObservableObject {
     /// the system show its own passkey window, where the user types the code the
     /// camera displays. The key macOS keeps afterwards is refused by the camera on every
     /// later connection (bluetoothd STATUS 634, also right after pairing, and with the iPad
-    /// GR Link app on this Mac), so later reconnects go without it; see `raiseWLAN`.
-    func pair(cameraID: UUID) async throws -> (model: String, credentials: WLANCredentials) {
-        if hasMacBond(cameraID) { throw BLEError.staleBond }
+    /// GR Link app on this Mac), so an old one has to be removed in Bluetooth settings first.
+    func pair(cameraID: UUID, name: String) async throws -> (model: String, credentials: WLANCredentials) {
+        if await Self.isPaired(named: name) { throw BLEError.staleBond }
         // The passkey prompt can appear while connecting, so leave time to type the code.
         let peripheral = try await open(cameraID, connectTimeout: 90)
         do {
@@ -181,30 +181,6 @@ final class BLEWaker: NSObject, ObservableObject {
         }
     }
 
-    /// Reconnect to a paired camera, power it on, raise its Wi-Fi and read the credentials.
-    ///
-    /// The camera refuses the key macOS kept from pairing, and macOS insists on using it,
-    /// so a Mac-side key blocks the connection: report that at once instead of waiting.
-    /// Without it, the link is unencrypted; with `known` credentials only the power and
-    /// network-type writes are sent, nothing that would make macOS pair again.
-    func raiseWLAN(cameraID: UUID, known: WLANCredentials? = nil) async throws -> (model: String, credentials: WLANCredentials) {
-        if hasMacBond(cameraID) { throw BLEError.staleBond }
-        try await waitForAdvertisement(cameraID)
-        let peripheral = try await open(cameraID, connectTimeout: 15)
-        defer { central.cancelPeripheralConnection(peripheral) }
-        guard let known else {
-            let model = (try? await read(GRUUID.modelNumber, on: peripheral)).map(Self.text) ?? "RICOH GR"
-            return (model, try await raiseWLAN(on: peripheral))
-        }
-        try await write(Data([1]), to: GRUUID.cameraPower, on: peripheral)
-        DebugLog.write("wake: power on written")
-        try await Task.sleep(for: .seconds(2))
-        try await write(Data([1]), to: GRUUID.networkType, on: peripheral)
-        DebugLog.write("wake: wlan on written")
-        try await Task.sleep(for: .seconds(3))
-        return ("RICOH GR", known)
-    }
-
     private func raiseWLAN(on peripheral: CBPeripheral) async throws -> WLANCredentials {
         if try await read(GRUUID.cameraPower, on: peripheral).first != 1 {
             try await write(Data([1]), to: GRUUID.cameraPower, on: peripheral)
@@ -220,32 +196,6 @@ final class BLEWaker: NSObject, ObservableObject {
         )
     }
 
-    /// Remove the camera from the Mac's Bluetooth devices (System Settings → Bluetooth →
-    /// ⓘ → 이 기기 지우기). CoreBluetooth's unpairPeer: is refused for apps, so this goes
-    /// through IOBluetooth's device record, found by the camera's Bluetooth name.
-    func removeMacBond(_ cameraID: UUID, name: String) async -> Bool {
-        let sent = await Task.detached { () -> Bool? in
-            guard let device = Self.pairedDevice(named: name) else { return nil }
-            let remove = NSSelectorFromString("remove")
-            guard device.responds(to: remove) else { return false }
-            _ = device.perform(remove)
-            return true
-        }.value
-        switch sent {
-        case nil: return true
-        case false?: DebugLog.write("forget: IOBluetoothDevice has no remove")
-        case true?: DebugLog.write("forget: IOBluetooth remove sent for \(name)")
-        }
-        var gone = false
-        for _ in 0..<10 {
-            gone = await !Self.isPaired(named: name)
-            if gone { break }
-            try? await Task.sleep(for: .milliseconds(300))
-        }
-        DebugLog.write("forget: \(name) removed=\(gone)")
-        return gone
-    }
-
     /// The camera as listed in the Mac's Bluetooth settings, if it is there. Blocking: while
     /// the Mac's Bluetooth keeps restarting this can take minutes, so call it off the main
     /// thread (isPaired) or the window freezes.
@@ -255,23 +205,6 @@ final class BLEWaker: NSObject, ObservableObject {
 
     nonisolated static func isPaired(named name: String) async -> Bool {
         await Task.detached { pairedDevice(named: name) != nil }.value
-    }
-
-    /// Whether macOS holds a pairing key for the camera. There is no public call for this;
-    /// CoreBluetooth's private pairing agent answers it (its unpairPeer: is refused for apps).
-    func hasMacBond(_ cameraID: UUID) -> Bool {
-        guard let peripheral = peripherals[cameraID]
-            ?? central.retrievePeripherals(withIdentifiers: [cameraID]).first else { return false }
-        let agentSelector = NSSelectorFromString("sharedPairingAgent")
-        let isPaired = NSSelectorFromString("isPeerPaired:")
-        guard central.responds(to: agentSelector),
-              let agent = central.perform(agentSelector)?.takeUnretainedValue() as? NSObject,
-              agent.responds(to: isPaired) else { return false }
-        typealias BoolMethod = @convention(c) (NSObject, Selector, CBPeripheral) -> Bool
-        let check = unsafeBitCast(agent.method(for: isPaired), to: BoolMethod.self)
-        let paired = check(agent, isPaired, peripheral)
-        DebugLog.write("mac bond for \(cameraID): \(paired)")
-        return paired
     }
 
     /// Scan until the camera is heard. Connecting to a camera that is not advertising
@@ -503,7 +436,8 @@ extension BLEWaker: CBCentralManagerDelegate, CBPeripheralDelegate {
 
 /// Appends to ~/Library/Logs/GRLink.log, for diagnosing real-camera sessions.
 enum DebugLog {
-    static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/GRLink.log")
+    static let url = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs/GRLink.log")
 
     static func write(_ line: String) {
         let text = "\(Date()) \(line)\n"

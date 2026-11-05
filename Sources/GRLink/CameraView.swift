@@ -218,7 +218,7 @@ struct CameraView: View {
                     Button("이름 바꾸기…") { newName = camera.displayName; renaming = camera }
                     CameraPictureMenu(camera: camera)
                     Button("다시 페어링 (Bluetooth 다시 연결)") { Task { await connection.repair(camera) } }
-                    Button("Mac Bluetooth에서 기기 지우기") { Task { await removeBond(camera) } }
+                    Button("Mac Bluetooth에서 기기 지우기…") { Task { await removeBond(camera) } }
                     Divider()
                     Button("카메라 정보 지우기…", role: .destructive) { removing = camera }
                 } label: {
@@ -379,19 +379,19 @@ struct CameraView: View {
         .task(id: "\(camera.id)#\(bondCheck)") {
             macBond = nil
             macBond = await connection.hasMacBond(camera)
+            if macBond == false { bondMessage = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            bondCheck += 1
         }
     }
 
     /// The key macOS keeps from pairing is refused by the camera and blocks pairing again,
-    /// so it has to go before re-registering.
+    /// so it has to go before re-registering. Apps can't remove it themselves, so this
+    /// opens Bluetooth settings; the state is checked again when the user comes back.
     private func removeBond(_ camera: SavedCamera) async {
-        if await connection.removeMacBond(camera) {
-            bondMessage = "지웠습니다."
-        } else {
-            bondMessage = "macOS가 지우지 못하게 해서 Bluetooth 설정을 열었습니다. \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누르세요."
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!)
-        }
-        bondCheck += 1
+        bondMessage = "Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누르세요."
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!)
     }
 
     private func row(_ title: String, _ value: String) -> some View {

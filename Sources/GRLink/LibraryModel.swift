@@ -77,6 +77,7 @@ final class LibraryModel: ObservableObject {
     @Published var destination: URL {
         didSet {
             UserDefaults.standard.set(destination.path, forKey: "destination")
+            FolderAccess.remember(destination)
             refreshSaved()
         }
     }
@@ -121,7 +122,9 @@ final class LibraryModel: ObservableObject {
         save(queue)
     }
 
-    static let defaultDestination = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/GR")
+    /// ~/Pictures/GR in the user's real home; inside the sandbox homeDirectoryForCurrentUser
+    /// is the app's container, and the Pictures entitlement covers the real folder.
+    static let defaultDestination = FolderAccess.realHome.appendingPathComponent("Pictures/GR")
 
     private var transferTask: Task<Void, Never>?
     private var infoTask: Task<Void, Never>?
@@ -129,7 +132,7 @@ final class LibraryModel: ObservableObject {
 
     init() {
         let stored = UserDefaults.standard.string(forKey: "destination")
-        destination = stored.map { URL(fileURLWithPath: $0) } ?? Self.defaultDestination
+        destination = FolderAccess.restore() ?? stored.map { URL(fileURLWithPath: $0) } ?? Self.defaultDestination
         sort = UserDefaults.standard.string(forKey: "sort").flatMap(Sort.init) ?? .newest
         groupByDate = UserDefaults.standard.object(forKey: "groupByDate") as? Bool ?? true
         dateSubfolders = UserDefaults.standard.bool(forKey: "dateSubfolders")
@@ -759,5 +762,37 @@ extension NSImage {
         ctx.draw(cg, in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h))
         guard let rotated = ctx.makeImage() else { return self }
         return NSImage(cgImage: rotated, size: size)
+    }
+}
+
+/// Keeps the sandboxed app's access to a save folder the user picked, across launches,
+/// with a security-scoped bookmark. ~/Pictures needs none (it has its own entitlement).
+enum FolderAccess {
+    static var realHome: URL {
+        guard let home = getpwuid(getuid())?.pointee.pw_dir else { return FileManager.default.homeDirectoryForCurrentUser }
+        return URL(fileURLWithPath: String(cString: home), isDirectory: true)
+    }
+
+    private static var accessed: URL?
+
+    static func remember(_ folder: URL) {
+        guard folder != accessed else { return }
+        let data = try? folder.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        UserDefaults.standard.set(data, forKey: "destinationBookmark")
+        start(folder)
+    }
+
+    static func restore() -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: "destinationBookmark") else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, bookmarkDataIsStale: &stale) else { return nil }
+        start(url)
+        if stale { remember(url) }
+        return url
+    }
+
+    private static func start(_ folder: URL) {
+        accessed?.stopAccessingSecurityScopedResource()
+        accessed = folder.startAccessingSecurityScopedResource() ? folder : nil
     }
 }

@@ -2,8 +2,9 @@ import CoreLocation
 import CoreWLAN
 import Foundation
 
-/// Switches the Mac's Wi-Fi with networksetup. CoreWLAN would need Location
-/// permission just to see the camera's SSID, so the CLI is the simpler route.
+/// Switches the Mac's Wi-Fi with CoreWLAN (networksetup can't run inside the App Store
+/// sandbox). macOS shows network names only to apps with Location permission, so joining
+/// asks for it once.
 enum WiFi {
     struct WiFiError: LocalizedError {
         let message: String
@@ -12,50 +13,43 @@ enum WiFi {
         var errorDescription: String? { message }
     }
 
-    @discardableResult
-    private static func networksetup(_ args: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = args
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func interface() throws -> String {
-        let out = try networksetup(["-listallhardwareports"])
-        let lines = out.components(separatedBy: "\n")
-        for (i, line) in lines.enumerated() where line.contains("Wi-Fi") || line.contains("AirPort") {
-            if i + 1 < lines.count, lines[i + 1].hasPrefix("Device: ") {
-                return String(lines[i + 1].dropFirst("Device: ".count))
-            }
+    static func interface() throws -> CWInterface {
+        guard let iface = CWWiFiClient.shared().interface() else {
+            throw WiFiError(message: "Wi-Fi 인터페이스를 찾을 수 없습니다.")
         }
-        throw WiFiError(message: "Wi-Fi 인터페이스를 찾을 수 없습니다.")
+        return iface
     }
 
     static func join(_ credentials: WLANCredentials) async throws {
-        let iface = try interface()
-        let out = try await Task.detached {
-            try networksetup(["-setairportnetwork", iface, credentials.ssid, credentials.passphrase])
-        }.value
-        // networksetup exits 0 on failure too and reports the error on stdout.
-        if out.contains("-3912") || out.localizedCaseInsensitiveContains("could not find network") {
-            // CoreWLAN error -3912: the network is not in range — the camera's AP is off.
-            throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+        guard await LocationPermission.shared.request() else {
+            throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Mac을 켜세요.")
         }
-        if !out.isEmpty { throw WiFiError(message: "\(credentials.ssid) 접속 실패: \(out)") }
+        let iface = try interface()
+        if iface.ssid() == credentials.ssid { return }
+        try await Task.detached {
+            if iface.powerOn() == false { try iface.setPower(true) }
+            // An exact-name scan also finds networks that don't broadcast often.
+            let found = (try? iface.scanForNetworks(withName: credentials.ssid)) ?? []
+            guard let network = found.max(by: { $0.rssiValue < $1.rssiValue }) else {
+                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+            }
+            do {
+                try iface.associate(to: network, password: credentials.passphrase)
+            } catch let error as NSError where error.code == -3912 {
+                // CoreWLAN -3912: the network went out of range — the camera's AP is off.
+                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+            } catch {
+                throw WiFiError(message: "\(credentials.ssid) 접속 실패: \(error.localizedDescription)")
+            }
+        }.value
     }
 
     /// Power-cycle Wi-Fi so macOS auto-joins its usual network again.
     static func restore() async {
         guard let iface = try? interface() else { return }
-        _ = try? networksetup(["-setairportpower", iface, "off"])
+        try? iface.setPower(false)
         try? await Task.sleep(for: .seconds(1))
-        _ = try? networksetup(["-setairportpower", iface, "on"])
+        try? iface.setPower(true)
     }
 }
 

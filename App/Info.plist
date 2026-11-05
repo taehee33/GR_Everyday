@@ -5,24 +5,26 @@
 	<key>CFBundleDisplayName</key>
 	<string>GR Mac</string>
 	<key>CFBundleExecutable</key>
-	<string>GRLink</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.hantaehee.grlink</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleName</key>
 	<string>GR Mac</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.photography</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
@@ -32,8 +34,8 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Mac 주변의 카메라 Wi-Fi 이름을 확인하는 데 사용합니다.</string>
+	<string>macOS는 위치 권한이 있는 앱에만 Wi-Fi 이름을 보여 줍니다. 카메라 Wi-Fi를 찾아 접속하는 데만 쓰고, 위치는 쓰지 않습니다.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Mac 주변의 카메라 Wi-Fi 이름을 확인하는 데 사용합니다.</string>
+	<string>macOS는 위치 권한이 있는 앱에만 Wi-Fi 이름을 보여 줍니다. 카메라 Wi-Fi를 찾아 접속하는 데만 쓰고, 위치는 쓰지 않습니다.</string>
 </dict>
 </plist>

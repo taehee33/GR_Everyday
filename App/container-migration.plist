@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- On the first sandboxed launch macOS moves these into the app's container, so shot
+	     history, edits, ratings, camera pictures and caches from earlier builds carry over. -->
+	<key>Move</key>
+	<array>
+		<string>${ApplicationSupport}/GR Mac</string>
+		<string>${Library}/Caches/GR Mac</string>
+		<string>${Library}/Logs/GRLink.log</string>
+	</array>
+</dict>
+</plist>

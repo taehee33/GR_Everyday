@@ -145,12 +145,6 @@ final class ConnectionModel: ObservableObject {
     /// Whether the Mac's Bluetooth still lists the camera as paired.
     func hasMacBond(_ camera: SavedCamera) async -> Bool { await BLEWaker.isPaired(named: camera.bleName) }
 
-    /// "Bluetooth에서 기기 지우기". Returns false when macOS kept it; the caller then opens
-    /// Bluetooth settings so the user can remove it there.
-    func removeMacBond(_ camera: SavedCamera) async -> Bool {
-        await ble.removeMacBond(camera.id, name: camera.bleName)
-    }
-
     // MARK: Connecting
 
     /// First-time pairing (camera menu → Bluetooth → Pairing; macOS asks for the code),
@@ -160,7 +154,7 @@ final class ConnectionModel: ObservableObject {
         needsBondRemoval = false
         state = .pairing("\(found.name)에 연결 중… Mac에 뜨는 창에 카메라 화면의 페어링 코드를 입력하세요.")
         do {
-            let (model, credentials) = try await ble.pair(cameraID: found.id)
+            let (model, credentials) = try await ble.pair(cameraID: found.id, name: found.name)
             self.model = model
             if cameras.contains(where: { $0.id == found.id }) {
                 update(found.id) { $0.model = model; $0.credentials = credentials; $0.pairedAt = .now }
@@ -298,7 +292,7 @@ final class ConnectionModel: ObservableObject {
                             waitFor seconds: TimeInterval = 25, waiting: String? = nil) async throws {
         if isConnected || viaUSB { await disconnect() }
         // A camera AP that was just switched on takes a few seconds to show up in the
-        // Mac's scan, and one miss ends networksetup with -3912; keep looking for a while.
+        // Mac's scan, and one scan can miss it; keep looking for a while.
         let deadline = Date().addingTimeInterval(seconds)
         var attempt = 0
         while true {
