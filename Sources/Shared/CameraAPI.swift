@@ -48,14 +48,23 @@ struct CameraAPI {
     static func liveViewURL() -> URL { url("/liveview") }
 
     @discardableResult
-    static func request(_ method: String, _ path: String, form: [String: String]? = nil, timeout: TimeInterval = 15) async throws -> [String: Any] {
+    /// `retry`: send once more when the camera dropped the connection (-1005). Its small
+    /// server closes kept-alive connections now and then, mostly while the live view runs.
+    /// On by default for reads; off for anything that must not happen twice (the shutter).
+    static func request(_ method: String, _ path: String, form: [String: String]? = nil, timeout: TimeInterval = 15,
+                        retry: Bool? = nil) async throws -> [String: Any] {
         var req = URLRequest(url: url(path), timeoutInterval: timeout)
         req.httpMethod = method
         if let form {
             req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
             req.httpBody = form.map { "\(escape($0.key))=\(escape($0.value))" }.joined(separator: "&").data(using: .utf8)
         }
-        let (data, response) = try await session.data(for: req)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch let error as URLError where error.code == .networkConnectionLost && (retry ?? (method == "GET")) {
+            (data, response) = try await session.data(for: req)
+        }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let errCode = json["errCode"] as? Int ?? status
@@ -141,7 +150,8 @@ struct CameraAPI {
 
     /// x, y in percent of the live view frame.
     static func focus(x: Int, y: Int) async throws {
-        try await request("POST", "/lens/focus", form: ["pos": "\(x),\(y)"])
+        // Focusing twice is harmless.
+        try await request("POST", "/lens/focus", form: ["pos": "\(x),\(y)"], retry: true)
     }
 
     static func finishWLAN() async {
