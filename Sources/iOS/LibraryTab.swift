@@ -251,13 +251,24 @@ struct PhotoPager: View {
         .onAppear { current = start.id }
     }
 
+    /// What the photo shown is, when it isn't the camera's live copy.
+    private var caption: String? {
+        guard let photo = currentPhoto else { return nil }
+        if library.localURL(photo) != nil, photo.kind != .video { return "\(Device.name)에 저장된 원본" }
+        if !connection.isConnected { return "카메라 연결 안 됨 · 지난 연결 때 받아 둔 작은 미리보기" }
+        return nil
+    }
+
     private var topBar: some View {
         HStack {
             Button { dismiss() } label: {
                 Image(systemName: "chevron.down").font(.headline).frame(width: 36, height: 36)
             }
             Spacer()
-            Text(currentPhoto?.name ?? "").font(.headline)
+            VStack(spacing: 1) {
+                Text(currentPhoto?.name ?? "").font(.headline)
+                if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
+            }
             Spacer()
             Color.clear.frame(width: 36, height: 36)
         }
@@ -271,7 +282,7 @@ struct PhotoPager: View {
         if let photo = currentPhoto {
             HStack {
                 if library.saved.contains(photo.name) {
-                    Label("사진 앱에 저장됨", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                    Label("사진 앱에 저장됨", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
                     Button { library.save([photo]) } label: {
                         Label("사진 앱에 저장", systemImage: "square.and.arrow.down")

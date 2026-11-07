@@ -14,6 +14,8 @@ import UIKit
 enum GRUUID {
     static let cameraService = CBUUID(string: "4B445988-CAA0-4DD3-941D-37B4F52ACA86")
     static let cameraPower = CBUUID(string: "B58CE84C-0666-4DE9-BEC8-2D27B27B3211")
+    /// First byte: battery percent (100 while on outside power).
+    static let batteryLevel = CBUUID(string: "875FC41D-4980-434C-A653-FD4A4D4410C4")
     static let wlanService = CBUUID(string: "F37F568F-9071-445D-A938-5441F2E82399")
     static let networkType = CBUUID(string: "9111CDD0-9F01-45C4-A2D4-E09E8FB0424D")
     static let ssid = CBUUID(string: "90638E5A-E77D-409D-B550-78F7E1CA5AB4")
@@ -48,6 +50,12 @@ final class BLEWaker: NSObject, ObservableObject {
     private var keepAlive: Task<Void, Never>?
     /// Last value of each readable camera-service characteristic, see probeCameraValues.
     private var lastProbe: [CBUUID: Data] = [:]
+    /// Battery percent read over the kept link; nil without one.
+    @Published private(set) var batteryLevel: Int?
+    private var charge = ChargeGuess()
+    var batteryText: String? {
+        batteryLevel.map { charge.charging ? "충전 중" : "\($0)%" }
+    }
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
@@ -146,7 +154,12 @@ final class BLEWaker: NSObject, ObservableObject {
         let readable = peripheral.services?.first { $0.uuid == GRUUID.cameraService }?
             .characteristics?.filter { $0.properties.contains(.read) } ?? []
         for c in readable {
-            guard let data = try? await read(c.uuid, on: peripheral, timeout: 5), lastProbe[c.uuid] != data else { continue }
+            guard let data = try? await read(c.uuid, on: peripheral, timeout: 5) else { continue }
+            if c.uuid == GRUUID.batteryLevel, let level = data.first {
+                charge.update(Int(level))
+                batteryLevel = Int(level)
+            }
+            guard lastProbe[c.uuid] != data else { continue }
             lastProbe[c.uuid] = data
             DebugLog.write("probe \(c.uuid.uuidString.prefix(8)): \(data.map { String(format: "%02x", $0) }.joined())")
         }
@@ -171,6 +184,8 @@ final class BLEWaker: NSObject, ObservableObject {
 
     func unlink() {
         keepAlive?.cancel()
+        batteryLevel = nil
+        charge = ChargeGuess()
         if let held { central.cancelPeripheralConnection(held) }
         held = nil
         linkedCameraID = nil
@@ -466,6 +481,8 @@ extension BLEWaker: CBCentralManagerDelegate, CBPeripheralDelegate {
                 DebugLog.write("link: kept Bluetooth link lost")
                 held = nil
                 linkedCameraID = nil
+                batteryLevel = nil
+                charge = ChargeGuess()
                 keepAlive?.cancel()
             }
             failPending(BLEError(message: "카메라 연결이 끊겼습니다\(error.map { ": \($0.localizedDescription)" } ?? ".")"))

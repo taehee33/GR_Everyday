@@ -178,7 +178,8 @@ struct CameraRows: View {
             Label {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Bluetooth")
-                    Text(linked ? "연결됨" : "연결 안 됨").font(.caption).foregroundStyle(linked ? .green : .secondary)
+                    Text(linked ? "연결됨" + (ble.batteryText.map { " · 배터리 \($0)" } ?? "") : "연결 안 됨")
+                        .font(.caption).foregroundStyle(linked ? .green : .secondary)
                 }
             } icon: {
                 Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(linked ? .green : .secondary)

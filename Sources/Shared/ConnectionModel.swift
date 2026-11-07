@@ -44,11 +44,8 @@ final class ConnectionModel: ObservableObject {
     }
     @Published var model = "RICOH GR"
     @Published var battery: Int?
-    /// props.batteryUsed: "battery" when the camera runs on its battery. Anything else is
-    /// outside (USB) power, where the camera reports 100 % while it charges.
-    @Published private(set) var batterySource: String?
-    private var lastPowerLog = ""
-    var onExternalPower: Bool { batterySource.map { $0 != "battery" } ?? false }
+    private var charge = ChargeGuess()
+    var onExternalPower: Bool { charge.charging }
     /// "78%", or "충전 중" on outside power, where the camera's level isn't the real one.
     var batteryText: String? {
         guard let battery else { return nil }
@@ -417,7 +414,7 @@ final class ConnectionModel: ObservableObject {
         connectedCameraID = nil
         props = [:]
         battery = nil
-        batterySource = nil
+        charge = ChargeGuess()
         state = .disconnected
     }
 
@@ -497,11 +494,22 @@ final class ConnectionModel: ObservableObject {
         self.props = props
         if let m = props["model"] as? String { model = m }
         battery = props["battery"] as? Int
-        batterySource = props["batteryUsed"] as? String
-        // Which field says the camera is charging isn't known yet (batteryUsed stayed
-        // "battery"-like while it showed 100 % on a charger); log every power field on change.
-        let power = props.filter { ["batt", "power", "charg", "usb", "supply", "ac"].contains(where: $0.key.lowercased().contains) }
-            .map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " ")
-        if power != lastPowerLog { DebugLog.write("power: \(power)"); lastPowerLog = power }
+        charge.update(battery)
+    }
+}
+
+/// The camera reports 100 % while on outside power, over Wi-Fi and Bluetooth alike, with no
+/// other sign of charging (GR IV HDF, fw 1.20: 66 → 100 on the charger, nothing else
+/// changed). A jump to 100 from clearly lower can only be the charger; it ends when the
+/// level drops again. A camera already charging when the app connects reads as 100 %.
+struct ChargeGuess {
+    private(set) var charging = false
+    private var last: Int?
+
+    mutating func update(_ level: Int?) {
+        guard let level else { return }
+        if level >= 100, let last, last < 95 { charging = true }
+        if level < 100 { charging = false }
+        last = level
     }
 }
