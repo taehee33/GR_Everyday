@@ -186,7 +186,9 @@ struct Thumb: View {
     }
 }
 
-/// Swipe through the photos; the camera's larger preview, or the saved file.
+/// Swipe through the photos like the Photos app: the photo fills the screen behind
+/// see-through bars, a tap hides everything but the photo, and dragging down returns to
+/// the library. The camera's larger preview, or the saved file.
 struct PhotoPager: View {
     @EnvironmentObject var library: LibraryModel
     @EnvironmentObject var connection: ConnectionModel
@@ -194,35 +196,90 @@ struct PhotoPager: View {
     let start: Photo
     let photos: [Photo]
     @State private var current: Photo.ID?
+    @State private var chrome = true
+    /// How far the photo has been dragged down; past the threshold it closes.
+    @State private var drag: CGSize = .zero
+
+    private var currentPhoto: Photo? { photos.first { $0.id == current } }
+    /// 0 at rest, 1 when dragged far enough to close.
+    private var pull: CGFloat { min(max(drag.height, 0) / 300, 1) }
 
     var body: some View {
-        NavigationStack {
+        ZStack {
+            Color.black.opacity(1 - pull).ignoresSafeArea()
             TabView(selection: $current) {
                 ForEach(photos) { photo in
                     PhotoPage(photo: photo).tag(Optional(photo.id))
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .background(.black)
-            .navigationTitle(photos.first { $0.id == current }?.name ?? "")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.visible, for: .navigationBar, .bottomBar)
-            .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                ToolbarItem(placement: .bottomBar) {
-                    if let photo = photos.first(where: { $0.id == current }) {
-                        if library.saved.contains(photo.name) {
-                            Text("저장됨 ✓").foregroundStyle(.secondary)
+            .ignoresSafeArea()
+            .scaleEffect(1 - pull * 0.3)
+            .offset(x: drag.width * pull, y: max(drag.height, 0))
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { chrome.toggle() } }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .onChanged { value in
+                        // Only a mostly downward drag; sideways is for the next photo.
+                        guard value.translation.height > abs(value.translation.width) || drag != .zero else { return }
+                        drag = value.translation
+                    }
+                    .onEnded { value in
+                        if drag.height > 120 || value.predictedEndTranslation.height > 400 {
+                            dismiss()
                         } else {
-                            Button("사진 앱에 저장") { library.save([photo]) }
-                                .disabled(!connection.isConnected || library.isTransferring)
+                            withAnimation(.spring(duration: 0.3)) { drag = .zero }
                         }
                     }
+            )
+            if chrome && drag == .zero {
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer()
+                    bottomBar
                 }
+                .transition(.opacity)
             }
         }
+        .presentationBackground(.clear)
+        .statusBarHidden(!chrome)
+        .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .onAppear { current = start.id }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.down").font(.headline).frame(width: 36, height: 36)
+            }
+            Spacer()
+            Text(currentPhoto?.name ?? "").font(.headline)
+            Spacer()
+            Color.clear.frame(width: 36, height: 36)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal).padding(.vertical, 8)
+        .background(.ultraThinMaterial.opacity(0.8), in: Rectangle())
+        .environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder private var bottomBar: some View {
+        if let photo = currentPhoto {
+            HStack {
+                if library.saved.contains(photo.name) {
+                    Label("사진 앱에 저장됨", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                } else {
+                    Button { library.save([photo]) } label: {
+                        Label("사진 앱에 저장", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(!connection.isConnected || library.isTransferring)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial.opacity(0.8), in: Rectangle())
+            .environment(\.colorScheme, .dark)
+        }
     }
 }
 
@@ -233,9 +290,11 @@ struct PhotoPage: View {
 
     var body: some View {
         ZStack {
-            Color.black
             if let image {
+                // Fit to the whole screen, under the bars: full height in landscape.
                 Image(platformImage: image).resizable().scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
             } else {
                 ProgressView().tint(.white)
             }

@@ -47,6 +47,7 @@ final class ConnectionModel: ObservableObject {
     /// props.batteryUsed: "battery" when the camera runs on its battery. Anything else is
     /// outside (USB) power, where the camera reports 100 % while it charges.
     @Published private(set) var batterySource: String?
+    private var lastPowerLog = ""
     var onExternalPower: Bool { batterySource.map { $0 != "battery" } ?? false }
     /// "78%", or "충전 중" on outside power, where the camera's level isn't the real one.
     var batteryText: String? {
@@ -477,8 +478,11 @@ final class ConnectionModel: ObservableObject {
         self.props = props
         if let m = props["model"] as? String { model = m }
         battery = props["battery"] as? Int
-        let source = props["batteryUsed"] as? String
-        if source != batterySource { DebugLog.write("battery: \(battery.map(String.init) ?? "-") batteryUsed=\(source ?? "nil")") }
-        batterySource = source
+        batterySource = props["batteryUsed"] as? String
+        // Which field says the camera is charging isn't known yet (batteryUsed stayed
+        // "battery"-like while it showed 100 % on a charger); log every power field on change.
+        let power = props.filter { ["batt", "power", "charg", "usb", "supply", "ac"].contains(where: $0.key.lowercased().contains) }
+            .map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " ")
+        if power != lastPowerLog { DebugLog.write("power: \(power)"); lastPowerLog = power }
     }
 }
