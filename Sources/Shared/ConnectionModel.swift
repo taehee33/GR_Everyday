@@ -44,6 +44,15 @@ final class ConnectionModel: ObservableObject {
     }
     @Published var model = "RICOH GR"
     @Published var battery: Int?
+    /// props.batteryUsed: "battery" when the camera runs on its battery. Anything else is
+    /// outside (USB) power, where the camera reports 100 % while it charges.
+    @Published private(set) var batterySource: String?
+    var onExternalPower: Bool { batterySource.map { $0 != "battery" } ?? false }
+    /// "78%", or "충전 중" on outside power, where the camera's level isn't the real one.
+    var batteryText: String? {
+        guard let battery else { return nil }
+        return onExternalPower ? "충전 중" : "\(battery)%"
+    }
     /// Everything /v1/props reported on the last poll.
     @Published private(set) var props: [String: Any] = [:]
     /// One-line success message shown on the camera tab (e.g. after pairing).
@@ -388,6 +397,7 @@ final class ConnectionModel: ObservableObject {
         connectedCameraID = nil
         props = [:]
         battery = nil
+        batterySource = nil
         state = .disconnected
     }
 
@@ -467,5 +477,8 @@ final class ConnectionModel: ObservableObject {
         self.props = props
         if let m = props["model"] as? String { model = m }
         battery = props["battery"] as? Int
+        let source = props["batteryUsed"] as? String
+        if source != batterySource { DebugLog.write("battery: \(battery.map(String.init) ?? "-") batteryUsed=\(source ?? "nil")") }
+        batterySource = source
     }
 }

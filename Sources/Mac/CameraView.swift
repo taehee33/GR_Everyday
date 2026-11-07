@@ -151,8 +151,8 @@ struct CameraView: View {
             Label(linked ? "Bluetooth 연결됨" : "Bluetooth 끊김", systemImage: "dot.radiowaves.left.and.right")
                 .foregroundStyle(linked ? .blue : .secondary)
                 .help(linked ? "이 연결로 카메라 Wi-Fi를 켤 수 있습니다." : "카메라 WLAN(Wi-Fi)은 휴대폰의 GR WORLD로 켜야 합니다.")
-            if connected, let battery = connection.battery {
-                Label("\(battery)%", systemImage: batteryIcon(battery))
+            if connected, let battery = connection.battery, let text = connection.batteryText {
+                Label(text, systemImage: connection.onExternalPower ? "battery.100percent.bolt" : batteryIcon(battery))
             }
             if connected {
                 ForEach(connection.storages, id: \.self) { storage in
@@ -353,7 +353,7 @@ struct CameraView: View {
                 row("모델", (connected ? connection.props["model"] as? String : nil) ?? camera.model ?? "-")
                 if connected {
                     if let firmware = connection.props["firmwareVersion"] as? String { row("펌웨어", firmware) }
-                    if let battery = connection.battery { row("배터리", "\(battery)%") }
+                    if let battery = connection.batteryText { row("배터리", battery) }
                     ForEach(connection.storages, id: \.self) { storage in
                         row("저장 공간 (\(storage.name.uppercased()))",
                             [storage.remain.map { "\($0)장 촬영 가능" }, storage.files.map { "파일 \($0)개" }]

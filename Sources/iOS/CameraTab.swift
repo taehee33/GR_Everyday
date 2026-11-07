@@ -114,7 +114,7 @@ struct CameraTab: View {
     private var connectedSection: some View {
         Section("카메라 정보") {
             LabeledContent("모델", value: connection.model)
-            if let battery = connection.battery { LabeledContent("배터리", value: "\(battery)%") }
+            if let battery = connection.batteryText { LabeledContent("배터리", value: battery) }
             if let firmware = connection.props["firmwareVersion"] as? String { LabeledContent("펌웨어", value: firmware) }
             ForEach(connection.storages, id: \.self) { storage in
                 LabeledContent(storage.name == "in" ? "내장 메모리" : storage.name.uppercased(),

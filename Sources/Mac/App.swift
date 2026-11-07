@@ -256,7 +256,7 @@ struct StatusBox: View {
             if connection.isConnected || connection.state == .lost {
                 Label(connection.route, systemImage: connection.viaUSB ? "cable.connector" : "wifi")
                     .font(.caption).foregroundStyle(.secondary)
-                Text(connection.model + (connection.battery.map { " · 배터리 \($0)%" } ?? ""))
+                Text(connection.model + (connection.batteryText.map { " · 배터리 \($0)" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
                 Button("연결 끊기") { Task { await connection.disconnect() } }
                     .controlSize(.small)
