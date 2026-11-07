@@ -58,6 +58,8 @@ final class ConnectionModel: ObservableObject {
     @Published private(set) var props: [String: Any] = [:]
     /// One-line success message shown on the camera tab (e.g. after pairing).
     @Published var notice: String?
+    /// Making or ending the Bluetooth-only link (iPhone/iPad).
+    @Published private(set) var bluetoothBusy = false
     /// The last failure was a Mac-side pairing key the camera refuses (see BLEWaker.raiseWLAN).
     @Published var needsBondRemoval = false
     /// The camera's Wi-Fi is off and no Bluetooth link is left to switch it on.
@@ -169,7 +171,7 @@ final class ConnectionModel: ObservableObject {
     func pair(_ found: FoundCamera) async {
         notice = nil
         needsBondRemoval = false
-        state = .pairing("\(found.name)에 연결 중… Mac에 뜨는 창에 카메라 화면의 페어링 코드를 입력하세요.")
+        state = .pairing("\(found.name)에 연결 중… \(Device.name)에 뜨는 창에 카메라 화면의 페어링 코드를 입력하세요.")
         do {
             let (model, credentials) = try await ble.pair(cameraID: found.id, name: found.name)
             self.model = model
@@ -186,6 +188,23 @@ final class ConnectionModel: ObservableObject {
             needsBondRemoval = (error as? BLEWaker.BLEError) == .staleBond
             state = .failed("페어링 실패: \(error.localizedDescription)")
         }
+    }
+
+    /// Bluetooth only: keep a link to the camera, ready to switch its Wi-Fi on.
+    func connectBluetooth(_ camera: SavedCamera) async {
+        notice = nil
+        bluetoothBusy = true
+        defer { bluetoothBusy = false }
+        do {
+            try await ble.link(cameraID: camera.id)
+            if case .failed = state { state = .disconnected }
+        } catch {
+            state = .failed("Bluetooth 연결 실패: \(error.localizedDescription) 카메라가 켜져 있고 Bluetooth가 켜져 있는지 확인하세요.")
+        }
+    }
+
+    func disconnectBluetooth() {
+        ble.unlink()
     }
 
     func cancelBluetooth() {
@@ -304,15 +323,15 @@ final class ConnectionModel: ObservableObject {
     /// Say what the Mac actually sees, so "camera Wi-Fi is off" is not a guess.
     private func notFoundMessage(for camera: SavedCamera, credentials: WLANCredentials) async -> String {
         guard let networks = await WiFi.nearby() else {
-            return "Mac이 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했습니다. 카메라 Wi-Fi가 켜져 있는지 확인하세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Mac을 허용하세요.)"
+            return "\(Device.subject) 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했습니다. 카메라 Wi-Fi가 켜져 있는지 확인하세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Mac을 허용하세요.)"
         }
         DebugLog.write("nearby: " + networks.map { "\($0.ssid)(\($0.rssi) ch\($0.channel))" }.joined(separator: ", "))
         let cameraNetworks = networks.filter { $0.ssid.hasPrefix("GR") || $0.ssid.localizedCaseInsensitiveContains("RICOH") }
         if cameraNetworks.isEmpty {
-            return "Mac 주변에 카메라 Wi-Fi가 하나도 보이지 않습니다(주변 Wi-Fi \(networks.count)개 확인). 카메라 Wi-Fi가 실제로 켜지지 않았거나, 다른 기기(휴대폰 등)가 이미 카메라 Wi-Fi에 연결돼 있을 수 있습니다."
+            return "\(Device.name) 주변에 카메라 Wi-Fi가 하나도 보이지 않습니다(주변 Wi-Fi \(networks.count)개 확인). 카메라 Wi-Fi가 실제로 켜지지 않았거나, 다른 기기(휴대폰 등)가 이미 카메라 Wi-Fi에 연결돼 있을 수 있습니다."
         }
         let names = cameraNetworks.map { "\($0.ssid) (\($0.rssi) dBm)" }.joined(separator: ", ")
-        return "저장된 카메라 Wi-Fi(\(credentials.ssid))는 안 보이고, Mac에는 \(names)이(가) 보입니다. 카메라 Wi-Fi 이름이 바뀌었다면 카메라를 다시 등록하세요."
+        return "저장된 카메라 Wi-Fi(\(credentials.ssid))는 안 보이고, \(Device.name)에는 \(names)이(가) 보입니다. 카메라 Wi-Fi 이름이 바뀌었다면 카메라를 다시 등록하세요."
     }
 
     /// `waiting` replaces the retry message while the camera's Wi-Fi is not up yet.
@@ -375,7 +394,7 @@ final class ConnectionModel: ObservableObject {
             connectedCameraID = nil
             await didConnect()
         } catch {
-            state = .failed("카메라에 접속할 수 없습니다. Mac이 카메라 Wi-Fi(GR_…)에 연결돼 있는지 확인하세요.")
+            state = .failed("카메라에 접속할 수 없습니다. \(Device.subject) 카메라 Wi-Fi(GR_…)에 연결돼 있는지 확인하세요.")
         }
     }
 

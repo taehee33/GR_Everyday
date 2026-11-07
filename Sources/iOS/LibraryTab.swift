@@ -197,6 +197,8 @@ struct PhotoPager: View {
     let photos: [Photo]
     @State private var current: Photo.ID?
     @State private var chrome = true
+    /// The current photo is zoomed in: its pans are for moving around, not closing.
+    @State private var zoomed = false
     /// How far the photo has been dragged down; past the threshold it closes.
     @State private var drag: CGSize = .zero
 
@@ -209,19 +211,21 @@ struct PhotoPager: View {
             Color.black.opacity(1 - pull).ignoresSafeArea()
             TabView(selection: $current) {
                 ForEach(photos) { photo in
-                    PhotoPage(photo: photo).tag(Optional(photo.id))
+                    PhotoPage(photo: photo, zoomed: $zoomed) {
+                        withAnimation(.easeInOut(duration: 0.2)) { chrome.toggle() }
+                    }
+                    .tag(Optional(photo.id))
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
             .scaleEffect(1 - pull * 0.3)
             .offset(x: drag.width * pull, y: max(drag.height, 0))
-            .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { chrome.toggle() } }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 20)
                     .onChanged { value in
                         // Only a mostly downward drag; sideways is for the next photo.
-                        guard value.translation.height > abs(value.translation.width) || drag != .zero else { return }
+                        guard !zoomed, value.translation.height > abs(value.translation.width) || drag != .zero else { return }
                         drag = value.translation
                     }
                     .onEnded { value in
@@ -286,14 +290,15 @@ struct PhotoPager: View {
 struct PhotoPage: View {
     @EnvironmentObject var library: LibraryModel
     let photo: Photo
+    @Binding var zoomed: Bool
+    let onTap: () -> Void
     @State private var image: PlatformImage?
 
     var body: some View {
         ZStack {
             if let image {
                 // Fit to the whole screen, under the bars: full height in landscape.
-                Image(platformImage: image).resizable().scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ZoomablePhoto(image: image, zoomed: $zoomed, onTap: onTap)
                     .ignoresSafeArea()
             } else {
                 ProgressView().tint(.white)
@@ -311,7 +316,7 @@ struct PhotoPage: View {
             if let local = library.localURL(photo), photo.kind != .video,
                let data = try? Data(contentsOf: local), let full = PlatformImage(data: data) {
                 image = full
-            } else if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .view), orientation: orientation) {
+            } else if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .xs), orientation: orientation) {
                 image = preview
             }
         }
@@ -340,5 +345,92 @@ struct TransferBar: View {
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
+    }
+}
+
+/// Pinch and double-tap zoom with UIScrollView, as in the Photos app. A single tap (one
+/// that isn't the start of a double tap) goes to `onTap`.
+struct ZoomablePhoto: UIViewRepresentable {
+    let image: UIImage
+    @Binding var zoomed: Bool
+    let onTap: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> PhotoScrollView {
+        let scroll = PhotoScrollView()
+        scroll.delegate = context.coordinator
+        scroll.minimumZoomScale = 1
+        scroll.maximumZoomScale = 5
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.imageView.image = image
+        let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
+        double.numberOfTapsRequired = 2
+        let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.singleTap))
+        single.require(toFail: double)
+        scroll.addGestureRecognizer(double)
+        scroll.addGestureRecognizer(single)
+        return scroll
+    }
+
+    func updateUIView(_ scroll: PhotoScrollView, context: Context) {
+        context.coordinator.parent = self
+        if scroll.imageView.image !== image {
+            scroll.imageView.image = image
+            scroll.setZoomScale(1, animated: false)
+        }
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var parent: ZoomablePhoto
+        init(_ parent: ZoomablePhoto) { self.parent = parent }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? PhotoScrollView)?.imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            let zoomed = scrollView.zoomScale > 1.01
+            if zoomed != parent.zoomed { DispatchQueue.main.async { self.parent.zoomed = zoomed } }
+        }
+
+        @objc func doubleTap(_ tap: UITapGestureRecognizer) {
+            guard let scroll = tap.view as? UIScrollView else { return }
+            if scroll.zoomScale > 1.01 {
+                scroll.setZoomScale(1, animated: true)
+            } else {
+                let point = tap.location(in: (scroll as? PhotoScrollView)?.imageView)
+                let scale: CGFloat = 2.5
+                let size = CGSize(width: scroll.bounds.width / scale, height: scroll.bounds.height / scale)
+                scroll.zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                                       width: size.width, height: size.height), animated: true)
+            }
+        }
+
+        @objc func singleTap() { parent.onTap() }
+    }
+}
+
+/// The scroll view holding one photo, fitted to the screen while not zoomed.
+final class PhotoScrollView: UIScrollView {
+    let imageView: UIImageView = {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        return view
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addSubview(imageView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if zoomScale <= 1.001, imageView.frame.size != bounds.size {
+            imageView.frame = bounds
+            contentSize = bounds.size
+        }
     }
 }

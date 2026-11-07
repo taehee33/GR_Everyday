@@ -46,6 +46,8 @@ final class BLEWaker: NSObject, ObservableObject {
     @Published private(set) var linkedCameraID: UUID?
     private var held: CBPeripheral?
     private var keepAlive: Task<Void, Never>?
+    /// Last value of each readable camera-service characteristic, see probeCameraValues.
+    private var lastProbe: [CBUUID: Data] = [:]
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
@@ -76,8 +78,8 @@ final class BLEWaker: NSObject, ObservableObject {
     private func waitPoweredOn() async throws {
         switch central.state {
         case .poweredOn: return
-        case .unauthorized: throw BLEError(message: "Bluetooth 권한이 없습니다. 시스템 설정 > 개인정보 보호 > Bluetooth에서 GR Mac을 허용하세요.")
-        case .poweredOff: throw BLEError(message: "Mac의 Bluetooth가 꺼져 있습니다.")
+        case .unauthorized: throw BLEError(message: "Bluetooth 권한이 없습니다. \(Device.bluetoothPermissionPath) 허용하세요.")
+        case .poweredOff: throw BLEError(message: "\(Device.name)의 Bluetooth가 꺼져 있습니다.")
         default:
             try await withCheckedThrowingContinuation { poweredOn = $0 }
         }
@@ -125,15 +127,53 @@ final class BLEWaker: NSObject, ObservableObject {
     private func hold(_ peripheral: CBPeripheral, cameraID: UUID) {
         held = peripheral
         linkedCameraID = cameraID
-        // A light read now and then, so neither side treats the link as idle.
+        // Reads now and then, so neither side treats the link as idle.
         keepAlive?.cancel()
         keepAlive = Task { [weak self] in
+            await self?.probeCameraValues(on: peripheral)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(15))
                 guard let self, let held = self.held, held.state == .connected, !Task.isCancelled else { return }
-                _ = try? await self.read(GRUUID.cameraPower, on: held, timeout: 10)
+                await self.probeCameraValues(on: held)
             }
         }
+    }
+
+    /// Logs the camera service's readable values when they change. Over Wi-Fi the camera
+    /// reports battery 100 while it charges and nothing else about power (GR IV HDF, fw
+    /// 1.20); one of these may say whether it runs on outside power.
+    private func probeCameraValues(on peripheral: CBPeripheral) async {
+        let readable = peripheral.services?.first { $0.uuid == GRUUID.cameraService }?
+            .characteristics?.filter { $0.properties.contains(.read) } ?? []
+        for c in readable {
+            guard let data = try? await read(c.uuid, on: peripheral, timeout: 5), lastProbe[c.uuid] != data else { continue }
+            lastProbe[c.uuid] = data
+            DebugLog.write("probe \(c.uuid.uuidString.prefix(8)): \(data.map { String(format: "%02x", $0) }.joined())")
+        }
+    }
+
+    /// Bluetooth only: reconnect to a paired camera and keep the link, without switching its
+    /// Wi-Fi on (as GR WORLD's Bluetooth connection does).
+    func link(cameraID: UUID) async throws {
+        if let held, held.state == .connected, linkedCameraID == cameraID { return }
+        try await waitForAdvertisement(cameraID)
+        let peripheral = try await open(cameraID, connectTimeout: 15)
+        do {
+            // An encrypted read: the link is only useful once the system's pairing is in place.
+            _ = try await read(GRUUID.cameraPower, on: peripheral)
+            hold(peripheral, cameraID: cameraID)
+            DebugLog.write("link: Bluetooth link to \(cameraID) kept")
+        } catch {
+            central.cancelPeripheralConnection(peripheral)
+            throw error
+        }
+    }
+
+    func unlink() {
+        keepAlive?.cancel()
+        if let held { central.cancelPeripheralConnection(held) }
+        held = nil
+        linkedCameraID = nil
     }
 
     /// Power the camera on and switch its Wi-Fi on over the kept pairing link.

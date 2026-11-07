@@ -50,36 +50,9 @@ struct CameraTab: View {
         }
     }
 
-    private func isConnected(_ camera: SavedCamera) -> Bool {
-        connection.connectedCameraID == camera.id && (connection.isConnected || connection.state == .lost)
-    }
-
     private func cameraSection(_ camera: SavedCamera) -> some View {
         Section {
-            HStack(spacing: 14) {
-                Image(systemName: "camera.fill").font(.title).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(camera.displayName).font(.headline)
-                    Text(camera.shortModel ?? "RICOH GR").font(.subheadline).foregroundStyle(.secondary)
-                    if isConnected(camera) {
-                        Label(connection.route, systemImage: "wifi").font(.caption).foregroundStyle(.green)
-                    } else if let last = camera.lastConnected {
-                        Text("마지막 연결 \(last.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-            if isConnected(camera) {
-                Button("연결 끊기", role: .destructive) { Task { await connection.disconnect() } }
-            } else {
-                Button {
-                    Task { await connection.connect(camera) }
-                } label: {
-                    Label("연결", systemImage: "wifi")
-                }
-                .disabled(connection.isBusy)
-            }
+            CameraRows(camera: camera, ble: connection.ble)
         } footer: {
             HStack {
                 Button("다시 페어링") { Task { await connection.repair(camera) } }
@@ -169,6 +142,78 @@ struct RegisterSheet: View {
                 do { try await ble.startScan() } catch { self.error = error.localizedDescription }
             }
             .onDisappear { ble.stopScan() }
+        }
+    }
+}
+
+/// One registered camera: name, then Bluetooth and Wi-Fi as separate connections, as in
+/// GR WORLD. Bluetooth keeps a link to the camera; Wi-Fi switches the camera's Wi-Fi on over
+/// it and joins, for photos and remote shooting.
+struct CameraRows: View {
+    @EnvironmentObject var connection: ConnectionModel
+    let camera: SavedCamera
+    /// Observed directly so the Bluetooth row follows the link.
+    @ObservedObject var ble: BLEWaker
+
+    private var linked: Bool { ble.linkedCameraID == camera.id }
+    private var onWiFi: Bool {
+        connection.connectedCameraID == camera.id && (connection.isConnected || connection.state == .lost)
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "camera.fill").font(.title).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(camera.displayName).font(.headline)
+                Text(camera.shortModel ?? "RICOH GR").font(.subheadline).foregroundStyle(.secondary)
+                if !onWiFi, !linked, let last = camera.lastConnected {
+                    Text("마지막 연결 \(last.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+
+        HStack {
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Bluetooth")
+                    Text(linked ? "연결됨" : "연결 안 됨").font(.caption).foregroundStyle(linked ? .green : .secondary)
+                }
+            } icon: {
+                Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(linked ? .green : .secondary)
+            }
+            Spacer()
+            if connection.bluetoothBusy {
+                ProgressView()
+            } else if linked {
+                Button("끊기") { connection.disconnectBluetooth() }.buttonStyle(.bordered)
+            } else {
+                Button("연결") { Task { await connection.connectBluetooth(camera) } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connection.isBusy)
+            }
+        }
+
+        HStack {
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Wi-Fi")
+                    Text(onWiFi ? connection.route.replacingOccurrences(of: "Wi-Fi · ", with: "") + " 연결됨"
+                                : (linked ? "Bluetooth로 켤 수 있음" : "연결 안 됨"))
+                        .font(.caption).foregroundStyle(onWiFi ? .green : .secondary)
+                }
+            } icon: {
+                Image(systemName: "wifi").foregroundStyle(onWiFi ? .green : .secondary)
+            }
+            Spacer()
+            if onWiFi {
+                Button("끊기") { Task { await connection.disconnect() } }.buttonStyle(.bordered)
+            } else {
+                Button("연결") { Task { await connection.connect(camera) } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connection.isBusy || connection.bluetoothBusy)
+            }
         }
     }
 }

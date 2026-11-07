@@ -39,6 +39,29 @@ extension View {
     }
 }
 
+/// The device's name for messages: "Mac", "iPhone" or "iPad".
+enum Device {
+    @MainActor static var name: String {
+        #if os(macOS)
+        return "Mac"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #endif
+    }
+
+    /// With its subject particle: "Mac이", "iPhone이", "iPad가".
+    @MainActor static var subject: String { name == "iPad" ? "iPad가" : "\(name)이" }
+
+    /// Where the app's Bluetooth permission is switched on.
+    static var bluetoothPermissionPath: String {
+        #if os(macOS)
+        return "시스템 설정 > 개인정보 보호 > Bluetooth에서 GR Mac을"
+        #else
+        return "설정 > GR Connect에서 Bluetooth를"
+        #endif
+    }
+}
+
 /// Opens a page of the system's settings (Bluetooth, Location) where the user fixes something
 /// the app can't do itself.
 enum SystemSettings {
