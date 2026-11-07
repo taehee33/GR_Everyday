@@ -327,7 +327,7 @@ struct PhotoPage: View {
             if let local = library.localURL(photo), photo.kind != .video,
                let data = try? Data(contentsOf: local), let full = PlatformImage(data: data) {
                 image = full
-            } else if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .xs), orientation: orientation) {
+            } else if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .view), orientation: orientation) {
                 image = preview
             }
         }
