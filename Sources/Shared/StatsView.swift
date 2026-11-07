@@ -11,6 +11,13 @@ struct StatsView: View {
     @State private var month = Calendar.current.startOfMonth(.now)
     @AppStorage("statsIncludeDeleted") private var includeDeleted = true
     @State private var confirmClear = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// iPhone (and iPad in a narrow split): calendar above the counts, one table per row.
+    private var compact: Bool { sizeClass == .compact }
+    #else
+    private let compact = false
+    #endif
 
     private struct Entry {
         let date: Date?
@@ -44,10 +51,15 @@ struct StatsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                HStack(alignment: .top, spacing: 20) {
+                if compact {
                     CalendarMonth(month: $month, day: $day, counts: perDay)
-                        .frame(width: 380)
                     summary(day: onDay, all: all)
+                } else {
+                    HStack(alignment: .top, spacing: 20) {
+                        CalendarMonth(month: $month, day: $day, counts: perDay)
+                            .frame(width: 380)
+                        summary(day: onDay, all: all)
+                    }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 20, alignment: .top)], spacing: 20) {
                     table(.mode, day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"])
@@ -61,7 +73,7 @@ struct StatsView: View {
                 Text("줄을 누르면 라이브러리에서 그 사진만 보여 줍니다. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줍니다. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없습니다.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(24)
+            .padding(compact ? 16 : 24)
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
@@ -85,12 +97,12 @@ struct StatsView: View {
         }
     }
 
-    private var header: some View {
+    @ViewBuilder private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("촬영 통계").font(.largeTitle.bold())
                 Text(includeDeleted
-                     ? "GR Mac이 카드에서 한 번이라도 본 사진은 지운 뒤에도 셉니다. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있습니다."
+                     ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 셉니다. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있습니다."
                      : "카드에 남아 있는 사진만 셉니다.")
                     .font(.callout).foregroundStyle(.secondary)
                 Picker("", selection: $includeDeleted) {
@@ -101,14 +113,19 @@ struct StatsView: View {
                 .padding(.top, 4)
             }
             Spacer()
-            if stats.scanning {
+            if !compact { scanStatus }
+        }
+        if compact { HStack { scanStatus } }
+    }
+
+    @ViewBuilder private var scanStatus: some View {
+        if stats.scanning {
                 ProgressView().controlSize(.small)
                 Text("촬영 정보 읽는 중 · \(stats.pending)장 남음").foregroundStyle(.secondary)
                 Button("중지") { stats.cancel() }
             } else if stats.pending > 0 {
                 Button("이어서 읽기 (\(stats.pending)장)") { library.refreshStats() }
             }
-        }
     }
 
     private func summary(day: [Entry], all: [Entry]) -> some View {

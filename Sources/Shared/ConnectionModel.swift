@@ -223,14 +223,25 @@ final class ConnectionModel: ObservableObject {
         notice = nil
         needsBondRemoval = false
         needsRepair = false
-        // The camera only starts its Wi-Fi when a Bluetooth peer asks. The pairing link is
-        // kept open for that; use it first.
+        // The camera only starts its Wi-Fi when a Bluetooth peer asks. An iPhone or iPad can
+        // reconnect to the paired camera for that; a Mac only has the link kept since pairing.
+        #if os(iOS)
+        state = .waking("Bluetooth로 카메라 Wi-Fi 켜는 중…")
+        do {
+            let fresh = try await ble.wakeWLAN(cameraID: camera.id)
+            update(camera.id) { $0.credentials = fresh }
+        } catch {
+            // Its Wi-Fi may be on already (turned on at the camera or by GR WORLD); try joining.
+            DebugLog.write("wake failed: \(error.localizedDescription)")
+        }
+        #else
         if ble.linkedCameraID == camera.id {
             state = .waking("Bluetooth로 카메라 Wi-Fi 켜는 중…")
             if let fresh = try? await ble.raiseWLANOnLink() {
                 update(camera.id) { $0.credentials = fresh }
             }
         }
+        #endif
         do {
             try await joinCamera(credentials, camera: camera.id)
         } catch let error as WiFi.WiFiError where error.notFound {

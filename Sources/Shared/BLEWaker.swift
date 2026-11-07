@@ -146,6 +146,26 @@ final class BLEWaker: NSObject, ObservableObject {
         return try await raiseWLAN(on: held)
     }
 
+    /// Reconnect to a paired camera, power it on and switch its Wi-Fi on, then keep the link
+    /// as GR WORLD does. Works where the camera accepts the system's pairing key: on iOS
+    /// (the phone reconnects with a private address); a Mac's key is refused (see pair).
+    func wakeWLAN(cameraID: UUID) async throws -> WLANCredentials {
+        if let held, held.state == .connected, linkedCameraID == cameraID {
+            return try await raiseWLAN(on: held)
+        }
+        try await waitForAdvertisement(cameraID)
+        let peripheral = try await open(cameraID, connectTimeout: 15)
+        do {
+            let credentials = try await raiseWLAN(on: peripheral)
+            hold(peripheral, cameraID: cameraID)
+            DebugLog.write("wake: wlan \(credentials.ssid) raised over a reconnect")
+            return credentials
+        } catch {
+            central.cancelPeripheralConnection(peripheral)
+            throw error
+        }
+    }
+
     /// Read an encrypted characteristic until macOS has finished SMP pairing.
     private func authenticate(_ peripheral: CBPeripheral) async throws {
         DebugLog.write("pair: requesting encrypted read")

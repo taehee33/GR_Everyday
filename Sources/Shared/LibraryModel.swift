@@ -599,6 +599,9 @@ final class LibraryModel: ObservableObject {
             try Self.writeOrientation(Self.orientation(current, turns: adj.quarterTurns, flipped: adj.flipped), of: file)
         }
         try FileManager.default.moveItem(at: file, to: target)
+        #if os(iOS)
+        try await PhotosLibrary.add(target, isVideo: photo.kind == .video)
+        #endif
         if rotate {
             var rest = adjustments(photo)
             rest.quarterTurns = 0
