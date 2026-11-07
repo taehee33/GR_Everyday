@@ -48,7 +48,7 @@ struct LibraryView: View {
 
     /// Filter by what 촬영 통계 reads from each photo (image control, exposure mode, …).
     /// Lists only values found on this card; empty until the stats have been read once.
-    @ViewBuilder private var shotFilterMenu: some View {
+    @ViewBuilder private func shotFilterMenu(compact: Bool) -> some View {
         let records = library.photos.compactMap { library.stats.records[$0.id] }
         Menu {
             if library.shotFilter != nil {
@@ -71,7 +71,13 @@ struct LibraryView: View {
                 Text("‘촬영 통계’를 한 번 열면 촬영 정보로 거를 수 있습니다.")
             }
         } label: {
-            Label("필터: " + (library.shotFilter?.label ?? "전체"), systemImage: "line.3.horizontal.decrease.circle")
+            let text = "필터: " + (library.shotFilter?.label ?? "전체")
+            if compact {
+                Image(systemName: library.shotFilter == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    .help(text)
+            } else {
+                Label(text, systemImage: "line.3.horizontal.decrease.circle")
+            }
         }
         .fixedSize()
         .help("노출 모드·이미지 컨트롤·비율·크롭·HDF로 거르기")
@@ -101,9 +107,58 @@ struct LibraryView: View {
             } label: { Image(systemName: "arrow.clockwise") }
             .help("새로고침")
 
+            // When the window is narrow these shorten (no counts, icon-only menus) so the
+            // buttons on the right keep their full labels.
+            ViewThatFits(in: .horizontal) {
+                browseControls(compact: false)
+                browseControls(compact: true)
+            }
+
+            Spacer()
+
+            let progress = library.infoProgress
+            if progress.done < progress.total {
+                Text("날짜 읽는 중 \(progress.done)/\(progress.total)")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+
+            Group {
+                Menu("선택") {
+                    Button("전체 선택") { library.selectAll() }.keyboardShortcut("a", modifiers: .command)
+                    Button("미저장만 선택") { library.selectUnsaved() }
+                    Button("선택 해제") { library.clearSelection() }.keyboardShortcut("d", modifiers: .command)
+                }
+
+                Button {
+                    _ = chooseFolder()
+                } label: {
+                    Label(library.destination.lastPathComponent, systemImage: "folder")
+                }
+                .help("저장 폴더: \(library.destination.path)")
+
+                Button {
+                    library.saveSelected()
+                } label: {
+                    Text(library.selection.isEmpty ? "선택 저장" : "선택 저장 (\(library.selection.count))")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(library.selection.isEmpty || library.isTransferring)
+            }
+            .fixedSize()
+            .layoutPriority(1)
+
+            Button { showShortcuts.toggle() } label: { Image(systemName: "keyboard") }
+                .help("단축키")
+                .popover(isPresented: $showShortcuts) { ShortcutHelp() }
+        }
+        .padding(10)
+    }
+
+    @ViewBuilder private func browseControls(compact: Bool) -> some View {
+        HStack(spacing: 10) {
             Picker("", selection: $library.filter) {
                 ForEach(LibraryModel.Filter.allCases) { f in
-                    Text("\(f.rawValue) (\(library.count(f)))").tag(f)
+                    Text(compact ? f.rawValue : "\(f.rawValue) (\(library.count(f)))").tag(f)
                 }
             }
             .pickerStyle(.segmented)
@@ -123,49 +178,14 @@ struct LibraryView: View {
                 Divider()
                 Toggle("날짜별로 묶기", isOn: $library.groupByDate)
             } label: {
-                Label("정렬: " + library.sort.rawValue + (library.minRating > 0 ? " · ★\(library.minRating)+" : ""),
-                      systemImage: "arrow.up.arrow.down")
+                let text = "정렬: " + library.sort.rawValue + (library.minRating > 0 ? " · ★\(library.minRating)+" : "")
+                if compact { Image(systemName: "arrow.up.arrow.down").help(text) } else { Label(text, systemImage: "arrow.up.arrow.down") }
             }
             .fixedSize()
             .help("정렬 순서, 별점으로 거르기, 날짜별로 묶기")
 
-            shotFilterMenu
-
-            Spacer()
-
-            let progress = library.infoProgress
-            if progress.done < progress.total {
-                Text("날짜 읽는 중 \(progress.done)/\(progress.total)")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-
-            Menu("선택") {
-                Button("전체 선택") { library.selectAll() }.keyboardShortcut("a", modifiers: .command)
-                Button("미저장만 선택") { library.selectUnsaved() }
-                Button("선택 해제") { library.clearSelection() }.keyboardShortcut("d", modifiers: .command)
-            }
-            .fixedSize()
-
-            Button {
-                _ = chooseFolder()
-            } label: {
-                Label(library.destination.lastPathComponent, systemImage: "folder")
-            }
-            .help("저장 폴더: \(library.destination.path)")
-
-            Button {
-                library.saveSelected()
-            } label: {
-                Text(library.selection.isEmpty ? "선택 저장" : "선택 저장 (\(library.selection.count))")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(library.selection.isEmpty || library.isTransferring)
-
-            Button { showShortcuts.toggle() } label: { Image(systemName: "keyboard") }
-                .help("단축키")
-                .popover(isPresented: $showShortcuts) { ShortcutHelp() }
+            shotFilterMenu(compact: compact)
         }
-        .padding(10)
     }
 
     private func switchMode(_ mode: LibraryModel.Mode) {

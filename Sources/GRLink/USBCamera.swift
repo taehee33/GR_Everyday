@@ -27,6 +27,8 @@ final class USBCamera: NSObject, ObservableObject {
     private var transactionID: UInt32 = 0x1000
     /// Restarts the browser when the GR is on the bus but never reported (see watch()).
     private var watchdog: Task<Void, Never>?
+    /// Waiting for the PTP session to open, then for the full file list.
+    private var opened: CheckedContinuation<Void, Error>?
     private var ready: CheckedContinuation<Void, Error>?
     private var files: [String: ICCameraFile] = [:]
     private var server: LocalServer?
@@ -88,12 +90,22 @@ final class USBCamera: NSObject, ObservableObject {
         }
         if serving !== camera {
             DebugLog.write("usb: opening \(camera.name ?? "?")")
-            try await withTimeout(30) {
+            try await withTimeout(30, "카메라가 USB로 응답하지 않습니다. 카메라를 켜고 케이블을 다시 연결하세요.") {
                 try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-                    self.ready = c
+                    self.opened = c
                     camera.requestOpenSession()
                 }
             }
+            // macOS reads every file's details before the list is complete: about 36 s for
+            // 648 files on the GR IV, so this wait grows with the card.
+            if camera.contentCatalogPercentCompleted < 100 {
+                try await withTimeout(600, "USB로 사진 목록을 다 읽지 못했습니다. 케이블을 다시 연결해 보세요.") {
+                    try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                        self.ready = c
+                    }
+                }
+            }
+            DebugLog.write("usb: catalog complete")
         }
         index(camera)
         if server == nil {
@@ -163,16 +175,19 @@ final class USBCamera: NSObject, ObservableObject {
     private static func dir(_ file: ICCameraFile) -> String { file.parentFolder?.name ?? "100RICOH" }
     private static func id(_ file: ICCameraFile) -> String { "\(dir(file))/\(file.name ?? "")" }
 
-    private func withTimeout(_ seconds: Double, _ body: @escaping () async throws -> Void) async throws {
+    private func withTimeout(_ seconds: Double, _ message: String, _ body: @escaping () async throws -> Void) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { try await body() }
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
-                throw USBError(message: "카메라가 USB로 응답하지 않습니다. 카메라를 켜고 케이블을 다시 연결하세요.")
+                throw USBError(message: message)
             }
             defer {
                 group.cancelAll()
-                Task { @MainActor in self.ready?.resume(throwing: CancellationError()); self.ready = nil }
+                Task { @MainActor in
+                    self.opened?.resume(throwing: CancellationError()); self.opened = nil
+                    self.ready?.resume(throwing: CancellationError()); self.ready = nil
+                }
             }
             try await group.next()
         }
@@ -350,13 +365,16 @@ extension USBCamera: ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
 
     nonisolated func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
         MainActor.assumeIsolated {
-            if let error { ready?.resume(throwing: error); ready = nil }
+            if let error { opened?.resume(throwing: error) } else { opened?.resume() }
+            opened = nil
         }
     }
 
     nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
         MainActor.assumeIsolated {
             if serving === device { index(device) }
+            // Some cameras report the catalog before the session-open callback.
+            opened?.resume(); opened = nil
             ready?.resume(); ready = nil
         }
     }
