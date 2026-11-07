@@ -1,4 +1,3 @@
-import AppKit
 import CoreImage
 import ImageIO
 import UniformTypeIdentifiers

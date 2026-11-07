@@ -35,7 +35,7 @@ Xcode에서 `GR Mac.xcodeproj`를 열어 실행해도 됩니다. App Store에 �
 앱은 App Store 샌드박스 안에서 돌아갑니다. 데이터는 `~/Library/Containers/local.hantaehee.grlink`에 있고,
 샌드박스 전 빌드의 촬영 기록·편집·캐시는 처음 실행할 때 macOS가 그곳으로 옮깁니다(`App/container-migration.plist`).
 카메라 Wi-Fi에 접속하려면 위치 권한이 필요합니다(macOS는 위치 권한이 있는 앱에만 Wi-Fi 이름을 보여 줍니다).
-`swift build`는 빠른 컴파일 확인용으로만 남아 있습니다.
+소스는 `Sources/Shared`(모델·공용 화면), `Sources/Mac`(Mac 화면), `Sources/iOS`(iPhone·iPad 화면)로 나뉩니다.
 
 바탕화면 안의 폴더에서 실행하면 macOS가 앱을 확인하지 못해 위치 권한 창이 뜨지 않고, 카메라 Wi-Fi에 접속할 수 없습니다. 응용 프로그램 폴더에서 실행하세요.
 

@@ -143,8 +143,18 @@ struct SettingsView: View {
         }
     }
 
+    /// "1.250" → "1/250", "10.1" → "10\"", "25.10" → "2.5\"".
+    static func shutter(_ tv: String) -> String {
+        let parts = tv.split(separator: ".")
+        guard parts.count == 2, let n = Int(parts[0]), let d = Int(parts[1]), d > 0 else { return tv }
+        if d == 1 { return "\(n)\"" }
+        if d == 10 { return "\(n / 10).\(n % 10)\"" }
+        if n == 1 { return "1/\(d)" }
+        return "\(n)/\(d)"
+    }
+
     static func display(_ key: String, _ value: String) -> String {
-        if key == "tv" { return RemoteView.shutter(value) }
+        if key == "tv" { return shutter(value) }
         if key == "av" { return "F\(value)" }
         if key == "focusSetting" { return focusLabels[value] ?? value }
         return Self.valueLabels[value] ?? value

@@ -138,7 +138,7 @@ struct StatsView: View {
                 HStack {
                     if gone > 0 { Text("카드에서 지운 사진 \(gone)장 포함 · 흐린 숫자가 지운 사진입니다") }
                     Spacer()
-                    Button("기록 지우기…") { confirmClear = true }.buttonStyle(.link)
+                    Button("기록 지우기…") { confirmClear = true }.linkButtonStyle()
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 .padding([.horizontal, .bottom], 12)

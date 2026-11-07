@@ -1,5 +1,8 @@
-import AppKit
 import Combine
+import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 import Foundation
 
 @MainActor
@@ -126,7 +129,11 @@ final class LibraryModel: ObservableObject {
 
     /// ~/Pictures/GR in the user's real home; inside the sandbox homeDirectoryForCurrentUser
     /// is the app's container, and the Pictures entitlement covers the real folder.
+    #if os(macOS)
     static let defaultDestination = FolderAccess.realHome.appendingPathComponent("Pictures/GR")
+    #else
+    static let defaultDestination = URL.documentsDirectory
+    #endif
 
     private var transferTask: Task<Void, Never>?
     private var infoTask: Task<Void, Never>?
@@ -223,14 +230,14 @@ final class LibraryModel: ObservableObject {
     func localURL(_ photo: Photo) -> URL? { localFiles[photo.name] }
 
     /// Plain click: only this photo. ⌘: add / remove. ⇧: range from the current photo.
-    func click(_ photo: Photo, modifiers: NSEvent.ModifierFlags) {
-        if modifiers.contains(.shift), let anchor = current,
+    func click(_ photo: Photo, command: Bool = false, shift: Bool = false) {
+        if shift, let anchor = current,
            let a = visible.firstIndex(of: anchor), let b = visible.firstIndex(of: photo) {
             let range = visible[min(a, b)...max(a, b)].map(\.id)
-            if modifiers.contains(.command) { selection.formUnion(range) } else { selection = Set(range) }
+            if command { selection.formUnion(range) } else { selection = Set(range) }
             return
         }
-        if modifiers.contains(.command) {
+        if command {
             toggle(photo)
         } else {
             selection = [photo.id]
@@ -528,7 +535,9 @@ final class LibraryModel: ObservableObject {
         defer {
             isTransferring = false
             refreshSaved()
+            #if os(macOS)
             if savedAny, revealAfterSave, !Task.isCancelled { NSWorkspace.shared.open(destination) }
+            #endif
         }
         try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         for i in transfers.indices {
@@ -709,15 +718,15 @@ enum Downloader {
 @MainActor
 final class ImageCache {
     static let shared = ImageCache()
-    private let originals = NSCache<NSString, NSImage>()
-    private let oriented = NSCache<NSString, NSImage>()
-    private var inFlight: [URL: Task<NSImage?, Never>] = [:]
+    private let originals = NSCache<NSString, PlatformImage>()
+    private let oriented = NSCache<NSString, PlatformImage>()
+    private var inFlight: [URL: Task<PlatformImage?, Never>] = [:]
 
     static var folder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("GR Mac", isDirectory: true)
     }
 
-    func image(for url: URL, orientation: Int = 1) async -> NSImage? {
+    func image(for url: URL, orientation: Int = 1) async -> PlatformImage? {
         let key = "\(url.absoluteString)#\(orientation)" as NSString
         if let hit = oriented.object(forKey: key) { return hit }
         guard let image = await original(url) else { return nil }
@@ -731,17 +740,17 @@ final class ImageCache {
         oriented.removeAllObjects()
     }
 
-    private func original(_ url: URL) async -> NSImage? {
+    private func original(_ url: URL) async -> PlatformImage? {
         let key = url.absoluteString as NSString
         if let hit = originals.object(forKey: key) { return hit }
         if let running = inFlight[url] { return await running.value }
-        let task = Task { () -> NSImage? in
+        let task = Task { () -> PlatformImage? in
             let disk = Self.diskURL(url)
-            if let disk, let data = try? Data(contentsOf: disk), let image = NSImage(data: data) { return image }
+            if let disk, let data = try? Data(contentsOf: disk), let image = PlatformImage(data: data) { return image }
             guard CameraAPI.online else { return nil }
             guard let (data, response) = try? await CameraAPI.session.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
-                  let image = NSImage(data: data) else { return nil }
+                  let image = PlatformImage(data: data) else { return nil }
             if let disk {
                 try? FileManager.default.createDirectory(at: disk.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? data.write(to: disk, options: .atomic)
@@ -767,11 +776,11 @@ final class ImageCache {
     }
 }
 
-extension NSImage {
+extension PlatformImage {
     /// Rotate by an EXIF orientation. A portrait orientation on an image that is already
     /// taller than wide is left alone, in case the decoder applied it.
-    func upright(_ orientation: Int) -> NSImage {
-        guard let cg = cgImage(forProposedRect: nil, context: nil, hints: nil) else { return self }
+    func upright(_ orientation: Int) -> PlatformImage {
+        guard let cg = cgImageValue else { return self }
         let degrees: CGFloat
         switch orientation {
         case 3: degrees = 180
@@ -789,10 +798,11 @@ extension NSImage {
         ctx.rotate(by: degrees * .pi / 180)
         ctx.draw(cg, in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h))
         guard let rotated = ctx.makeImage() else { return self }
-        return NSImage(cgImage: rotated, size: size)
+        return PlatformImage(cgImageValue: rotated)
     }
 }
 
+#if os(macOS)
 /// Keeps the sandboxed app's access to a save folder the user picked, across launches,
 /// with a security-scoped bookmark. ~/Pictures needs none (it has its own entitlement).
 enum FolderAccess {
@@ -824,6 +834,14 @@ enum FolderAccess {
         accessed = folder.startAccessingSecurityScopedResource() ? folder : nil
     }
 }
+#else
+/// iOS: photos go to the app's Documents folder (shown in the Files app) and the Photos app.
+enum FolderAccess {
+    static var realHome: URL { URL.documentsDirectory.deletingLastPathComponent() }
+    static func remember(_ folder: URL) {}
+    static func restore() -> URL? { nil }
+}
+#endif
 
 /// What the library keeps of the last card so it can be browsed without the camera: the
 /// photo list, plus the thumbnails, dates and 촬영 통계 kept next to it. One set, shared by

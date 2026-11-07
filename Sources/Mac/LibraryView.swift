@@ -399,7 +399,10 @@ struct GridView: View {
                                             Color.clear.preference(key: CellFrameKey.self, value: [photo.id: g.frame(in: .named("grid"))])
                                         })
                                         .onTapGesture(count: 2) { library.open(photo, in: .loupe) }
-                                        .onTapGesture { library.click(photo, modifiers: NSEvent.modifierFlags) }
+                                        .onTapGesture {
+                                            let mods = NSEvent.modifierFlags
+                                            library.click(photo, command: mods.contains(.command), shift: mods.contains(.shift))
+                                        }
                                 }
                             } header: {
                                 if library.groupByDate { sectionHeader(section) }
@@ -688,7 +691,7 @@ struct Filmstrip: View {
                             .onTapGesture {
                                 let mods = NSEvent.modifierFlags
                                 if mods.contains(.command) || mods.contains(.shift) {
-                                    library.click(photo, modifiers: mods)
+                                    library.click(photo, command: mods.contains(.command), shift: mods.contains(.shift))
                                 } else {
                                     library.current = photo
                                     library.zoom.reset()

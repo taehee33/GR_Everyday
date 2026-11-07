@@ -184,19 +184,6 @@ struct AppSettingsView: View {
     }
 }
 
-enum Pane: String, CaseIterable, Identifiable {
-    case camera = "카메라", library = "라이브러리", remote = "원격 촬영", stats = "촬영 통계", settings = "설정"
-    var id: String { rawValue }
-    var icon: String {
-        switch self {
-        case .camera: return "camera"
-        case .library: return "photo.on.rectangle"
-        case .remote: return "camera.aperture"
-        case .stats: return "chart.bar.xaxis"
-        case .settings: return "gearshape"
-        }
-    }
-}
 
 struct ContentView: View {
     @EnvironmentObject var connection: ConnectionModel

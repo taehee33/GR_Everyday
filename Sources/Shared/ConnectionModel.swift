@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -69,8 +68,10 @@ final class ConnectionModel: ObservableObject {
     @Published private(set) var connectedCameraID: UUID?
 
     let ble = BLEWaker()
+    #if os(macOS)
     let usb = USBCamera()
     private var usbChanges: AnyCancellable?
+    #endif
     private var monitor: Task<Void, Never>?
     private var joinedByUs = false
     private var phoneJoin: Task<Void, Never>?
@@ -115,6 +116,7 @@ final class ConnectionModel: ObservableObject {
         }
         self.cameras = cameras
         selectedCameraID = lastID ?? cameras.first?.id
+        #if os(macOS)
         // Views read connection.usb.detected; pass its changes on.
         usbChanges = usb.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         usb.onRemoved = { [weak self] in
@@ -124,6 +126,7 @@ final class ConnectionModel: ObservableObject {
                 self.state = .failed("USB 연결이 끊겼습니다. 케이블과 카메라 전원을 확인하세요.")
             }
         }
+        #endif
     }
 
     // MARK: Registered cameras
@@ -134,7 +137,9 @@ final class ConnectionModel: ObservableObject {
 
     func remove(_ id: UUID) {
         cameras.removeAll { $0.id == id }
+        #if os(macOS)
         CameraPictures.shared.remove(id)
+        #endif
         if selectedCameraID == id { selectedCameraID = cameras.first?.id }
         if connectedCameraID == id { connectedCameraID = nil }
     }
@@ -250,7 +255,7 @@ final class ConnectionModel: ObservableObject {
             needsBondRemoval = true
             state = .failed("먼저 Mac Bluetooth에 남은 \(camera.bleName)을(를) 지워야 합니다. 열린 Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤, 카메라를 페어링 화면(메뉴 → 무선 통신 → Bluetooth → 페어링)에 두고 ‘다시 페어링’을 다시 누르세요.")
             needsRepair = true
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!)
+            SystemSettings.openBluetooth()
             return
         }
         needsBondRemoval = false
@@ -315,6 +320,7 @@ final class ConnectionModel: ObservableObject {
         await didConnect()
     }
 
+    #if os(macOS)
     /// The camera on a USB cable: its files through USBCamera's local server. The Mac's
     /// Wi-Fi stays on the usual network, so the internet and AirPlay keep working.
     func connectUSB() async {
@@ -336,6 +342,7 @@ final class ConnectionModel: ObservableObject {
             state = .failed(error.localizedDescription)
         }
     }
+    #endif
 
     /// The Mac is already on the camera's Wi-Fi (joined by hand).
     func connectDirect() async {
@@ -355,11 +362,14 @@ final class ConnectionModel: ObservableObject {
         monitor?.cancel()
         // Leave the camera's Wi-Fi on by default: a Mac cannot switch it back on over
         // Bluetooth, so turning it off here made every later reconnect fail.
+        #if os(macOS)
         if viaUSB {
             usb.close()
             CameraAPI.base = CameraAPI.wifiBase
             viaUSB = false
-        } else if UserDefaults.standard.bool(forKey: "turnOffCameraWiFi") { await CameraAPI.finishWLAN() }
+        }
+        #endif
+        if !viaUSB, UserDefaults.standard.bool(forKey: "turnOffCameraWiFi") { await CameraAPI.finishWLAN() }
         let restore = UserDefaults.standard.object(forKey: "restoreWiFi") as? Bool ?? true
         if joinedByUs, restore { await WiFi.restore() }
         joinedByUs = false
@@ -403,7 +413,11 @@ final class ConnectionModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 // Over USB the cable state says it; an HTTP ping to the local server can time
                 // out while it is busy making thumbnails and showed a false "연결 끊김".
+                #if os(macOS)
                 let alive = self.viaUSB ? self.usb.serving != nil : await CameraAPI.ping()
+                #else
+                let alive = await CameraAPI.ping()
+                #endif
                 if alive {
                     if self.state == .lost { self.state = .connected; self.cameraWLANOff = false }
                     await self.refreshProps()

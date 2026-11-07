@@ -1,6 +1,10 @@
 import CoreBluetooth
-import IOBluetooth
 import Foundation
+#if os(macOS)
+import IOBluetooth
+#else
+import UIKit
+#endif
 
 /// Wakes a GR over Bluetooth LE and raises its Wi-Fi access point.
 ///
@@ -163,11 +167,18 @@ final class BLEWaker: NSObject, ObservableObject {
     /// Tell the camera who it is paired with, as the official app does.
     /// The camera rejected a Korean Mac name, so send ASCII and shorten on refusal.
     private func registerPairedName(on peripheral: CBPeripheral) async {
+        #if os(macOS)
         let raw = Host.current().localizedName ?? ""
+        let fallback = "Mac"
+        #else
+        // iOS gives apps only the generic "iPhone" / "iPad".
+        let raw = await UIDevice.current.name
+        let fallback = await UIDevice.current.model
+        #endif
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -"))
         let ascii = String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.isASCII && allowed.contains($0) }))
             .trimmingCharacters(in: .whitespaces)
-        var candidates = [ascii.isEmpty ? "Mac" : ascii, "GR Mac", "Mac"]
+        var candidates = [ascii.isEmpty ? fallback : ascii, "GR Connect", fallback]
         candidates = candidates.map { String($0.prefix(16)) }
         for name in candidates {
             do {
@@ -199,6 +210,7 @@ final class BLEWaker: NSObject, ObservableObject {
     /// The camera as listed in the Mac's Bluetooth settings, if it is there. Blocking: while
     /// the Mac's Bluetooth keeps restarting this can take minutes, so call it off the main
     /// thread (isPaired) or the window freezes.
+    #if os(macOS)
     nonisolated static func pairedDevice(named name: String) -> IOBluetoothDevice? {
         (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []).first { $0.name == name }
     }
@@ -206,6 +218,11 @@ final class BLEWaker: NSObject, ObservableObject {
     nonisolated static func isPaired(named name: String) async -> Bool {
         await Task.detached { pairedDevice(named: name) != nil }.value
     }
+    #else
+    /// iOS keeps the camera's pairing itself and the camera accepts it on reconnect, so a
+    /// leftover key never blocks pairing there.
+    nonisolated static func isPaired(named name: String) async -> Bool { false }
+    #endif
 
     /// Scan until the camera is heard. Connecting to a camera that is not advertising
     /// just waits, so this turns "timed out" into a clear "the camera is silent".
