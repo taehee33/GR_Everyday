@@ -478,6 +478,9 @@ enum DebugLog {
 
     static func write(_ line: String) {
         let text = "\(Date()) \(line)\n"
+        #if DEBUG
+        print(text, terminator: "")
+        #endif
         guard let data = text.data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()

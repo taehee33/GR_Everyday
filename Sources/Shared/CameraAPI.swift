@@ -65,8 +65,10 @@ struct CameraAPI {
         return json
     }
 
+    /// The camera doesn't decode %2C: "pos=50%2C50" is a 400 while "pos=50,50" focuses
+    /// (GR IV HDF, fw 1.20), so commas go through as they are.
     private static func escape(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? s
+        s.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~,"))) ?? s
     }
 
     static func props() async throws -> [String: Any] {
