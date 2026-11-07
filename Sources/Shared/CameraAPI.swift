@@ -149,9 +149,14 @@ struct CameraAPI {
     }
 
     /// x, y in percent of the live view frame.
-    static func focus(x: Int, y: Int) async throws {
+    /// Focus at x, y. Returns the camera's verdict when its reply has one; nil when it only
+    /// accepted the command. props.focused doesn't help: on the GR IV HDF (fw 1.20) it stayed
+    /// 0 for 15 s after taps that visibly focused.
+    static func focus(x: Int, y: Int) async throws -> Bool? {
         // Focusing twice is harmless.
-        try await request("POST", "/lens/focus", form: ["pos": "\(x),\(y)"], retry: true)
+        let reply = try await request("POST", "/lens/focus", form: ["pos": "\(x),\(y)"], retry: true)
+        DebugLog.write("focus: reply \(reply)")
+        return reply["focused"] as? Bool
     }
 
     static func finishWLAN() async {

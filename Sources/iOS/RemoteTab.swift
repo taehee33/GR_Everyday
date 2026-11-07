@@ -2,6 +2,9 @@ import SwiftUI
 
 /// Live view, tap to focus, shutter with a self-timer, and the camera's settings.
 struct RemoteTab: View {
+    /// The tab is on screen. Tabs stay loaded, and starting the live view puts the camera
+    /// into remote shooting, so it runs only while this tab is shown.
+    let active: Bool
     @EnvironmentObject var connection: ConnectionModel
     @EnvironmentObject var library: LibraryModel
     @StateObject private var live = LiveViewStream()
@@ -50,10 +53,12 @@ struct RemoteTab: View {
                 }
             }
         }
-        .onAppear { if connection.isConnected { live.start(); Task { await loadProps() } } }
-        .onDisappear { live.stop(); shootTask?.cancel() }
+        .onChange(of: active, initial: true) { _, active in
+            if active, connection.isConnected { live.start(); Task { await loadProps() } }
+            if !active { live.stop(); shootTask?.cancel() }
+        }
         .onChange(of: connection.state) { _, state in
-            if state == .connected { live.start(); Task { await loadProps() } }
+            if state == .connected, active { live.start(); Task { await loadProps() } }
         }
     }
 
@@ -161,16 +166,12 @@ struct RemoteTab: View {
         focusTask?.cancel()
         focusTask = Task {
             do {
-                try await CameraAPI.focus(x: Int(p.x * 100), y: Int(p.y * 100))
-                var hit = false
-                for _ in 0..<6 {
-                    try await Task.sleep(for: .milliseconds(250))
-                    if (try await CameraAPI.props())["focused"] as? Bool == true { hit = true; break }
-                }
+                let verdict = try await CameraAPI.focus(x: Int(p.x * 100), y: Int(p.y * 100))
+                let hit = verdict ?? true
                 // A newer tap replaced this one: leave the box and message to it.
                 guard !Task.isCancelled else { return }
                 focusHit = hit
-                status = hit ? "초점 맞음" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
+                status = hit ? "초점 맞춤" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
             } catch {
                 // Cancelling also ends the request in flight, which reports URLError.cancelled.
                 guard !Task.isCancelled, (error as? URLError)?.code != .cancelled, !(error is CancellationError) else { return }

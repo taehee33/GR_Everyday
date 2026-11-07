@@ -208,18 +208,12 @@ struct RemoteView: View {
         focusTask?.cancel()
         focusTask = Task {
             do {
-                try await CameraAPI.focus(x: Int(p.x * 100), y: Int(p.y * 100))
-                // The POST answers before the lens settles; the camera reports the result
-                // in props.focused (verified on the GR IV HDF, fw 1.20).
-                var hit = false
-                for _ in 0..<6 {
-                    try await Task.sleep(for: .milliseconds(250))
-                    if (try await CameraAPI.props())["focused"] as? Bool == true { hit = true; break }
-                }
+                let verdict = try await CameraAPI.focus(x: Int(p.x * 100), y: Int(p.y * 100))
+                let hit = verdict ?? true
                 // A newer tap replaced this one: leave the box and message to it.
                 guard !Task.isCancelled else { return }
                 focusHit = hit
-                status = hit ? "초점 맞음" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
+                status = hit ? "초점 맞춤" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
             } catch {
                 // Cancelling also ends the request in flight, which reports URLError.cancelled.
                 guard !Task.isCancelled, (error as? URLError)?.code != .cancelled, !(error is CancellationError) else { return }

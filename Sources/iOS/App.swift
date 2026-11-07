@@ -26,7 +26,7 @@ struct RootView: View {
                 .tabItem { Label(Pane.camera.rawValue, systemImage: Pane.camera.icon) }.tag(Pane.camera)
             LibraryTab()
                 .tabItem { Label(Pane.library.rawValue, systemImage: Pane.library.icon) }.tag(Pane.library)
-            RemoteTab()
+            RemoteTab(active: section == .remote)
                 .tabItem { Label(Pane.remote.rawValue, systemImage: Pane.remote.icon) }.tag(Pane.remote)
             Group {
                 if library.photos.isEmpty {
