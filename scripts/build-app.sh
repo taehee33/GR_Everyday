@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 xcodebuild -project "GR Mac.xcodeproj" -scheme "GR Mac" -configuration Release \
     -derivedDataPath build/xcode -allowProvisioningUpdates -quiet build
 # A running copy keeps its old signature while the file changes under it; quit it first.
-osascript -e 'tell application id "local.hantaehee.grlink" to quit' 2>/dev/null || true
+osascript -e 'tell application "GR Mac" to quit' 2>/dev/null || true
+while pgrep -f "/Applications/GR Mac.app/Contents/MacOS/" >/dev/null; do sleep 0.5; done
 rm -rf "/Applications/GR Mac.app"
 cp -R "build/xcode/Build/Products/Release/GR Mac.app" "/Applications/GR Mac.app"
 echo "installed /Applications/GR Mac.app"

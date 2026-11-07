@@ -9,6 +9,8 @@
 		<string>${ApplicationSupport}/GR Mac</string>
 		<string>${Library}/Caches/GR Mac</string>
 		<string>${Library}/Logs/GRLink.log</string>
+		<!-- Settings and registered cameras, staged here when the app's ID changed. -->
+		<string>${Library}/Preferences/com.hantaehee.grconnect.plist</string>
 	</array>
 </dict>
 </plist>

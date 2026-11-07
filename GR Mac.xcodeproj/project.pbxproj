@@ -274,7 +274,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = local.hantaehee.grlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
 				PRODUCT_MODULE_NAME = GRConnect;
 				PRODUCT_NAME = "GR Connect";
 				SDKROOT = iphoneos;
@@ -307,7 +307,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = local.hantaehee.grlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
 				PRODUCT_MODULE_NAME = GRConnect;
 				PRODUCT_NAME = "GR Connect";
 				SDKROOT = iphoneos;
@@ -365,7 +365,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = App/Info.plist;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = local.hantaehee.grlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
 				PRODUCT_MODULE_NAME = GRLink;
 				PRODUCT_NAME = "GR Mac";
 				SWIFT_VERSION = 5.0;
@@ -385,7 +385,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = App/Info.plist;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = local.hantaehee.grlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
 				PRODUCT_MODULE_NAME = GRLink;
 				PRODUCT_NAME = "GR Mac";
 				SWIFT_VERSION = 5.0;

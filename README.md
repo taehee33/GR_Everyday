@@ -20,7 +20,7 @@ GR Relay(iOS)의 화면 구성을 참고했습니다.
 - 노출 모드는 EXIF `ExposureProgram`(P 2, Av 3, Tv 4; M은 1로 가정, 아직 미확인). **Sn은 EXIF로는 P와 같고** 메이커노트 0x0033이 `[0, 32, 1]`인 것으로 구분합니다.
   크롭은 35mm 환산 초점거리(28 꺼짐 / 35 / 50). GR IV HDF 펌웨어 1.20에서 시험 촬영으로 확인했고, 합계가 GR 로그와 같았습니다(사진 235·동영상 5).
   M·B·T·BT로 찍은 사진은 아직 확인하지 않았고, M 외에는 "기타 (코드)"로 나옵니다.
-- GR Mac이 한 번 본 사진은 앱 데이터 폴더(`~/Library/Containers/local.hantaehee.grlink/Data/Library/Application Support/GR Mac/shot-history.json`)에 남아, 카드에서 지운 뒤에도 셉니다.
+- GR Mac이 한 번 본 사진은 앱 데이터 폴더(`~/Library/Containers/com.hantaehee.grconnect/Data/Library/Application Support/GR Mac/shot-history.json`)에 남아, 카드에서 지운 뒤에도 셉니다.
   그 전에 지운 사진은 GR 로그에만 있습니다. 파일 이름과 촬영 시각으로 구분하므로 카드를 포맷해 이름이 다시 쓰여도 섞이지 않습니다.
 - 썸네일·날짜·통계 캐시는 파일 이름으로 저장됩니다. 연결할 때 가장 최근 파일의 촬영 시각을 확인해, 이름이 다시 쓰였으면 캐시를 저절로 비웁니다.
 
@@ -32,7 +32,7 @@ open "/Applications/GR Mac.app"
 ```
 
 Xcode에서 `GR Mac.xcodeproj`를 열어 실행해도 됩니다. App Store에 올릴 때는 Product → Archive.
-앱은 App Store 샌드박스 안에서 돌아갑니다. 데이터는 `~/Library/Containers/local.hantaehee.grlink`에 있고,
+앱은 App Store 샌드박스 안에서 돌아갑니다. 데이터는 `~/Library/Containers/com.hantaehee.grconnect`에 있고,
 샌드박스 전 빌드의 촬영 기록·편집·캐시는 처음 실행할 때 macOS가 그곳으로 옮깁니다(`App/container-migration.plist`).
 카메라 Wi-Fi에 접속하려면 위치 권한이 필요합니다(macOS는 위치 권한이 있는 앱에만 Wi-Fi 이름을 보여 줍니다).
 소스는 `Sources/Shared`(모델·공용 화면), `Sources/Mac`(Mac 화면), `Sources/iOS`(iPhone·iPad 화면)로 나뉩니다.
