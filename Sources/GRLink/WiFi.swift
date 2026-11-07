@@ -22,6 +22,7 @@ enum WiFi {
 
     static func join(_ credentials: WLANCredentials) async throws {
         guard await LocationPermission.shared.request() else {
+            try Task.checkCancellation()
             throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Mac을 켜세요.")
         }
         let iface = try interface()
@@ -91,15 +92,27 @@ final class LocationPermission: NSObject, CLLocationManagerDelegate {
         guard manager.authorizationStatus == .notDetermined else { return false }
         manager.delegate = self
         manager.requestWhenInUseAuthorization()
-        await withCheckedContinuation { waiters.append($0) }
+        // macOS sometimes never shows the prompt (it couldn't verify the app, e.g. one run from
+        // ~/Desktop), so give up after a minute, and at once when the user cancels.
+        let timeout = Task { try? await Task.sleep(for: .seconds(60)); finishWaiting() }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { waiters.append($0) }
+        } onCancel: {
+            Task { @MainActor in self.finishWaiting() }
+        }
+        timeout.cancel()
         return granted
+    }
+
+    private func finishWaiting() {
+        waiters.forEach { $0.resume() }
+        waiters = []
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             guard manager.authorizationStatus != .notDetermined else { return }
-            waiters.forEach { $0.resume() }
-            waiters = []
+            finishWaiting()
         }
     }
 }

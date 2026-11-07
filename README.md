@@ -27,8 +27,8 @@ GR Relay(iOS)의 화면 구성을 참고했습니다.
 ## 실행
 
 ```bash
-./scripts/build-app.sh          # build/GR Mac.app 생성 (Xcode, 샌드박스)
-open "build/GR Mac.app"
+./scripts/build-app.sh          # Xcode로 빌드해 /Applications/GR Mac.app에 설치 (샌드박스)
+open "/Applications/GR Mac.app"
 ```
 
 Xcode에서 `GR Mac.xcodeproj`를 열어 실행해도 됩니다. App Store에 올릴 때는 Product → Archive.
@@ -37,7 +37,7 @@ Xcode에서 `GR Mac.xcodeproj`를 열어 실행해도 됩니다. App Store에 �
 카메라 Wi-Fi에 접속하려면 위치 권한이 필요합니다(macOS는 위치 권한이 있는 앱에만 Wi-Fi 이름을 보여 줍니다).
 `swift build`는 빠른 컴파일 확인용으로만 남아 있습니다.
 
-또는 Finder에서 `build/GR Mac.app`을 더블클릭. 원하면 응용 프로그램 폴더로 옮겨도 됩니다.
+바탕화면 안의 폴더에서 실행하면 macOS가 앱을 확인하지 못해 위치 권한 창이 뜨지 않고, 카메라 Wi-Fi에 접속할 수 없습니다. 응용 프로그램 폴더에서 실행하세요.
 
 ### 처음 연결
 1. 카메라 메뉴에서 **Bluetooth 켜기**(가능하면 "켜져 있는 조건 = 항상")
