@@ -4,6 +4,7 @@ import SwiftUI
 /// Tab hides the side panels, ⇧Tab everything but the photo, F goes full screen.
 struct LibraryView: View {
     @EnvironmentObject var library: LibraryModel
+    @EnvironmentObject var connection: ConnectionModel
     @AppStorage("thumbSize") private var thumbSize = 150.0
     @AppStorage("modifierScrollResizesGrid") private var modifierScrollResizes = true
     @State private var showShortcuts = false
@@ -13,6 +14,7 @@ struct LibraryView: View {
             if !library.immersive {
                 toolbar
                 Divider()
+                if !online { offlineBanner; Divider() }
             }
             switch library.mode {
             case .grid: GridView()
@@ -25,7 +27,7 @@ struct LibraryView: View {
             }
         }
         .background(KeyMonitor(onKey: handleKey, onScroll: handleScroll))
-        .task { if library.photos.isEmpty { await library.reload() } }
+        .task { if library.photos.isEmpty, online { await library.reload() } }
         // Left full screen another way (green button, ⌃⌘F): bring the panels back.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
             library.immersive = false
@@ -106,6 +108,7 @@ struct LibraryView: View {
                 Task { await library.reload() }
             } label: { Image(systemName: "arrow.clockwise") }
             .help("새로고침")
+            .disabled(!online)
 
             // When the window is narrow these shorten (no counts, icon-only menus) so the
             // buttons on the right keep their full labels.
@@ -117,7 +120,7 @@ struct LibraryView: View {
             Spacer()
 
             let progress = library.infoProgress
-            if progress.done < progress.total {
+            if progress.done < progress.total, online {
                 Text("날짜 읽는 중 \(progress.done)/\(progress.total)")
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -142,7 +145,8 @@ struct LibraryView: View {
                     Text(library.selection.isEmpty ? "선택 저장" : "선택 저장 (\(library.selection.count))")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(library.selection.isEmpty || library.isTransferring)
+                .disabled(library.selection.isEmpty || library.isTransferring || !online)
+                .help(online ? "" : "카메라에 연결하면 저장할 수 있습니다")
             }
             .fixedSize()
             .layoutPriority(1)
@@ -186,6 +190,26 @@ struct LibraryView: View {
 
             shotFilterMenu(compact: compact)
         }
+    }
+
+    private var online: Bool { connection.isConnected }
+
+    private var offlineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "camera.badge.ellipsis").foregroundStyle(.secondary)
+            Text(offlineText).font(.callout).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    private var offlineText: String {
+        let when = library.listSavedAt.map {
+            $0.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute())
+        }
+        return "카메라 연결 안 됨 · " + (when.map { "\($0)에 본 목록입니다. " } ?? "")
+            + "미리 저장해 둔 사진만 크게 보고 편집할 수 있고, 저장은 연결한 뒤에 할 수 있습니다."
     }
 
     private func switchMode(_ mode: LibraryModel.Mode) {

@@ -33,6 +33,8 @@ final class LibraryModel: ObservableObject {
     }
 
     @Published private(set) var photos: [Photo] = []
+    /// When `photos` was last read from the camera; shown while offline.
+    @Published private(set) var listSavedAt: Date?
     /// Shooting statistics (촬영 통계 pane), counted from the photos above.
     let stats = ShotStats()
     /// Set from 촬영 통계: only shots with this image control, mode, … and/or day.
@@ -143,8 +145,13 @@ final class LibraryModel: ObservableObject {
         statsChanges = stats.objectWillChange.sink { [weak self] _ in
             if self?.shotFilter != nil { self?.objectWillChange.send() }
         }
+        CardCache.migrate()
         infos = Self.readInfoCache()
-        infoCacheLoadedFrom = Self.infoCacheURL
+        if let saved = CardCache.readList() {
+            photos = saved.photos
+            listSavedAt = saved.savedAt
+            refreshSaved()
+        }
         loadStore()
     }
 
@@ -343,14 +350,13 @@ final class LibraryModel: ObservableObject {
         defer { isLoading = false }
         do {
             let list = try await CameraAPI.photos()
-            // USB and Wi-Fi reach the camera at different addresses, each with its own cache;
-            // the one read at launch is for Wi-Fi.
-            if infoCacheLoadedFrom != Self.infoCacheURL {
-                infos = Self.readInfoCache()
-                infoCacheLoadedFrom = Self.infoCacheURL
-            }
             if await cardChanged(list) { clearCaches() }
             photos = list
+            listSavedAt = .now
+            CardCache.writeList(list)
+            CardCache.prune(keeping: list)
+            let ids = Set(list.map(\.id))
+            infos = infos.filter { ids.contains($0.key) }
             error = nil
             refreshSaved()
             loadInfos()
@@ -377,6 +383,16 @@ final class LibraryModel: ObservableObject {
             self?.writeInfoCache()
             self?.autoSaveIfWanted()
             self?.refreshStats()
+            await self?.prefetchThumbnails()
+        }
+    }
+
+    /// Every thumbnail, not only the ones scrolled to, so the whole card can be browsed
+    /// later without the camera. A few KB each; ones already on disk are skipped.
+    private func prefetchThumbnails() async {
+        for photo in photos.reversed() where !ImageCache.hasThumbnail(photo) {
+            if Task.isCancelled || !CameraAPI.online { return }
+            _ = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb))
         }
     }
 
@@ -386,11 +402,7 @@ final class LibraryModel: ObservableObject {
         stats.scan(photos, dates: infos.compactMapValues(\.date))
     }
 
-    private var infoCacheLoadedFrom: URL?
-
-    private static var infoCacheURL: URL {
-        ImageCache.folder.appendingPathComponent("photo-info-\(CameraAPI.base.host ?? "camera").json")
-    }
+    private static var infoCacheURL: URL { ImageCache.folder.appendingPathComponent("photo-info.json") }
 
     private static func readInfoCache() -> [String: PhotoInfo] {
         guard let data = try? Data(contentsOf: infoCacheURL) else { return [:] }
@@ -403,7 +415,7 @@ final class LibraryModel: ObservableObject {
         try? data.write(to: Self.infoCacheURL, options: .atomic)
     }
 
-    /// Thumbnails, dates and downloaded movies kept in ~/Library/Caches/GR Mac.
+    /// The photo list, thumbnails, dates and downloaded movies kept in ~/Library/Caches/GR Mac.
     var cacheSize: Int64 {
         let files = FileManager.default.enumerator(at: ImageCache.folder, includingPropertiesForKeys: [.fileSizeKey])
         return (files?.allObjects as? [URL] ?? []).reduce(0) {
@@ -420,9 +432,16 @@ final class LibraryModel: ObservableObject {
         guard let probe = list.last(where: { infos[$0.id]?.date != nil }),
               let cached = infos[probe.id]?.date,
               let fresh = try? await CameraAPI.info(probe).date,
-              abs(fresh.timeIntervalSince(cached)) >= 1 else { return false }
+              !Self.sameMoment(cached, fresh) else { return false }
         DebugLog.write("cache: \(probe.id) was shot \(cached), now \(fresh); file names were reused, clearing caches")
         return true
+    }
+
+    /// USB (macOS's Image Capture) and Wi-Fi (the camera) both feed one cache, and USB can
+    /// report a shot a second later than its EXIF time (R0000550.DNG: 20:33:40 over USB,
+    /// 20:33:39 in the file). A name reused after a format won't land within seconds.
+    private static func sameMoment(_ a: Date, _ b: Date) -> Bool {
+        abs(a.timeIntervalSince(b)) < 3
     }
 
     func clearCaches() {
@@ -484,6 +503,10 @@ final class LibraryModel: ObservableObject {
 
     func save(_ queue: [Photo]) {
         guard !queue.isEmpty, !isTransferring else { return }
+        guard CameraAPI.online else {
+            error = "카메라에 연결하면 저장할 수 있습니다."
+            return
+        }
         transfers = queue.map { Transfer(photo: $0) }
         isTransferring = true
         transferTask = Task { [weak self] in
@@ -715,6 +738,7 @@ final class ImageCache {
         let task = Task { () -> NSImage? in
             let disk = Self.diskURL(url)
             if let disk, let data = try? Data(contentsOf: disk), let image = NSImage(data: data) { return image }
+            guard CameraAPI.online else { return nil }
             guard let (data, response) = try? await CameraAPI.session.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
                   let image = NSImage(data: data) else { return nil }
@@ -731,11 +755,15 @@ final class ImageCache {
         return image
     }
 
+    static func hasThumbnail(_ photo: Photo) -> Bool {
+        diskURL(CameraAPI.photoURL(photo, size: .thumb)).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    }
+
     /// Only thumbnails go to disk (a few KB each); previews stay in memory.
     private static func diskURL(_ url: URL) -> URL? {
         guard url.query?.contains("size=thumb") == true else { return nil }
         let parts = url.pathComponents.suffix(2).joined(separator: "_")
-        return folder.appendingPathComponent("thumbs/\(url.host ?? "camera")/\(parts).jpg")
+        return CardCache.thumbs.appendingPathComponent("\(parts).jpg")
     }
 }
 
@@ -794,5 +822,64 @@ enum FolderAccess {
     private static func start(_ folder: URL) {
         accessed?.stopAccessingSecurityScopedResource()
         accessed = folder.startAccessingSecurityScopedResource() ? folder : nil
+    }
+}
+
+/// What the library keeps of the last card so it can be browsed without the camera: the
+/// photo list, plus the thumbnails, dates and 촬영 통계 kept next to it. One set, shared by
+/// Wi-Fi and USB (it used to be one per camera address).
+@MainActor
+enum CardCache {
+    private static var listURL: URL { ImageCache.folder.appendingPathComponent("photo-list.json") }
+    static var thumbs: URL { ImageCache.folder.appendingPathComponent("thumbs", isDirectory: true) }
+
+    private struct SavedList: Codable {
+        let savedAt: Date
+        let photos: [Photo]
+    }
+
+    static func readList() -> (savedAt: Date, photos: [Photo])? {
+        guard let data = try? Data(contentsOf: listURL),
+              let list = try? JSONDecoder().decode(SavedList.self, from: data) else { return nil }
+        return (list.savedAt, list.photos)
+    }
+
+    static func writeList(_ photos: [Photo]) {
+        guard let data = try? JSONEncoder().encode(SavedList(savedAt: .now, photos: photos)) else { return }
+        try? FileManager.default.createDirectory(at: ImageCache.folder, withIntermediateDirectories: true)
+        try? data.write(to: listURL, options: .atomic)
+    }
+
+    /// Thumbnails of photos no longer on the card.
+    static func prune(keeping photos: [Photo]) {
+        let keep = Set(photos.map { "\($0.dir)_\($0.name).jpg" })
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: thumbs.path)) ?? [] where !keep.contains(name) {
+            try? fm.removeItem(at: thumbs.appendingPathComponent(name))
+        }
+    }
+
+    /// Earlier builds kept these per camera address (192.168.0.1 for Wi-Fi, 127.0.0.1 for
+    /// USB). Merge them into the shared set, Wi-Fi's first, once.
+    static func migrate() {
+        let fm = FileManager.default
+        let folder = ImageCache.folder
+        let hosts = ["192.168.0.1", "127.0.0.1"]
+        for name in ["photo-info", "shot-stats"] {
+            let target = folder.appendingPathComponent("\(name).json")
+            for host in hosts {
+                let old = folder.appendingPathComponent("\(name)-\(host).json")
+                guard fm.fileExists(atPath: old.path) else { continue }
+                if fm.fileExists(atPath: target.path) { try? fm.removeItem(at: old) } else { try? fm.moveItem(at: old, to: target) }
+            }
+        }
+        for host in hosts {
+            let old = thumbs.appendingPathComponent(host, isDirectory: true)
+            guard let names = try? fm.contentsOfDirectory(atPath: old.path) else { continue }
+            for name in names where !fm.fileExists(atPath: thumbs.appendingPathComponent(name).path) {
+                try? fm.moveItem(at: old.appendingPathComponent(name), to: thumbs.appendingPathComponent(name))
+            }
+            try? fm.removeItem(at: old)
+        }
     }
 }

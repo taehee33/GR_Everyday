@@ -105,7 +105,8 @@ final class ShotStats: ObservableObject {
             records = Self.read()
             loadedFrom = Self.url
         }
-        let todo = Self.shots(photos).reversed().filter { $0.kind != .video && records[$0.id] == nil }
+        // Offline, the photos are the saved list; only the camera can be read for new ones.
+        let todo = CameraAPI.online ? Self.shots(photos).reversed().filter { $0.kind != .video && records[$0.id] == nil } : []
         pending = todo.count
         scanning = !todo.isEmpty
         task = Task { [weak self] in
@@ -191,7 +192,7 @@ final class ShotStats: ObservableObject {
     }
 
     private static var url: URL {
-        ImageCache.folder.appendingPathComponent("shot-stats-\(CameraAPI.base.host ?? "camera").json")
+        ImageCache.folder.appendingPathComponent("shot-stats.json")
     }
 
     private static func read() -> [String: ShotRecord] {

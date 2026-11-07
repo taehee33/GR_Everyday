@@ -168,7 +168,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("캐시")
             } footer: {
-                Text("썸네일, 촬영 날짜·방향, 재생하려고 받은 동영상을 Mac에 남겨 두어 라이브러리를 다시 열 때 카메라에 묻지 않습니다. 카드를 포맷해 파일 이름(R000xxxx)이 다시 쓰이면 연결할 때 알아채고 저절로 비웁니다. 지운 사진의 촬영 통계 기록은 남습니다.")
+                Text("마지막으로 본 카드의 사진 목록·썸네일, 촬영 날짜·방향, 재생하려고 받은 동영상을 Mac에 남겨 둡니다. 그래서 카메라 없이도 라이브러리를 볼 수 있고, 다시 열 때 카메라에 묻지 않습니다. 비우면 카메라 없이는 라이브러리를 볼 수 없습니다. 카드에서 지운 사진의 썸네일은 연결할 때 지웁니다. 카드를 포맷해 파일 이름(R000xxxx)이 다시 쓰이면 연결할 때 알아채고 저절로 비웁니다. 지운 사진의 촬영 통계 기록은 남습니다.")
             }
             .task { cacheSize = library.cacheSize }
 
@@ -217,7 +217,9 @@ struct ContentView: View {
             case .camera: CameraView(ble: connection.ble, section: $section)
             case .settings: AppSettingsView()
             case .library, .remote, .stats:
-                if connection.isConnected || connection.state == .lost {
+                // Without a camera, the library and 촬영 통계 show the list saved from the last
+                // connection; remote shooting needs the camera.
+                if connection.isConnected || connection.state == .lost || (section != .remote && !library.photos.isEmpty) {
                     switch section {
                     case .library: LibraryView()
                     case .stats: StatsView(stats: library.stats, section: $section)

@@ -13,6 +13,10 @@ struct CameraAPI {
     /// Set only on the main actor, before requests for the new connection start.
     nonisolated(unsafe) static var base: URL = wifiBase
 
+    /// False while no camera is connected: the library then shows what was saved from the
+    /// last connection and must not ask 192.168.0.1, which is often the home router.
+    nonisolated(unsafe) static var online = false
+
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
         // The camera's web server is small; flooding it with parallel requests stalls it.
@@ -143,7 +147,7 @@ struct CameraAPI {
     }
 }
 
-struct Photo: Identifiable, Hashable {
+struct Photo: Identifiable, Hashable, Codable {
     let dir: String
     let name: String
     var id: String { "\(dir)/\(name)" }

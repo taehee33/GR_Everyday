@@ -40,7 +40,9 @@ final class ConnectionModel: ObservableObject {
         case failed(String)
     }
 
-    @Published var state: State = .disconnected
+    @Published var state: State = .disconnected {
+        didSet { CameraAPI.online = state == .connected }
+    }
     @Published var model = "RICOH GR"
     @Published var battery: Int?
     /// Everything /v1/props reported on the last poll.
