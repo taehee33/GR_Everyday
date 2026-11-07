@@ -54,6 +54,9 @@ struct RemoteView: View {
     @State private var shootTask: Task<Void, Never>?
     @State private var status: String?
     @State private var focusPoint: CGPoint?
+    /// The camera's answer for the last tap: nil while it is still focusing.
+    @State private var focusHit: Bool?
+    @State private var focusTask: Task<Void, Never>?
     @State private var props: [String: Any] = [:]
     @State private var showCameraSettings = false
     @State private var busyParam: String?
@@ -68,7 +71,8 @@ struct RemoteView: View {
                         Image(nsImage: frame).resizable().aspectRatio(contentMode: .fit)
                         if showGrid { GridOverlay().frame(width: fitted.width, height: fitted.height) }
                         if let p = focusPoint {
-                            RoundedRectangle(cornerRadius: 4).stroke(.green, lineWidth: 2)
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(focusHit.map { $0 ? Color.green : Color.orange } ?? .white, lineWidth: 2)
                                 .frame(width: 60, height: 60)
                                 .position(x: fitted.minX + p.x * fitted.width, y: fitted.minY + p.y * fitted.height)
                         }
@@ -239,15 +243,36 @@ struct RemoteView: View {
                       width: size.width, height: size.height)
     }
 
+    /// Focus methods where the camera doesn't autofocus, so a tap can't move the focus.
+    private static let fixedFocus = ["manual": "수동(MF)", "snap": "스냅", "inf": "∞"]
+
     private func tapFocus(_ loc: CGPoint, fitted: CGRect) {
         guard fitted.contains(loc) else { return }
+        if let setting = props["focusSetting"] as? String, let name = Self.fixedFocus[setting] {
+            focusPoint = nil
+            status = "초점 방식이 \(name)이라 눌러서 초점을 맞출 수 없습니다. 카메라 설정에서 초점 방식을 바꾸세요."
+            return
+        }
         let p = CGPoint(x: (loc.x - fitted.minX) / fitted.width, y: (loc.y - fitted.minY) / fitted.height)
         focusPoint = p
-        Task {
+        focusHit = nil
+        status = "초점 맞추는 중…"
+        focusTask?.cancel()
+        focusTask = Task {
             do {
                 try await CameraAPI.focus(x: Int(p.x * 100), y: Int(p.y * 100))
-                status = "초점 맞춤"
+                // The POST answers before the lens settles; the camera reports the result
+                // in props.focused (verified on the GR IV HDF, fw 1.20).
+                var hit = false
+                for _ in 0..<6 {
+                    try await Task.sleep(for: .milliseconds(250))
+                    if (try await CameraAPI.props())["focused"] as? Bool == true { hit = true; break }
+                }
+                focusHit = hit
+                status = hit ? "초점 맞음" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
+            } catch is CancellationError {
             } catch {
+                focusHit = false
                 status = "초점 실패: \(error.localizedDescription)"
             }
         }
