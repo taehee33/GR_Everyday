@@ -544,7 +544,7 @@ struct PhotoCell: View {
             .frame(height: thumbSize * 0.72)
             .overlay {
                 // Portrait shots are shown whole and upright, letterboxed in the cell.
-                RemoteImage(url: CameraAPI.photoURL(photo, size: .thumb),
+                RemoteImage(url: library.thumbURL(photo),
                             contentMode: library.isPortrait(photo) ? .fit : .fill,
                             orientation: library.orientation(photo),
                             adjustments: library.edits[photo.id],
@@ -718,7 +718,7 @@ private struct FilmCell: View {
 
     var body: some View {
         let isCurrent = library.current == photo
-        RemoteImage(url: CameraAPI.photoURL(photo, size: .thumb),
+        RemoteImage(url: library.thumbURL(photo),
                     contentMode: library.isPortrait(photo) ? .fit : .fill,
                     orientation: library.orientation(photo),
                     adjustments: library.edits[photo.id],
@@ -802,7 +802,7 @@ struct LoupeView: View {
             return out.map { NSImage(cgImage: $0, size: CGSize(width: $0.width, height: $0.height)) } ?? image
         }
         if image == nil || !cameraOriginal {
-            image = await turned(await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb), orientation: orientation))
+            image = await turned(await ImageCache.shared.image(for: library.thumbURL(photo), orientation: orientation))
         }
         histogram = nil
         var best: NSImage?
@@ -976,6 +976,9 @@ struct InfoPanel: View {
             out.append(("촬영", date.formatted(date: .abbreviated, time: .standard)))
         }
         if let camera = metadata?.camera { out.append(("카메라", camera)) }
+        for item in MakerNote.toneSettings(metadata?.shot?.toneParams ?? library.shotRecord(photo)?.toneParams) {
+            out.append((item.name, item.value))
+        }
         let size = [metadata?.pixelSize, metadata?.fileSize].compactMap { $0 }
         if !size.isEmpty { out.append(("크기", size.joined(separator: "\n"))) }
         out.append(("저장", library.localURL(photo).map { $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") } ?? "미저장"))

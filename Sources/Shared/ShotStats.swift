@@ -10,6 +10,11 @@ struct ShotRecord: Codable, Equatable {
     /// 35 mm-equivalent focal length: 28 uncropped on GR III/IV, 35 or 50 with crop.
     var focal35: Int?
     var hdf: Int?
+    /// Maker note 0x0247, the image control's settings (MakerNote.toneSettings names them).
+    var toneParams: [Int]?
+    /// Records from before `toneParams` was read are read again once.
+    var version: Int?
+    static let currentVersion = 2
 
     static let headLimit = 64 * 1024
 
@@ -17,6 +22,8 @@ struct ShotRecord: Codable, Equatable {
         let shot = MakerNote.shot(head)
         imageTone = shot?.imageControl?.code
         hdf = shot?.hdf
+        toneParams = shot?.toneParams
+        version = Self.currentVersion
         guard let exif = MakerNote.exif(head) else { return }
         mode = Self.mode(program: exif.program, pictureMode: shot?.pictureMode)
         focal35 = exif.focal35
@@ -106,7 +113,7 @@ final class ShotStats: ObservableObject {
             loadedFrom = Self.url
         }
         // Offline, the photos are the saved list; only the camera can be read for new ones.
-        let todo = CameraAPI.online ? Self.shots(photos).reversed().filter { $0.kind != .video && records[$0.id] == nil } : []
+        let todo = CameraAPI.online ? Self.shots(photos).reversed().filter { $0.kind != .video && (records[$0.id]?.version ?? 0) < ShotRecord.currentVersion } : []
         pending = todo.count
         scanning = !todo.isEmpty
         task = Task { [weak self] in

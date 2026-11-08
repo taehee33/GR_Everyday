@@ -12,6 +12,18 @@ final class LibraryModel: ObservableObject {
         var id: String { rawValue }
     }
 
+    /// The iPhone/iPad filter sheet: file type, saved or not, shooting days. Applied on top
+    /// of `filter` (the Mac's picker), which the iPhone leaves at 전체.
+    struct Refine: Equatable {
+        enum Saved: String, CaseIterable { case all = "모두", unsaved = "미저장", saved = "저장됨" }
+        var kind: Photo.Kind?
+        var saved: Saved = .all
+        /// Whole days, inclusive.
+        var from: Date?
+        var to: Date?
+        var isActive: Bool { self != Refine() }
+    }
+
     enum Sort: String, CaseIterable, Identifiable {
         case newest = "최신순", oldest = "오래된순", name = "파일명순"
         var id: String { rawValue }
@@ -35,7 +47,42 @@ final class LibraryModel: ObservableObject {
         var id: String { photo.id }
     }
 
-    @Published private(set) var photos: [Photo] = []
+    @Published private(set) var photos: [Photo] = [] {
+        didSet { indexRawPartners() }
+    }
+    /// DNGs by folder and name without extension, to find a JPEG's RAW partner.
+    private var rawPartners: [String: Photo] = [:]
+    /// Also called from init, where didSet doesn't run (the offline list is loaded there).
+    private func indexRawPartners() {
+        rawPartners = Dictionary(photos.filter { $0.kind == .raw }.map { (Self.pairKey($0), $0) },
+                                 uniquingKeysWith: { first, _ in first })
+    }
+    private nonisolated static func pairKey(_ photo: Photo) -> String {
+        "\(photo.dir)/\((photo.name as NSString).deletingPathExtension.uppercased())"
+    }
+
+    /// The grid thumbnail for a photo. The camera's thumb for a DNG is its embedded preview,
+    /// much larger than the 160 px thumb it gives for a JPEG (seen on GR IV HDF fw 1.20), and
+    /// RAW+JPEG pairs are the same shot, so a JPEG with a DNG partner shows the DNG's thumb.
+    ///
+    /// 설정 → 선명한 썸네일 (iPhone/iPad, off by default): a JPEG without a DNG uses the
+    /// camera's 720 px preview instead, kept on disk (~55 KB each) so it stays sharp offline.
+    /// Until that preview is on disk, an offline library falls back to the small thumb.
+    /// JPEGs on the card without a DNG partner: the photos 선명한 썸네일 changes.
+    var jpegOnlyCount: Int {
+        photos.filter { $0.kind == .jpeg && rawPartners[Self.pairKey($0)] == nil }.count
+    }
+
+    func thumbURL(_ photo: Photo) -> URL {
+        if photo.kind == .jpeg, let raw = rawPartners[Self.pairKey(photo)] {
+            return CameraAPI.photoURL(raw, size: .thumb)
+        }
+        if photo.kind == .jpeg, ImageCache.sharpThumbnails {
+            let preview = CameraAPI.photoURL(photo, size: .view)
+            if CameraAPI.online || ImageCache.hasThumbnail(preview) { return preview }
+        }
+        return CameraAPI.photoURL(photo, size: .thumb)
+    }
     /// When `photos` was last read from the camera; shown while offline.
     @Published private(set) var listSavedAt: Date?
     /// Shooting statistics (촬영 통계 pane), counted from the photos above.
@@ -69,6 +116,10 @@ final class LibraryModel: ObservableObject {
     @Published var edits: [String: Adjustments] = [:] { didSet { scheduleStoreWrite() } }
     @Published var ratings: [String: Int] = [:] { didSet { scheduleStoreWrite() } }
     @Published var minRating = 0
+    @Published var refine = Refine() {
+        // Hidden photos leave the selection, so the count and 저장 match what is shown.
+        didSet { selection.formIntersection(visible.map(\.id)) }
+    }
     /// Saved files by name (the save folder and its date subfolders).
     @Published private(set) var localFiles: [String: URL] = [:]
     /// EXIF orientation of saved files, by file name.
@@ -92,6 +143,15 @@ final class LibraryModel: ObservableObject {
         didSet { UserDefaults.standard.set(dateSubfolders, forKey: "dateSubfolders") }
     }
     /// Leave a file alone when one with the same name is already in the save folder.
+    /// iPhone/iPad always skip photos already saved (no setting there: saving one again
+    /// would only add a duplicate to the Photos app). The Mac keeps its 설정 toggle.
+    private var skipsSaved: Bool {
+        #if os(iOS)
+        true
+        #else
+        skipExisting
+        #endif
+    }
     @Published var skipExisting: Bool {
         didSet { UserDefaults.standard.set(skipExisting, forKey: "skipExisting") }
     }
@@ -156,6 +216,7 @@ final class LibraryModel: ObservableObject {
         infos = Self.readInfoCache()
         if let saved = CardCache.readList() {
             photos = saved.photos
+            indexRawPartners()
             listSavedAt = saved.savedAt
             refreshSaved()
         }
@@ -287,6 +348,37 @@ final class LibraryModel: ObservableObject {
         }
     }
 
+    func passes(_ photo: Photo, _ r: Refine) -> Bool {
+        if let kind = r.kind, photo.kind != kind { return false }
+        switch r.saved {
+        case .all: break
+        case .unsaved: if saved.contains(photo.name) { return false }
+        case .saved: if !saved.contains(photo.name) { return false }
+        }
+        if r.from != nil || r.to != nil {
+            guard let date = shootingDate(photo) else { return false }
+            let calendar = Calendar.current
+            if let from = r.from, date < calendar.startOfDay(for: from) { return false }
+            if let to = r.to, let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)),
+               date >= end { return false }
+        }
+        return true
+    }
+
+    /// What the filter sheet would show, before it is applied.
+    func count(_ r: Refine) -> Int {
+        photos.filter { matches($0, filter) && passesRating($0) && passesShot($0) && passes($0, r) }.count
+    }
+
+    func shootingDate(_ photo: Photo) -> Date? { infos[photo.id]?.date ?? shotRecord(photo)?.date }
+
+    /// First and last shooting day on the card, for the date pickers.
+    var dateRange: ClosedRange<Date>? {
+        let dates = photos.compactMap { shootingDate($0) }
+        guard let first = dates.min(), let last = dates.max() else { return nil }
+        return first...last
+    }
+
     private func passesRating(_ photo: Photo) -> Bool { minRating == 0 || rating(photo) >= minRating }
 
     /// A RAW shot with a JPEG twin is counted by the JPEG, so it is looked up there.
@@ -310,7 +402,7 @@ final class LibraryModel: ObservableObject {
 
     var visible: [Photo] {
         // The camera lists files in shooting order.
-        let filtered = photos.filter { matches($0, filter) && passesRating($0) && passesShot($0) }
+        let filtered = photos.filter { matches($0, filter) && passesRating($0) && passesShot($0) && passes($0, refine) }
         switch sort {
         case .newest: return filtered.reversed()
         case .oldest: return filtered
@@ -361,7 +453,7 @@ final class LibraryModel: ObservableObject {
             photos = list
             listSavedAt = .now
             CardCache.writeList(list)
-            CardCache.prune(keeping: list)
+            CardCache.prune(keeping: list.compactMap { ImageCache.diskURL(thumbURL($0))?.lastPathComponent })
             let ids = Set(list.map(\.id))
             infos = infos.filter { ids.contains($0.key) }
             error = nil
@@ -397,9 +489,9 @@ final class LibraryModel: ObservableObject {
     /// Every thumbnail, not only the ones scrolled to, so the whole card can be browsed
     /// later without the camera. A few KB each; ones already on disk are skipped.
     private func prefetchThumbnails() async {
-        for photo in photos.reversed() where !ImageCache.hasThumbnail(photo) {
+        for photo in photos.reversed() where !ImageCache.hasThumbnail(thumbURL(photo)) {
             if Task.isCancelled || !CameraAPI.online { return }
-            _ = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb))
+            _ = await ImageCache.shared.image(for: thumbURL(photo))
         }
     }
 
@@ -546,7 +638,7 @@ final class LibraryModel: ObservableObject {
         for i in transfers.indices {
             if Task.isCancelled { break }
             let photo = transfers[i].photo
-            if skipExisting, saved.contains(photo.name) {
+            if skipsSaved, saved.contains(photo.name) {
                 transfers[i].status = .done
                 selection.remove(photo.id)
                 continue
@@ -774,8 +866,21 @@ enum Downloader {
 @MainActor
 final class ImageCache {
     static let shared = ImageCache()
-    private let originals = NSCache<NSString, PlatformImage>()
-    private let oriented = NSCache<NSString, PlatformImage>()
+    /// Bounded by decoded size: 720 px thumbs (DNGs', or 선명한 썸네일) are ~1.4 MB each in
+    /// memory, so a scrolled-through card would otherwise grow without limit.
+    private let originals: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.totalCostLimit = 200 << 20
+        return cache
+    }()
+    private let oriented: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.totalCostLimit = 200 << 20
+        return cache
+    }()
+    private static func cost(_ image: PlatformImage) -> Int {
+        image.cgImageValue.map { $0.bytesPerRow * $0.height } ?? 0
+    }
     private var inFlight: [URL: Task<PlatformImage?, Never>] = [:]
 
     static var folder: URL {
@@ -787,7 +892,7 @@ final class ImageCache {
         if let hit = oriented.object(forKey: key) { return hit }
         guard let image = await original(url) else { return nil }
         let result = image.upright(orientation)
-        oriented.setObject(result, forKey: key)
+        oriented.setObject(result, forKey: key, cost: Self.cost(result))
         return result
     }
 
@@ -816,19 +921,35 @@ final class ImageCache {
         inFlight[url] = task
         let image = await task.value
         inFlight[url] = nil
-        if let image { originals.setObject(image, forKey: key) }
+        if let image { originals.setObject(image, forKey: key, cost: Self.cost(image)) }
         return image
     }
 
-    static func hasThumbnail(_ photo: Photo) -> Bool {
-        diskURL(CameraAPI.photoURL(photo, size: .thumb)).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    static func hasThumbnail(_ url: URL) -> Bool {
+        diskURL(url).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }
 
-    /// Only thumbnails go to disk (a few KB each); previews stay in memory.
-    private static func diskURL(_ url: URL) -> URL? {
-        guard url.query?.contains("size=thumb") == true else { return nil }
+    static let sharpThumbnailsKey = "sharpThumbnails"
+    /// iPhone/iPad only: over USB the Mac would build each preview from the whole original.
+    static var sharpThumbnails: Bool {
+        #if os(iOS)
+        UserDefaults.standard.bool(forKey: sharpThumbnailsKey)
+        #else
+        false
+        #endif
+    }
+
+    /// Thumbnails go to disk (a few KB each, 55 KB for a DNG's); previews stay in memory,
+    /// except a JPEG's 720 px preview while 선명한 썸네일 is on (it is then its thumbnail).
+    static func diskURL(_ url: URL) -> URL? {
         let parts = url.pathComponents.suffix(2).joined(separator: "_")
-        return CardCache.thumbs.appendingPathComponent("\(parts).jpg")
+        if url.query?.contains("size=thumb") == true {
+            return CardCache.thumbs.appendingPathComponent("\(parts).jpg")
+        }
+        if sharpThumbnails, url.query?.contains("size=view") == true, url.pathExtension.uppercased() == "JPG" {
+            return CardCache.thumbs.appendingPathComponent("\(parts).view.jpg")
+        }
+        return nil
     }
 }
 
@@ -925,8 +1046,10 @@ enum CardCache {
     }
 
     /// Thumbnails of photos no longer on the card.
-    static func prune(keeping photos: [Photo]) {
-        let keep = Set(photos.map { "\($0.dir)_\($0.name).jpg" })
+    /// Also drops a JPEG's own thumb once it uses its DNG's, and previews kept for 선명한
+    /// 썸네일 after that setting is turned off.
+    static func prune(keeping names: [String]) {
+        let keep = Set(names)
         let fm = FileManager.default
         for name in (try? fm.contentsOfDirectory(atPath: thumbs.path)) ?? [] where !keep.contains(name) {
             try? fm.removeItem(at: thumbs.appendingPathComponent(name))

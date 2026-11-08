@@ -21,6 +21,9 @@ enum MakerNote {
         /// Tag 0x0033 ("PictureMode"): P [0,0,1], Tv [4,0,1], Av [5,0,1], Sn [0,32,1] on the
         /// GR IV. Sn is ExposureProgram 2 in EXIF, the same as P; only this tells them apart.
         var pictureMode: [Int]?
+        /// Tag 0x0247: the image control's settings, 35 little-endian Int16s, -32768 where
+        /// that control has no such setting. See `toneSettings` for the known positions.
+        var toneParams: [Int]?
 
         var hdfLabel: String? {
             switch hdf {
@@ -72,9 +75,69 @@ enum MakerNote {
                 shot.hdf = Int(note[e + 8])
             } else if tag == 0x0033, type == 1 || type == 7, read32(note, e + 4, le) == 3 {
                 shot.pictureMode = note[(e + 8)..<(e + 11)].map(Int.init)
+            } else if tag == 0x0247, type == 7 {
+                // Stored as bytes; the values inside are little-endian on the GR IV.
+                let count = read32(note, e + 4, le), offset = read32(note, e + 8, le)
+                if count >= 2, offset + count <= note.count {
+                    shot.toneParams = stride(from: offset, to: offset + count - 1, by: 2).map {
+                        Int(Int16(bitPattern: UInt16(note[$0]) | UInt16(note[$0 + 1]) << 8))
+                    }
+                }
             }
         }
-        return shot.imageControl == nil && shot.hdf == nil && shot.pictureMode == nil ? nil : shot
+        return shot.imageControl == nil && shot.hdf == nil && shot.pictureMode == nil && shot.toneParams == nil ? nil : shot
+    }
+
+    /// Positions in tag 0x0247 matched against the camera's own menu (GR IV HDF fw 1.20:
+    /// Custom 1 on Standard, Positive Film, Cross Process, Retro, and Soft Monotone shots
+    /// changing one setting at a time; HDR Tone checked against its menu). Index 8 is the colour
+    /// controls' 조색 (Retro: -2 when set so; its colours are not mapped yet); 15 and 16 are
+    /// HDR Tone's 조색 and 효과. Index 7 and 21 (Cross Process: 1) stay unnamed.
+    static let toneSettingNames: [(index: Int, name: String)] = [
+        (0, "채도"), (1, "색상"), (2, "키"), (3, "콘트라스트"), (4, "콘트라스트(하이라이트)"),
+        (5, "콘트라스트(섀도)"), (6, "샤프니스"), (8, "조색"), (9, "음영"), (10, "명료도"),
+        (15, "조색"), (16, "HDR톤 효과"),
+    ]
+
+    /// Monochrome controls only (index 13 is -1 for colour ones): 조색 0 off, 1–5 the
+    /// colours in the camera's order; 필터 효과 is a 4-byte preset at indexes 17–18;
+    /// 입자감 is index 19 (8 off, 0x0303 on). Indexes 17–20 hold 8, 0, 8, 0 on colour shots.
+    static let toningNames = ["끄기", "주황", "빨강", "초록", "파랑", "보라"]
+    static let filterPresets: [[Int]: String] = [
+        [0, 0]: "끄기", [2561, 5190]: "1", [10241, 2610]: "2", [23105, 2580]: "3", [30817, 2570]: "4",
+    ]
+
+    /// The settings this shot's image control has, in the camera menu's order ("+1"). A
+    /// position not matched to a menu item yet but holding a value shows as "? (N번)", so
+    /// it can be compared with the camera's menu.
+    static func toneSettings(_ params: [Int]?) -> [(name: String, value: String)] {
+        guard let params else { return [] }
+        func at(_ i: Int) -> Int? { i < params.count && params[i] != -32768 ? params[i] : nil }
+        func signed(_ v: Int) -> String { v > 0 ? "+\(v)" : "\(v)" }
+        var out: [(name: String, value: String)] = []
+        let mono = (at(13) ?? -1) >= 0
+        for item in toneSettingNames {
+            guard let v = at(item.index) else { continue }
+            // HDR Tone's slots hold -1 on every other image control.
+            if item.index >= 15, v == -1 { continue }
+            switch item.index {
+            case 15: out.append((item.name, v == 0 ? "끄기" : "\(v)"))   // HDR 톤 (0 = OFF)
+            case 16: out.append((item.name, "\(v)"))                     // HDR톤 효과 1–3
+            default: out.append((item.name, signed(v)))
+            }
+            if item.index == 6, mono {
+                if let t = at(13) { out.append(("조색", toningNames.indices.contains(t) ? toningNames[t] : "코드 \(t)")) }
+                if params.count > 18, let f = filterPresets[[params[17], params[18]]] { out.append(("필터 효과", f)) }
+            }
+            if item.index == 9, mono, let g = at(19) {
+                out.append(("입자감", g == 8 ? "끄기" : g == 0x0303 ? "켜기" : "코드 \(g)"))
+            }
+        }
+        let named = Set(toneSettingNames.map(\.index)).union([13, 17, 18, 19, 20])
+        for i in params.indices where !named.contains(i) {
+            if let v = at(i), v != -1 { out.append(("? (\(i)번)", "\(v)")) }
+        }
+        return out
     }
 
     static func imageControl(_ url: URL) -> ImageControl? { shot(url)?.imageControl }
@@ -156,11 +219,16 @@ enum MakerNote {
                 return (read16(b, e, le), read32(b, e + 4, le), read32(b, e + 8, le))
             }
         }
-        guard let exif = entries(read32(b, tiff + 4, le)).first(where: { $0.tag == 0x8769 }),
-              let note = entries(exif.value).first(where: { $0.tag == 0x927C }) else { return nil }
+        let ifd0 = entries(read32(b, tiff + 4, le))
+        // JPEG: Exif IFD → MakerNote. DNG: the same "RICOH" note sits in IFD0's
+        // DNGPrivateData (0xC634), 160 KB long, so only the part inside `b` is kept: the
+        // tags read here (0x0247 among them) are near its start.
+        let note = ifd0.first(where: { $0.tag == 0x8769 }).flatMap { exif in entries(exif.value).first { $0.tag == 0x927C } }
+            ?? ifd0.first { $0.tag == 0xC634 }
+        guard let note else { return nil }
         let start = tiff + note.value
-        guard start >= 0, start + note.count <= b.count else { return nil }
-        return Array(b[start..<(start + note.count)])
+        guard start >= 0, start < b.count else { return nil }
+        return Array(b[start..<min(start + note.count, b.count)])
     }
 
     private static func read16(_ b: [UInt8], _ i: Int, _ le: Bool) -> Int {

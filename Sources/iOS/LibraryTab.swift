@@ -6,6 +6,7 @@ struct LibraryTab: View {
     @EnvironmentObject var connection: ConnectionModel
     @State private var selecting = false
     @State private var viewing: Photo?
+    @State private var showFilter = false
     @AppStorage("iosThumbSize") private var thumbSize = 100.0
 
     private var online: Bool { connection.isConnected }
@@ -27,9 +28,15 @@ struct LibraryTab: View {
             .navigationTitle("라이브러리")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
-            .safeAreaInset(edge: .top) { if !online && !library.photos.isEmpty { offlineBanner } }
+            .safeAreaInset(edge: .top) {
+                VStack(spacing: 0) {
+                    if !online && !library.photos.isEmpty { offlineBanner }
+                    if library.refine.isActive { filterBanner }
+                }
+            }
             .safeAreaInset(edge: .bottom) { bottomBar }
             .refreshable { if online { await library.reload() } }
+            .sheet(isPresented: $showFilter) { FilterSheet() }
             .fullScreenCover(item: $viewing) { photo in
                 PhotoPager(start: photo, photos: library.visible)
             }
@@ -54,33 +61,46 @@ struct LibraryTab: View {
                                 }
                         }
                     } header: {
-                        if !section.title.isEmpty {
-                            HStack {
-                                Text(section.title).font(.subheadline.bold())
-                                Text("\(section.photos.count)장").font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                if selecting {
-                                    Button("이 날짜 선택") { library.selection.formUnion(section.photos.map(\.id)) }
-                                        .font(.caption)
-                                }
-                            }
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(.bar)
-                        }
+                        if !section.title.isEmpty { header(section) }
                     }
                 }
             }
         }
     }
 
+    /// Day title and count; the circle selects the whole day (and starts selecting).
+    private func header(_ section: LibraryModel.DaySection) -> some View {
+        let ids = Set(section.photos.map(\.id))
+        let all = ids.isSubset(of: library.selection)
+        let some = !all && !ids.isDisjoint(with: library.selection)
+        return HStack {
+            Text(section.title).font(.subheadline.bold())
+            Text("\(section.photos.count)장").font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                selecting = true
+                library.toggleSection(section.photos)
+            } label: {
+                Image(systemName: all ? "checkmark.circle.fill" : some ? "minus.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(all || some ? Color.accentColor : .secondary)
+            }
+            .accessibilityLabel(all ? "이 날짜 선택 해제" : "이 날짜 모두 선택")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
+            Button { showFilter = true } label: {
+                Label("필터", systemImage: library.refine.isActive
+                      ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            }
+            .disabled(library.photos.isEmpty)
+        }
+        ToolbarItem(placement: .topBarLeading) {
             Menu {
-                Picker("보기", selection: $library.filter) {
-                    ForEach(LibraryModel.Filter.allCases) { f in
-                        Text("\(f.rawValue) (\(library.count(f)))").tag(f)
-                    }
-                }
                 Picker("정렬", selection: $library.sort) {
                     ForEach(LibraryModel.Sort.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -91,7 +111,7 @@ struct LibraryTab: View {
                     Text("크게").tag(150.0)
                 }
             } label: {
-                Label(library.filter.rawValue, systemImage: "line.3.horizontal.decrease.circle")
+                Label("보기", systemImage: "arrow.up.arrow.down.circle")
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -107,25 +127,67 @@ struct LibraryTab: View {
         if !library.transfers.isEmpty {
             TransferBar()
         } else if selecting {
-            HStack {
-                Menu("선택") {
+            HStack(spacing: 12) {
+                Button {
+                    library.clearSelection()
+                    selecting = false
+                } label: {
+                    Image(systemName: "xmark").font(.headline).frame(width: 32, height: 32)
+                }
+                .accessibilityLabel("선택 끝내기")
+                Menu {
                     Button("전체 선택") { library.selectAll() }
                     Button("미저장만 선택") { library.selectUnsaved() }
                     Button("선택 해제") { library.clearSelection() }
+                } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("\(library.selection.count)장 선택").font(.subheadline.bold())
+                        if let size = selectedSize { Text(size).font(.caption).foregroundStyle(.secondary) }
+                    }
                 }
+                .foregroundStyle(.primary)
                 Spacer()
                 Button {
                     library.save(library.visible.filter { library.selection.contains($0.id) })
                     selecting = false
                 } label: {
-                    Text(library.selection.isEmpty ? "사진 앱에 저장" : "사진 앱에 저장 (\(library.selection.count))")
+                    Label("사진 앱에 저장", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
                 .disabled(library.selection.isEmpty || !online)
             }
             .padding(.horizontal).padding(.vertical, 8)
             .background(.bar)
         }
+    }
+
+    /// Total size of the selected files, from the camera's per-photo info.
+    private var selectedSize: String? {
+        let sizes = library.selection.compactMap { library.infos[$0]?.extras["size"].flatMap(Int64.init) }
+        guard !sizes.isEmpty else { return nil }
+        return ByteCountFormatter.string(fromByteCount: sizes.reduce(0, +), countStyle: .file)
+    }
+
+    /// What the filter keeps, how many, and a way out.
+    private var filterBanner: some View {
+        let r = library.refine
+        var parts: [String] = []
+        if let kind = r.kind { parts.append(kind == .video ? "동영상" : kind.rawValue) }
+        if r.saved != .all { parts.append(r.saved.rawValue) }
+        let day = { (d: Date) in d.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits)) }
+        if r.from != nil || r.to != nil { parts.append("\(r.from.map(day) ?? "")~\(r.to.map(day) ?? "")") }
+        return HStack {
+            Button { showFilter = true } label: {
+                Label(parts.joined(separator: " · ") + " · \(library.visible.count)장", systemImage: "line.3.horizontal.decrease.circle.fill")
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("해제") { library.refine = LibraryModel.Refine() }
+        }
+        .font(.footnote)
+        .padding(.horizontal).padding(.vertical, 6)
+        .background(.bar)
     }
 
     private var offlineBanner: some View {
@@ -174,7 +236,7 @@ struct Thumb: View {
             }
             .contentShape(Rectangle())
             .task(id: "\(photo.id)#\(library.orientation(photo))") {
-                image = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb),
+                image = await ImageCache.shared.image(for: library.thumbURL(photo),
                                                       orientation: library.orientation(photo))
             }
     }
@@ -201,6 +263,8 @@ struct PhotoPager: View {
     @State private var zoomed = false
     /// How far the photo has been dragged down; past the threshold it closes.
     @State private var drag: CGSize = .zero
+    /// The (i) sheet: EXIF and shooting settings of the photo shown.
+    @State private var showInfo = false
 
     private var currentPhoto: Photo? { photos.first { $0.id == current } }
     /// 0 at rest, 1 when dragged far enough to close.
@@ -249,6 +313,9 @@ struct PhotoPager: View {
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .onAppear { current = start.id }
+        .sheet(isPresented: $showInfo) {
+            if let photo = currentPhoto { PhotoInfoSheet(photo: photo) }
+        }
     }
 
     /// What the photo shown is, when it isn't the camera's live copy.
@@ -270,7 +337,10 @@ struct PhotoPager: View {
                 if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
-            Color.clear.frame(width: 36, height: 36)
+            Button { showInfo = true } label: {
+                Image(systemName: "info.circle").font(.headline).frame(width: 36, height: 36)
+            }
+            .disabled(currentPhoto == nil)
         }
         .foregroundStyle(.white)
         .padding(.horizontal).padding(.vertical, 8)
@@ -323,7 +393,7 @@ struct PhotoPage: View {
         }
         .task(id: photo.id) {
             let orientation = library.orientation(photo)
-            image = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .thumb), orientation: orientation)
+            image = await ImageCache.shared.image(for: library.thumbURL(photo), orientation: orientation)
             if let local = library.localURL(photo), photo.kind != .video,
                let data = try? Data(contentsOf: local), let full = PlatformImage(data: data) {
                 image = full

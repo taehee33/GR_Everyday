@@ -9,6 +9,7 @@ struct SettingsTab: View {
     @AppStorage(LibraryModel.AutoSave.raw) private var autoRAW = true
     @AppStorage(LibraryModel.AutoSave.video) private var autoVideo = false
     @AppStorage(PhotosLibrary.pairRAWKey) private var pairRAW = false
+    @AppStorage(ImageCache.sharpThumbnailsKey) private var sharpThumbnails = false
     @State private var cacheSize: Int64 = 0
 
     var body: some View {
@@ -21,7 +22,6 @@ struct SettingsTab: View {
                         Toggle("RAW (DNG)", isOn: $autoRAW)
                         Toggle("동영상", isOn: $autoVideo)
                     }
-                    Toggle("이미 저장한 파일은 건너뛰기", isOn: $library.skipExisting)
                     Toggle("RAW+JPEG를 사진 앱에 한 장으로", isOn: $pairRAW)
                 } header: {
                     Text("사진 저장")
@@ -38,6 +38,7 @@ struct SettingsTab: View {
                 }
 
                 Section {
+                    Toggle("선명한 썸네일", isOn: $sharpThumbnails)
                     LabeledContent("저장된 캐시", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
                     Button("캐시 비우기", role: .destructive) {
                         library.clearCaches()
@@ -46,7 +47,7 @@ struct SettingsTab: View {
                 } header: {
                     Text("캐시")
                 } footer: {
-                    Text("마지막으로 본 카드의 사진 목록·썸네일을 남겨 두어, 카메라 없이도 라이브러리를 볼 수 있습니다. 비우면 다음 연결 때 다시 받습니다.")
+                    Text("마지막으로 본 카드의 사진 목록·썸네일·촬영 정보를 남겨 두어, 카메라 없이도 라이브러리를 볼 수 있습니다. 비우면 다음 연결 때 다시 받습니다.\n카메라는 JPG에 160px 썸네일만 줍니다(RAW와 함께 찍은 사진은 RAW의 720px 썸네일을 씁니다). 선명한 썸네일을 켜면 JPG만 있는 사진도 720px 미리보기를 받아 둡니다(다음 연결 때).\n\(sharpEstimate)")
                 }
 
                 Section("정보") {
@@ -57,6 +58,15 @@ struct SettingsTab: View {
             .navigationTitle("설정")
             .task { cacheSize = library.cacheSize }
         }
+    }
+
+    /// Measured on a GR IV HDF: camera thumbs for JPEGs average 7 KB, 720 px previews 55 KB.
+    private var sharpEstimate: String {
+        func size(_ kb: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(kb) * 1024, countStyle: .file) }
+        let count = library.jpegOnlyCount
+        let per100 = "100장 기준 약 \(size(700)) → 약 \(size(5500))"
+        guard count > 0 else { return per100 }
+        return "지금 카드의 JPG만 있는 사진 \(count)장: 약 \(size(count * 7)) → 약 \(size(count * 55)) (\(per100))"
     }
 
     private var version: String {
