@@ -544,6 +544,8 @@ enum DebugLog {
             handle.write(data)
             try? handle.close()
         } else {
+            // Library/Logs doesn't exist in a fresh iOS container.
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url)
         }
     }

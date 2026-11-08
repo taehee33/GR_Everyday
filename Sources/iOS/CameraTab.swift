@@ -31,6 +31,19 @@ struct CameraTab: View {
                 } footer: {
                     Text("설정 앱에서 카메라 Wi-Fi(GR_…)에 직접 연결했다면 누르세요.")
                 }
+                Section {
+                    // Always tappable: the first tap asks iOS for access, and only then can
+                    // a camera on the cable be seen.
+                    Button {
+                        Task { await connection.connectUSB() }
+                    } label: {
+                        Label(connection.usb.detected == nil ? "USB로 연결" : "USB로 연결 · \(connection.usb.detected?.name ?? "GR")",
+                              systemImage: "cable.connector")
+                    }
+                    .disabled(connection.isBusy || connection.viaUSB)
+                } footer: {
+                    Text("카메라를 USB 카메라 어댑터(라이트닝 iPhone) 또는 USB-C 케이블로 연결하고 켠 뒤 누르세요. USB로는 사진 보기·저장만 되고, 원격 촬영과 카메라 설정은 Wi-Fi에서 됩니다. iPhone의 인터넷은 그대로 쓸 수 있습니다.")
+                }
             }
             .navigationTitle("카메라")
             .toolbar {

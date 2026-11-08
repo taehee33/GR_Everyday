@@ -41,7 +41,7 @@ struct RootView: View {
         }
         .onChange(of: connection.state) { _, state in
             if state == .connected {
-                library.prepareAutoSave(viaUSB: false)
+                library.prepareAutoSave(viaUSB: connection.viaUSB)
                 Task { await library.reload() }
             }
         }

@@ -25,7 +25,10 @@ struct RemoteTab: View {
     var body: some View {
         NavigationStack {
             Group {
-                if connection.isConnected || connection.state == .lost {
+                if connection.viaUSB {
+                    ContentUnavailableView("USB로 연결됨", systemImage: "cable.connector",
+                                           description: Text("USB로는 사진 보기·저장만 됩니다. 원격 촬영은 카메라 Wi-Fi로 연결해야 쓸 수 있습니다."))
+                } else if connection.isConnected || connection.state == .lost {
                     VStack(spacing: 0) {
                         liveView
                         controls
@@ -41,7 +44,7 @@ struct RemoteTab: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                        .disabled(!connection.isConnected)
+                        .disabled(!connection.isConnected || connection.viaUSB)
                 }
             }
             .sheet(isPresented: $showSettings, onDismiss: { Task { await loadProps() } }) {
@@ -54,11 +57,11 @@ struct RemoteTab: View {
             }
         }
         .onChange(of: active, initial: true) { _, active in
-            if active, connection.isConnected { live.start(); Task { await loadProps() } }
+            if active, connection.isConnected, !connection.viaUSB { live.start(); Task { await loadProps() } }
             if !active { live.stop(); shootTask?.cancel() }
         }
         .onChange(of: connection.state) { _, state in
-            if state == .connected, active { live.start(); Task { await loadProps() } }
+            if state == .connected, active, !connection.viaUSB { live.start(); Task { await loadProps() } }
         }
     }
 

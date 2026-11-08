@@ -77,10 +77,8 @@ final class ConnectionModel: ObservableObject {
     @Published private(set) var connectedCameraID: UUID?
 
     let ble = BLEWaker()
-    #if os(macOS)
     let usb = USBCamera()
     private var usbChanges: AnyCancellable?
-    #endif
     private var monitor: Task<Void, Never>?
     private var joinedByUs = false
     private var phoneJoin: Task<Void, Never>?
@@ -125,7 +123,6 @@ final class ConnectionModel: ObservableObject {
         }
         self.cameras = cameras
         selectedCameraID = lastID ?? cameras.first?.id
-        #if os(macOS)
         // Views read connection.usb.detected; pass its changes on.
         usbChanges = usb.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         usb.onRemoved = { [weak self] in
@@ -135,7 +132,6 @@ final class ConnectionModel: ObservableObject {
                 self.state = .failed("USB 연결이 끊겼습니다. 케이블과 카메라 전원을 확인하세요.")
             }
         }
-        #endif
     }
 
     // MARK: Registered cameras
@@ -357,9 +353,8 @@ final class ConnectionModel: ObservableObject {
         await didConnect()
     }
 
-    #if os(macOS)
-    /// The camera on a USB cable: its files through USBCamera's local server. The Mac's
-    /// Wi-Fi stays on the usual network, so the internet and AirPlay keep working.
+    /// The camera on a USB cable: its files through USBCamera's local server. The device's
+    /// Wi-Fi stays on the usual network, so the internet keeps working.
     func connectUSB() async {
         if isConnected { await disconnect() }
         notice = nil
@@ -379,7 +374,6 @@ final class ConnectionModel: ObservableObject {
             state = .failed(error.localizedDescription)
         }
     }
-    #endif
 
     /// The Mac is already on the camera's Wi-Fi (joined by hand).
     func connectDirect() async {
@@ -399,13 +393,11 @@ final class ConnectionModel: ObservableObject {
         monitor?.cancel()
         // Leave the camera's Wi-Fi on by default: a Mac cannot switch it back on over
         // Bluetooth, so turning it off here made every later reconnect fail.
-        #if os(macOS)
         if viaUSB {
             usb.close()
             CameraAPI.base = CameraAPI.wifiBase
             viaUSB = false
         }
-        #endif
         if !viaUSB, UserDefaults.standard.bool(forKey: "turnOffCameraWiFi") { await CameraAPI.finishWLAN() }
         let restore = UserDefaults.standard.object(forKey: "restoreWiFi") as? Bool ?? true
         if joinedByUs, restore { await WiFi.restore() }
@@ -451,11 +443,7 @@ final class ConnectionModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 // Over USB the cable state says it; an HTTP ping to the local server can time
                 // out while it is busy making thumbnails and showed a false "연결 끊김".
-                #if os(macOS)
                 let alive = self.viaUSB ? self.usb.serving != nil : await CameraAPI.ping()
-                #else
-                let alive = await CameraAPI.ping()
-                #endif
                 if alive {
                     if self.state == .lost { self.state = .connected; self.cameraWLANOff = false }
                     await self.refreshProps()

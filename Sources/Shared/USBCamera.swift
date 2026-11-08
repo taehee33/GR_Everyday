@@ -2,10 +2,12 @@ import AVFoundation
 import Foundation
 import ImageCaptureCore
 import ImageIO
+#if os(macOS)
 import IOKit
+#endif
 import Network
 
-/// A GR on a USB cable. It shows up as a PTP camera (USB class 6), not as a drive, and
+/// A GR on a USB cable (Mac, or iPhone/iPad through a USB camera adapter / USB-C). It shows up as a PTP camera (USB class 6), not as a drive, and
 /// over PTP it only offers its files: no live view, shooting or settings.
 ///
 /// The library speaks the camera's Wi-Fi HTTP API everywhere (list, thumbnails, previews,
@@ -43,11 +45,45 @@ final class USBCamera: NSObject, ObservableObject {
     override init() {
         super.init()
         browser.delegate = self
+        #if os(macOS)
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
+        #else
+        // iOS has only local devices; a mask with the location bit may match nothing there.
+        browser.browsedDeviceTypeMask = .camera
+        #endif
+        #if os(macOS)
         browser.start()
         watch()
+        #else
+        // iOS asks the user before an app may see a camera's files; ask only once one is
+        // asked for (connect, or the camera tab offering USB), not at launch.
+        if browser.contentsAuthorizationStatus == .authorized { browser.start() }
+        #endif
     }
 
+    #if os(iOS)
+    /// Whether the user denied access to cameras' files on USB (then only Settings can change
+    /// it). Control access (PTP commands: the battery level) is optional.
+    var accessDenied: Bool { browser.contentsAuthorizationStatus == .denied }
+
+    /// Ask for access to the files of cameras on USB, then start looking for one.
+    func requestAccess() async {
+        if browser.contentsAuthorizationStatus != .authorized {
+            _ = await withCheckedContinuation { c in browser.requestContentsAuthorization { c.resume(returning: $0) } }
+        }
+        if browser.controlAuthorizationStatus != .authorized {
+            _ = await withCheckedContinuation { c in browser.requestControlAuthorization { c.resume(returning: $0) } }
+        }
+        DebugLog.write("usb: access contents \(browser.contentsAuthorizationStatus.rawValue) control \(browser.controlAuthorizationStatus.rawValue) browsing \(browser.isBrowsing)")
+        if browser.contentsAuthorizationStatus == .authorized, !browser.isBrowsing {
+            browser.start()
+            DebugLog.write("usb: browser started")
+        }
+        objectWillChange.send()
+    }
+    #endif
+
+    #if os(macOS)
     /// Once (2026-11-01) the browser stayed silent while macOS listed the GR on USB, after
     /// the Mac's Bluetooth had been restarting for an hour; a new browser (app relaunch)
     /// found it at once. So while nothing is detected, look at the USB registry and start
@@ -81,12 +117,26 @@ final class USBCamera: NSObject, ObservableObject {
         IOObjectRelease(service)
         return true
     }
+    #endif
 
     /// Open the camera's PTP session, read its file list and start the local server.
     /// Returns the base URL that answers the camera API.
     func open() async throws -> URL {
+        #if os(iOS)
+        await requestAccess()
+        if accessDenied {
+            throw USBError(message: "USB 카메라 접근이 꺼져 있습니다. 설정 → GR Everyday에서 허용하세요.")
+        }
+        // The browser reports a camera that was already plugged in shortly after it starts.
+        for _ in 0..<40 where detected == nil { try? await Task.sleep(for: .milliseconds(250)) }
+        DebugLog.write("usb: after waiting, detected \(detected?.name ?? "none"), devices \(browser.devices?.map { $0.name ?? "?" } ?? [])")
+        #endif
         guard let camera = detected else {
+            #if os(iOS)
+            throw USBError(message: "USB로 연결된 GR이 없습니다. 카메라 어댑터(또는 USB-C 케이블)로 연결하고 카메라를 켜세요.")
+            #else
             throw USBError(message: "USB로 연결된 GR이 없습니다. 케이블을 연결하고 카메라를 켜세요.")
+            #endif
         }
         if serving !== camera {
             DebugLog.write("usb: opening \(camera.name ?? "?")")
@@ -96,7 +146,7 @@ final class USBCamera: NSObject, ObservableObject {
                     camera.requestOpenSession()
                 }
             }
-            // macOS reads every file's details before the list is complete: about 36 s for
+            // The system reads every file's details before the list is complete: about 36 s for
             // 648 files on the GR IV, so this wait grows with the card.
             if camera.contentCatalogPercentCompleted < 100 {
                 try await withTimeout(600, "USB로 사진 목록을 다 읽지 못했습니다. 케이블을 다시 연결해 보세요.") {
@@ -228,7 +278,9 @@ final class USBCamera: NSObject, ObservableObject {
 
     private func props() -> [String: Any] {
         var props: [String: Any] = ["errCode": 200, "errMsg": "OK", "model": serving?.name ?? "RICOH GR"]
+        #if os(macOS)
         if let serial = serving?.serialNumberString { props["serialNo"] = serial }
+        #endif
         if let battery { props["battery"] = battery }
         props["storages"] = [["name": "in", "equipped": true, "numOfPhotos": files.count]]
         return props
@@ -342,9 +394,17 @@ final class USBCamera: NSObject, ObservableObject {
 extension USBCamera: ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
     nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         MainActor.assumeIsolated {
-            guard let camera = device as? ICCameraDevice,
-                  device.transportType == ICDeviceTransport.transportTypeUSB.rawValue,
+            DebugLog.write("usb: device '\(device.name ?? "?")' type \(device.type.rawValue) transport \(device.transportType ?? "nil") camera \(device is ICCameraDevice)")
+            guard let camera = device as? ICCameraDevice else { return }
+            #if os(macOS)
+            guard device.transportType == ICDeviceTransport.transportTypeUSB.rawValue,
                   (camera.name ?? "").uppercased().contains("GR") else { return }
+            #else
+            // iOS lists only cameras on the Lightning/USB-C port, and may name the GR
+            // differently; take any, but keep a GR already found over another camera.
+            if let detected, (detected.name ?? "").uppercased().contains("GR"),
+               !(camera.name ?? "").uppercased().contains("GR") { return }
+            #endif
             DebugLog.write("usb: found \(camera.name ?? "?")")
             camera.delegate = self
             detected = camera
