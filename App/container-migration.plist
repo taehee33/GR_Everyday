@@ -10,7 +10,11 @@
 		<string>${Library}/Caches/GR Mac</string>
 		<string>${Library}/Logs/GRLink.log</string>
 		<!-- Settings and registered cameras, staged here when the app's ID changed. -->
-		<string>${Library}/Preferences/com.hantaehee.grconnect.plist</string>
+		<string>${Library}/Preferences/com.hantaehee.greveryday.plist</string>
+		<!-- Data of the com.hantaehee.grconnect builds ("GR Mac"), if macOS lets it move
+		     out of that container. Untested. -->
+		<string>${Library}/Containers/com.hantaehee.grconnect/Data/Library/Application Support/GR Mac</string>
+		<string>${Library}/Containers/com.hantaehee.grconnect/Data/Library/Caches/GR Mac</string>
 	</array>
 </dict>
 </plist>

@@ -23,7 +23,7 @@ enum WiFi {
     static func join(_ credentials: WLANCredentials) async throws {
         guard await LocationPermission.shared.request() else {
             try Task.checkCancellation()
-            throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Mac을 켜세요.")
+            throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Everyday를 켜세요.")
         }
         let iface = try interface()
         if iface.ssid() == credentials.ssid { return }

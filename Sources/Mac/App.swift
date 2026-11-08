@@ -6,7 +6,7 @@ struct GRLinkApp: App {
     @StateObject private var library = LibraryModel()
 
     var body: some Scene {
-        WindowGroup("GR Mac") {
+        WindowGroup("GR Everyday") {
             ContentView()
                 .environmentObject(connection)
                 .environmentObject(library)
@@ -21,7 +21,7 @@ struct GRLinkApp: App {
     }
 }
 
-/// GR Mac's own settings: the sidebar's "설정" pane and GR Mac → 설정… (⌘,).
+/// GR Mac's own settings: the sidebar's "설정" pane and GR Everyday → 설정… (⌘,).
 struct AppSettingsView: View {
     @EnvironmentObject var connection: ConnectionModel
     @EnvironmentObject var library: LibraryModel

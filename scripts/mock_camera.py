@@ -1,7 +1,7 @@
-"""Fake RICOH GR HTTP API for developing GR Mac without a camera.
+"""Fake RICOH GR HTTP API for developing GR Everyday without a camera.
 
     python3 scripts/mock_camera.py            # serves http://127.0.0.1:8765
-    GRLINK_CAMERA_URL=http://127.0.0.1:8765 "build/GR Mac.app/Contents/MacOS/GRLink"
+    GRLINK_CAMERA_URL=http://127.0.0.1:8765 "build/GR Everyday.app/Contents/MacOS/GR Everyday"
 
 Sample photos are rendered from macOS desktop pictures with `sips`.
 """

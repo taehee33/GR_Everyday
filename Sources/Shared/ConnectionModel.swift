@@ -320,7 +320,7 @@ final class ConnectionModel: ObservableObject {
     /// Say what the Mac actually sees, so "camera Wi-Fi is off" is not a guess.
     private func notFoundMessage(for camera: SavedCamera, credentials: WLANCredentials) async -> String {
         guard let networks = await WiFi.nearby() else {
-            return "\(Device.subject) 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했습니다. 카메라 Wi-Fi가 켜져 있는지 확인하세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Mac을 허용하세요.)"
+            return "\(Device.subject) 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했습니다. 카메라 Wi-Fi가 켜져 있는지 확인하세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Everyday를 허용하세요.)"
         }
         DebugLog.write("nearby: " + networks.map { "\($0.ssid)(\($0.rssi) ch\($0.channel))" }.joined(separator: ", "))
         let cameraNetworks = networks.filter { $0.ssid.hasPrefix("GR") || $0.ssid.localizedCaseInsensitiveContains("RICOH") }

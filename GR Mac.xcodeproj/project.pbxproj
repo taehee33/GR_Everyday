@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		B10000000000000000000001 /* GR Connect.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GR Connect.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000001 /* GR Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GR Mac.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000001 /* GR Everyday.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GR Everyday.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000001 /* GR Everyday (Mac).app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GR Everyday.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -263,7 +263,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iOSApp/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "GR Connect";
+				INFOPLIST_KEY_CFBundleDisplayName = "GR Everyday";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "GR 카메라를 찾고, 카메라 Wi-Fi를 켜는 데 Bluetooth를 사용합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.";
@@ -274,9 +274,9 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.greveryday;
 				PRODUCT_MODULE_NAME = GRConnect;
-				PRODUCT_NAME = "GR Connect";
+				PRODUCT_NAME = "GR Everyday";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -296,7 +296,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iOSApp/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "GR Connect";
+				INFOPLIST_KEY_CFBundleDisplayName = "GR Everyday";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "GR 카메라를 찾고, 카메라 Wi-Fi를 켜는 데 Bluetooth를 사용합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.";
@@ -307,9 +307,9 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.greveryday;
 				PRODUCT_MODULE_NAME = GRConnect;
-				PRODUCT_NAME = "GR Connect";
+				PRODUCT_NAME = "GR Everyday";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -365,9 +365,9 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = App/Info.plist;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.greveryday;
 				PRODUCT_MODULE_NAME = GRLink;
-				PRODUCT_NAME = "GR Mac";
+				PRODUCT_NAME = "GR Everyday";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -385,9 +385,9 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = App/Info.plist;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.grconnect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hantaehee.greveryday;
 				PRODUCT_MODULE_NAME = GRLink;
-				PRODUCT_NAME = "GR Mac";
+				PRODUCT_NAME = "GR Everyday";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

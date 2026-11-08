@@ -253,7 +253,7 @@ final class BLEWaker: NSObject, ObservableObject {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -"))
         let ascii = String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.isASCII && allowed.contains($0) }))
             .trimmingCharacters(in: .whitespaces)
-        var candidates = [ascii.isEmpty ? fallback : ascii, "GR Connect", fallback]
+        var candidates = [ascii.isEmpty ? fallback : ascii, "GR Everyday", fallback]
         candidates = candidates.map { String($0.prefix(16)) }
         for name in candidates {
             do {

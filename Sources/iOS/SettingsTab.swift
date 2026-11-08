@@ -26,7 +26,7 @@ struct SettingsTab: View {
                 } header: {
                     Text("사진 저장")
                 } footer: {
-                    Text("저장한 사진은 사진 앱과, 파일 앱의 ‘GR Connect’ 폴더에 들어갑니다. 자동 저장은 연결할 때 아직 저장하지 않은 사진을 받습니다.\nRAW+JPEG를 켜면 같은 이름의 JPG와 DNG를 함께 저장할 때 사진 앱에 한 항목(JPEG로 표시, RAW 포함)으로 넣습니다. 끄면 지금처럼 각각 따로 보입니다.")
+                    Text("저장한 사진은 사진 앱과, 파일 앱의 ‘GR Everyday’ 폴더에 들어갑니다. 자동 저장은 연결할 때 아직 저장하지 않은 사진을 받습니다.\nRAW+JPEG를 켜면 같은 이름의 JPG와 DNG를 함께 저장할 때 사진 앱에 한 항목(JPEG로 표시, RAW 포함)으로 넣습니다. 끄면 지금처럼 각각 따로 보입니다.")
                 }
 
                 Section {

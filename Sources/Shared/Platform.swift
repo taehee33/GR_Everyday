@@ -55,9 +55,9 @@ enum Device {
     /// Where the app's Bluetooth permission is switched on.
     static var bluetoothPermissionPath: String {
         #if os(macOS)
-        return "시스템 설정 > 개인정보 보호 > Bluetooth에서 GR Mac을"
+        return "시스템 설정 > 개인정보 보호 > Bluetooth에서 GR Everyday를"
         #else
-        return "설정 > GR Connect에서 Bluetooth를"
+        return "설정 > GR Everyday에서 Bluetooth를"
         #endif
     }
 }
