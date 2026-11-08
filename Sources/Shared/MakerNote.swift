@@ -90,18 +90,26 @@ enum MakerNote {
 
     /// Positions in tag 0x0247 matched against the camera's own menu (GR IV HDF fw 1.20:
     /// Custom 1 on Standard, Positive Film, Cross Process, Retro, and Soft Monotone shots
-    /// changing one setting at a time; HDR Tone checked against its menu). Index 8 is the colour
-    /// controls' 조색 (Retro: -2 when set so; its colours are not mapped yet); 15 and 16 are
-    /// HDR Tone's 조색 and 효과. Index 7 and 21 (Cross Process: 1) stay unnamed.
+    /// changing one setting at a time; every control's full menu photographed at its defaults). Index 7 stays unnamed (never
+    /// set on any of the 14 image controls).
+    /// Named positions, in the camera menu's order. Toning-like items sit after 샤프니스;
+    /// each image control uses at most one of them (others hold -1 or -32768).
     static let toneSettingNames: [(index: Int, name: String)] = [
         (0, "채도"), (1, "색상"), (2, "키"), (3, "콘트라스트"), (4, "콘트라스트(하이라이트)"),
-        (5, "콘트라스트(섀도)"), (6, "샤프니스"), (8, "조색"), (9, "음영"), (10, "명료도"),
-        (15, "조색"), (16, "HDR톤 효과"),
+        (5, "콘트라스트(섀도)"), (6, "샤프니스"),
+        (8, "조색"),      // 복고풍
+        (13, "조색"),     // 흑백 계열: 0 끄기, 1–5 색
+        (14, "조색"),     // 블리치 바이패스: 0 끄기
+        (15, "조색"),     // HDR 톤: 0 끄기
+        (24, "조색"),     // 시네마톤
+        (21, "색조"),     // 크로스 프로세스: 1 = B
+        (16, "HDR톤 효과"),
+        (9, "음영"), (10, "명료도"),
     ]
 
-    /// Monochrome controls only (index 13 is -1 for colour ones): 조색 0 off, 1–5 the
-    /// colours in the camera's order; 필터 효과 is a 4-byte preset at indexes 17–18;
-    /// 입자감 is index 19 (8 off, 0x0303 on). Indexes 17–20 hold 8, 0, 8, 0 on colour shots.
+    /// 흑백 조색 colours in the camera's order; 필터 효과 is a 4-byte preset at indexes 17–18
+    /// (8, 0 on colour controls); 입자감 is index 19: 8 off, anything else on (0x0303 soft
+    /// mono and Positive Film, 0x0301 Hi-Contrast B&W).
     static let toningNames = ["끄기", "주황", "빨강", "초록", "파랑", "보라"]
     static let filterPresets: [[Int]: String] = [
         [0, 0]: "끄기", [2561, 5190]: "1", [10241, 2610]: "2", [23105, 2580]: "3", [30817, 2570]: "4",
@@ -118,22 +126,27 @@ enum MakerNote {
         let mono = (at(13) ?? -1) >= 0
         for item in toneSettingNames {
             guard let v = at(item.index) else { continue }
-            // HDR Tone's slots hold -1 on every other image control.
-            if item.index >= 15, v == -1 { continue }
+            // These slots hold -1 on image controls that don't have the item.
+            if [13, 14, 15, 16, 21, 24].contains(item.index), v == -1 { continue }
             switch item.index {
-            case 15: out.append((item.name, v == 0 ? "끄기" : "\(v)"))   // HDR 톤 (0 = OFF)
-            case 16: out.append((item.name, "\(v)"))                     // HDR톤 효과 1–3
+            case 13: out.append((item.name, toningNames.indices.contains(v) ? toningNames[v] : "코드 \(v)"))
+            case 14, 15: out.append((item.name, v == 0 ? "끄기" : "\(v)"))
+            case 16, 24: out.append((item.name, "\(v)"))
+            case 21: out.append((item.name, v == 1 ? "B" : "\(v)"))
             default: out.append((item.name, signed(v)))
             }
-            if item.index == 6, mono {
-                if let t = at(13) { out.append(("조색", toningNames.indices.contains(t) ? toningNames[t] : "코드 \(t)")) }
-                if params.count > 18, let f = filterPresets[[params[17], params[18]]] { out.append(("필터 효과", f)) }
-            }
-            if item.index == 9, mono, let g = at(19) {
-                out.append(("입자감", g == 8 ? "끄기" : g == 0x0303 ? "켜기" : "코드 \(g)"))
+            if item.index == 16 || (item.index == 24) { continue }
+            if item.index == 21 || item.index == 13 {
+                // 필터 효과 follows 조색 on monochrome controls.
+                if item.index == 13, params.count > 18, let f = filterPresets[[params[17], params[18]]] {
+                    out.append(("필터 효과", f))
+                }
             }
         }
-        let named = Set(toneSettingNames.map(\.index)).union([13, 17, 18, 19, 20])
+        // 입자감 comes last in the menu. Shown for monochrome controls, and for colour ones
+        // only when on (where it is "--" otherwise, or absent).
+        if let g = at(19), mono || g != 8 { out.append(("입자감", g == 8 ? "끄기" : "켜기")) }
+        let named = Set(toneSettingNames.map(\.index)).union([17, 18, 19, 20])
         for i in params.indices where !named.contains(i) {
             if let v = at(i), v != -1 { out.append(("? (\(i)번)", "\(v)")) }
         }
