@@ -8,6 +8,7 @@ struct SettingsTab: View {
     @AppStorage(LibraryModel.AutoSave.jpeg) private var autoJPEG = true
     @AppStorage(LibraryModel.AutoSave.raw) private var autoRAW = true
     @AppStorage(LibraryModel.AutoSave.video) private var autoVideo = false
+    @AppStorage(PhotosLibrary.pairRAWKey) private var pairRAW = false
     @State private var cacheSize: Int64 = 0
 
     var body: some View {
@@ -21,10 +22,11 @@ struct SettingsTab: View {
                         Toggle("동영상", isOn: $autoVideo)
                     }
                     Toggle("이미 저장한 파일은 건너뛰기", isOn: $library.skipExisting)
+                    Toggle("RAW+JPEG를 사진 앱에 한 장으로", isOn: $pairRAW)
                 } header: {
                     Text("사진 저장")
                 } footer: {
-                    Text("저장한 사진은 사진 앱과, 파일 앱의 ‘GR Connect’ 폴더에 들어갑니다. 자동 저장은 연결할 때 아직 저장하지 않은 사진을 받습니다.")
+                    Text("저장한 사진은 사진 앱과, 파일 앱의 ‘GR Connect’ 폴더에 들어갑니다. 자동 저장은 연결할 때 아직 저장하지 않은 사진을 받습니다.\nRAW+JPEG를 켜면 같은 이름의 JPG와 DNG를 함께 저장할 때 사진 앱에 한 항목(JPEG로 표시, RAW 포함)으로 넣습니다. 끄면 지금처럼 각각 따로 보입니다.")
                 }
 
                 Section {

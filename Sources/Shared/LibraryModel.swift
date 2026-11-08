@@ -540,6 +540,9 @@ final class LibraryModel: ObservableObject {
             #endif
         }
         try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        #if os(iOS)
+        var waiting: [String: (file: URL, index: Int, kind: Photo.Kind)] = [:]
+        #endif
         for i in transfers.indices {
             if Task.isCancelled { break }
             let photo = transfers[i].photo
@@ -551,16 +554,24 @@ final class LibraryModel: ObservableObject {
             savedAny = true
             transfers[i].status = .running(0)
             do {
-                try await download(photo) { [weak self] fraction in
+                let file = try await download(photo) { [weak self] fraction in
                     self?.transfers[i].status = .running(fraction)
                 }
                 transfers[i].status = .done
+                #if os(iOS)
+                await addToPhotos(photo, file: file, index: i, later: transfers[(i + 1)...], waiting: &waiting)
+                #else
+                _ = file
+                #endif
                 refreshSaved()
                 selection.remove(photo.id)
             } catch {
                 transfers[i].status = .failed(Task.isCancelled ? "취소됨" : error.localizedDescription)
             }
         }
+        #if os(iOS)
+        await flushPhotos(waiting)
+        #endif
     }
 
     private func folder(for photo: Photo) async -> URL {
@@ -573,7 +584,9 @@ final class LibraryModel: ObservableObject {
         return destination.appendingPathComponent(formatter.string(from: date))
     }
 
-    private func download(_ photo: Photo, progress: @escaping (Double) -> Void) async throws {
+    /// Returns the saved file.
+    @discardableResult
+    private func download(_ photo: Photo, progress: @escaping (Double) -> Void) async throws -> URL {
         let folder = await folder(for: photo)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(photo.name)
@@ -599,9 +612,6 @@ final class LibraryModel: ObservableObject {
             try Self.writeOrientation(Self.orientation(current, turns: adj.quarterTurns, flipped: adj.flipped), of: file)
         }
         try FileManager.default.moveItem(at: file, to: target)
-        #if os(iOS)
-        try await PhotosLibrary.add(target, isVideo: photo.kind == .video)
-        #endif
         if rotate {
             var rest = adjustments(photo)
             rest.quarterTurns = 0
@@ -609,7 +619,50 @@ final class LibraryModel: ObservableObject {
             setAdjustments(rest, for: photo)
         }
         progress(1)
+        return target
     }
+
+    #if os(iOS)
+    /// Adds a downloaded file to the Photos app. With 설정 → RAW+JPEG 한 항목 on, a JPEG or DNG
+    /// waits for its partner (same name, also in this batch) and the two go in as one item;
+    /// a partner that never arrives (skipped, failed, cancelled) is added alone by flushPhotos.
+    private func addToPhotos(_ photo: Photo, file: URL, index: Int, later: ArraySlice<Transfer>,
+                             waiting: inout [String: (file: URL, index: Int, kind: Photo.Kind)]) async {
+        let base = ((photo.name as NSString).deletingPathExtension).uppercased()
+        let pairable = PhotosLibrary.pairRAW && (photo.kind == .jpeg || photo.kind == .raw)
+        do {
+            if pairable, let partner = waiting[base], partner.kind != photo.kind {
+                waiting[base] = nil
+                let (jpeg, raw) = photo.kind == .jpeg ? (file, partner.file) : (partner.file, file)
+                do {
+                    try await PhotosLibrary.addPair(jpeg: jpeg, raw: raw)
+                } catch {
+                    transfers[partner.index].status = .failed(error.localizedDescription)
+                    throw error
+                }
+            } else if pairable, later.contains(where: { other in
+                other.photo.kind != photo.kind && (other.photo.kind == .jpeg || other.photo.kind == .raw)
+                    && ((other.photo.name as NSString).deletingPathExtension).uppercased() == base
+            }) {
+                waiting[base] = (file, index, photo.kind)
+            } else {
+                try await PhotosLibrary.add(file, isVideo: photo.kind == .video)
+            }
+        } catch {
+            transfers[index].status = .failed(error.localizedDescription)
+        }
+    }
+
+    private func flushPhotos(_ waiting: [String: (file: URL, index: Int, kind: Photo.Kind)]) async {
+        for item in waiting.values {
+            do {
+                try await PhotosLibrary.add(item.file, isVideo: false)
+            } catch {
+                transfers[item.index].status = .failed(error.localizedDescription)
+            }
+        }
+    }
+    #endif
 
     /// EXIF orientation after turning an image `turns` quarters clockwise, then mirroring it
     /// left to right, as DevelopEngine.geometry does. Orientations as 2×2 maps from stored to
