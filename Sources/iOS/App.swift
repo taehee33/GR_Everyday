@@ -14,30 +14,34 @@ struct GRConnectApp: App {
     }
 }
 
-/// Tabs on iPhone; on iPad (iOS 18) the same tabs can become a sidebar.
+/// 카메라 · 라이브러리 · Moment · 설정. 카메라 connects and, once the camera is on Wi-Fi,
+/// becomes the shooting screen; 촬영 통계 is a view inside 라이브러리.
 struct RootView: View {
     @EnvironmentObject var connection: ConnectionModel
     @EnvironmentObject var library: LibraryModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var section: Pane = .camera
 
     var body: some View {
         TabView(selection: $section) {
-            CameraTab(section: $section)
+            CameraTab(active: section == .camera) { section = .library }
                 .tabItem { Label(Pane.camera.rawValue, systemImage: Pane.camera.icon) }.tag(Pane.camera)
-            LibraryTab()
+            LibraryTab { section = .camera }
                 .tabItem { Label(Pane.library.rawValue, systemImage: Pane.library.icon) }.tag(Pane.library)
-            RemoteTab(active: section == .remote)
-                .tabItem { Label(Pane.remote.rawValue, systemImage: Pane.remote.icon) }.tag(Pane.remote)
-            Group {
-                if library.photos.isEmpty {
-                    NotConnectedView(section: $section)
-                } else {
-                    StatsView(stats: library.stats, section: $section)
-                }
-            }
-            .tabItem { Label(Pane.stats.rawValue, systemImage: Pane.stats.icon) }.tag(Pane.stats)
+            NavigationStack { MomentView() }
+                .tabItem { Label(Pane.moment.rawValue, systemImage: Pane.moment.icon) }.tag(Pane.moment)
             SettingsTab()
                 .tabItem { Label(Pane.settings.rawValue, systemImage: Pane.settings.icon) }.tag(Pane.settings)
+        }
+        // Already on the camera's Wi-Fi (joined in Settings, or still joined from last time):
+        // connect without asking.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active, connection.state == .disconnected || connection.state == .lost else { return }
+            Task {
+                if let ssid = await WiFi.currentSSID(), ssid.hasPrefix("GR_"), !connection.isConnected, !connection.isBusy {
+                    await connection.connectDirect()
+                }
+            }
         }
         .onChange(of: connection.state) { _, state in
             if state == .connected {
@@ -48,27 +52,29 @@ struct RootView: View {
     }
 }
 
-struct NotConnectedView: View {
-    @Binding var section: Pane
+/// The connection screen, with the shooting screen pushed over it: on its own once the
+/// camera joins Wi-Fi, or from the 원격 촬영 tile even without a camera. Back (or the camera
+/// bar at its top) returns to the connection screen.
+struct CameraTab: View {
+    let active: Bool
+    let openLibrary: () -> Void
+    @EnvironmentObject var connection: ConnectionModel
+    @State private var path: [Route] = []
+
+    enum Route: Hashable { case shoot }
+
+    /// USB can't shoot, so it stays on the connection screen.
+    private var shooting: Bool { !connection.viaUSB && (connection.isConnected || connection.state == .lost) }
 
     var body: some View {
-        ContentUnavailableView {
-            Label("카메라에 연결되지 않음", systemImage: "camera")
-        } description: {
-            Text("카메라 탭에서 연결하세요.")
-        } actions: {
-            Button("카메라 탭으로") { section = .camera }.buttonStyle(.borderedProminent)
+        NavigationStack(path: $path) {
+            CameraScreen(openLibrary: openLibrary, openShoot: { path = [.shoot] })
+                .navigationDestination(for: Route.self) { _ in
+                    ShootView(active: active) { path = [] }
+                }
         }
-    }
-}
-
-extension ConnectionModel.State {
-    /// The message while busy or after a failure; nil when there is nothing to say.
-    var message: String? {
-        switch self {
-        case .pairing(let m), .waking(let m), .joining(let m), .failed(let m): return m
-        case .lost: return "카메라 연결이 끊겼습니다. 다시 연결하는 중…"
-        case .connected, .disconnected: return nil
+        .onChange(of: shooting, initial: true) { _, now in
+            if now, path.isEmpty { path = [.shoot] }
         }
     }
 }

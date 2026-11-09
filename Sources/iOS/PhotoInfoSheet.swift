@@ -45,7 +45,7 @@ struct PhotoInfoSheet: View {
 
     @ViewBuilder private func rows(_ items: [(String, String)]) -> some View {
         if items.isEmpty {
-            Text("정보 없음 · 카메라에 연결하면 읽습니다").foregroundStyle(.secondary)
+            Text("정보 없음 · 카메라에 연결하면 읽어요").foregroundStyle(.secondary)
         }
         ForEach(items, id: \.0) { item in
             LabeledContent(item.0, value: item.1)

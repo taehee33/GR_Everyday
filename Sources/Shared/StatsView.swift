@@ -70,7 +70,7 @@ struct StatsView: View {
                         table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
                     }
                 }
-                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줍니다. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줍니다. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없습니다.")
+                Text("줄을 누르면 사진 탭에서 그 사진만 보여 줘요. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줘요. 흐린 +숫자는 카드에서 지운 사진이라 사진 탭에는 없어요.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(compact ? 16 : 24)
@@ -81,7 +81,7 @@ struct StatsView: View {
         .confirmationDialog("지운 사진 기록을 지울까요?", isPresented: $confirmClear) {
             Button("기록 지우기", role: .destructive) { stats.clearHistory() }
         } message: {
-            Text("카드에서 지운 사진의 통계가 사라집니다. 카드에 남아 있는 사진은 다음에 연결할 때 다시 기록됩니다.")
+            Text("카드에서 지운 사진의 통계가 사라져요. 카드에 남아 있는 사진은 다음에 연결할 때 다시 기록돼요.")
         }
         .onChange(of: all.compactMap(\.date).max()) { _, latest in
             // Open on the latest shooting day until the user picks one.
@@ -102,8 +102,8 @@ struct StatsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("촬영 통계").font(.largeTitle.bold())
                 Text(includeDeleted
-                     ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 셉니다. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있습니다."
-                     : "카드에 남아 있는 사진만 셉니다.")
+                     ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 세어요. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있어요."
+                     : "카드에 남아 있는 사진만 세어요.")
                     .font(.callout).foregroundStyle(.secondary)
                 Picker("", selection: $includeDeleted) {
                     Text("지운 사진 포함").tag(true)
@@ -217,7 +217,7 @@ struct StatsView: View {
                             Text(field.label(k)).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
                         .disabled(allOnCard == 0)
-                        .help("라이브러리에서 \(field.label(k)) 사진 \(allOnCard)장 보기")
+                        .help("사진 탭에서 \(field.label(k)) 사진 \(allOnCard)장 보기")
                         Button { open(ShotFilter(field: field, value: k, day: self.day)) } label: {
                             split(dayOnCard, dayDeleted).underline(dayOnCard > 0)
                         }

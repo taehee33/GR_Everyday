@@ -1,46 +1,67 @@
 import SwiftUI
 
-/// The card's photos by day. Tap to view; 선택 to pick several and save them to the Photos app.
+/// 라이브러리: the camera card, then the card's photos by day, by image control, or 촬영 통계.
+/// Tap to view; 선택 to pick several and save them to the Photos app.
 struct LibraryTab: View {
     @EnvironmentObject var library: LibraryModel
     @EnvironmentObject var connection: ConnectionModel
+    /// Switches to the 카메라 tab.
+    var openCamera: () -> Void = {}
     @State private var selecting = false
     @State private var viewing: Photo?
     @State private var showFilter = false
+    @State private var page: Page = .photos
     @AppStorage("iosThumbSize") private var thumbSize = 100.0
+
+    enum Page: String, CaseIterable { case photos = "사진", tones = "이미지 컨트롤", stats = "촬영 통계" }
 
     private var online: Bool { connection.isConnected }
 
     var body: some View {
         NavigationStack {
             Group {
-                if library.photos.isEmpty {
-                    if online && library.isLoading {
-                        ProgressView("사진 목록 읽는 중…")
-                    } else {
-                        ContentUnavailableView("사진 없음", systemImage: "photo.on.rectangle",
-                                               description: Text(online ? "카메라에 사진이 없습니다." : "카메라에 한 번 연결하면 카메라 없이도 목록을 볼 수 있습니다."))
+                switch page {
+                case .photos: photosPage
+                case .tones:
+                    ImageControlList(stats: library.stats) { code in
+                        library.refine.tone = code
+                        page = .photos
                     }
-                } else {
-                    grid
+                case .stats:
+                    if library.photos.isEmpty {
+                        emptyState
+                    } else {
+                        StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
+                    }
                 }
             }
+            // Short pages (empty states) sit under the picker instead of floating mid-screen.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle("라이브러리")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbar }
+            .toolbar { if page == .photos { toolbar } }
             .safeAreaInset(edge: .top) {
                 VStack(spacing: 0) {
-                    if !online && !library.photos.isEmpty { offlineBanner }
-                    if library.refine.isActive { filterBanner }
+                    Picker("보기", selection: $page) {
+                        ForEach(Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal).padding(.bottom, 8)
+                    if page == .photos {
+                        if !online && !library.photos.isEmpty { offlineBanner }
+                        if library.refine.isActive { filterBanner }
+                        if let filter = library.shotFilter { shotFilterBanner(filter) }
+                    }
                 }
+                .background(.bar)
             }
-            .safeAreaInset(edge: .bottom) { bottomBar }
+            .safeAreaInset(edge: .bottom) { if page == .photos { bottomBar } }
             .refreshable { if online { await library.reload() } }
             .sheet(isPresented: $showFilter) { FilterSheet() }
             .fullScreenCover(item: $viewing) { photo in
                 PhotoPager(start: photo, photos: library.visible)
             }
-            .alert("저장 실패", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
+            .alert("저장하지 못했어요", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 Button("확인", role: .cancel) {}
             } message: {
                 Text(library.error ?? "")
@@ -48,8 +69,42 @@ struct LibraryTab: View {
         }
     }
 
+    @ViewBuilder private var photosPage: some View {
+        if library.photos.isEmpty {
+            ScrollView {
+                CameraStatusCard(ble: connection.ble, openCamera: openCamera)
+                if online && library.isLoading {
+                    ProgressView("사진 목록을 읽고 있어요…").padding(.top, 80)
+                } else {
+                    emptyState
+                }
+            }
+        } else if library.visible.isEmpty {
+            ScrollView {
+                CameraStatusCard(ble: connection.ble, openCamera: openCamera)
+                ContentUnavailableView("조건에 맞는 사진이 없어요", systemImage: "line.3.horizontal.decrease.circle",
+                                       description: Text("필터를 바꾸거나 해제해 보세요."))
+                    .padding(.top, 40)
+            }
+        } else {
+            grid
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 28) {
+            ConnectIllustration()
+            Text(online ? "카메라에 사진이 없어요." : "카메라를 연결하면 사진이 여기에 보여요.\n한 번 연결하면 카메라 없이도 목록을 볼 수 있어요.")
+                .font(.callout).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 32).padding(.top, 60)
+        .frame(maxWidth: .infinity)
+    }
+
     private var grid: some View {
         ScrollView {
+            CameraStatusCard(ble: connection.ble, openCamera: openCamera)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: thumbSize), spacing: 2)], spacing: 2,
                       pinnedViews: [.sectionHeaders]) {
                 ForEach(library.sections) { section in
@@ -123,6 +178,17 @@ struct LibraryTab: View {
         }
     }
 
+    /// A 촬영 통계 row or day narrowed the photos; say which and offer a way out.
+    private func shotFilterBanner(_ filter: ShotFilter) -> some View {
+        HStack {
+            Label("\(filter.label) · \(library.visible.count)장", systemImage: "chart.bar.xaxis").lineLimit(1)
+            Spacer()
+            Button("해제") { library.shotFilter = nil }
+        }
+        .font(.footnote)
+        .padding(.horizontal).padding(.vertical, 6)
+    }
+
     @ViewBuilder private var bottomBar: some View {
         if !library.transfers.isEmpty {
             TransferBar()
@@ -177,6 +243,7 @@ struct LibraryTab: View {
         if r.saved != .all { parts.append(r.saved.rawValue) }
         let day = { (d: Date) in d.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits)) }
         if r.from != nil || r.to != nil { parts.append("\(r.from.map(day) ?? "")~\(r.to.map(day) ?? "")") }
+        if let tone = r.tone { parts.append(MakerNote.imageToneNames[tone] ?? "이미지 컨트롤 \(tone)") }
         return HStack {
             Button { showFilter = true } label: {
                 Label(parts.joined(separator: " · ") + " · \(library.visible.count)장", systemImage: "line.3.horizontal.decrease.circle.fill")
@@ -187,16 +254,14 @@ struct LibraryTab: View {
         }
         .font(.footnote)
         .padding(.horizontal).padding(.vertical, 6)
-        .background(.bar)
     }
 
     private var offlineBanner: some View {
         let when = library.listSavedAt.map { $0.formatted(date: .abbreviated, time: .shortened) }
-        return Label("카메라 연결 안 됨" + (when.map { " · \($0)에 본 목록" } ?? ""), systemImage: "camera.badge.ellipsis")
+        return Label("카메라 연결 안 됨" + (when.map { " · \($0)에 본 목록이에요" } ?? ""), systemImage: "camera.badge.ellipsis")
             .font(.footnote).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(.bar)
     }
 }
 
@@ -385,7 +450,7 @@ struct PhotoPage: View {
                 ProgressView().tint(.white)
             }
             if photo.kind == .video {
-                Label("동영상은 저장한 뒤 사진 앱에서 재생하세요", systemImage: "video")
+                Label("동영상은 저장한 뒤 사진 앱에서 재생해 주세요", systemImage: "video")
                     .font(.footnote).padding(8)
                     .background(.ultraThinMaterial, in: Capsule())
                     .frame(maxHeight: .infinity, alignment: .bottom).padding()
@@ -417,7 +482,7 @@ struct TransferBar: View {
                 Text("\(done)/\(library.transfers.count)").font(.caption.monospacedDigit())
                 Button("취소") { library.cancelTransfers() }
             } else {
-                Label(failed == 0 ? "\(done)장을 사진 앱에 저장했습니다" : "\(done)장 저장, \(failed)장 실패",
+                Label(failed == 0 ? "\(done)장을 사진 앱에 저장했어요" : "\(done)장 저장, \(failed)장 실패",
                       systemImage: failed == 0 ? "checkmark.circle" : "exclamationmark.triangle")
                     .font(.callout)
                 Spacer()

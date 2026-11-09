@@ -129,7 +129,7 @@ final class ConnectionModel: ObservableObject {
             guard let self, self.viaUSB else { return }
             Task {
                 await self.disconnect()
-                self.state = .failed("USB 연결이 끊겼습니다. 케이블과 카메라 전원을 확인하세요.")
+                self.state = .failed("USB 연결이 끊겼어요. 케이블과 카메라 전원을 확인해 주세요.")
             }
         }
     }
@@ -142,6 +142,8 @@ final class ConnectionModel: ObservableObject {
 
     func remove(_ id: UUID) {
         cameras.removeAll { $0.id == id }
+        // "…을(를) 등록했어요" would outlive the camera it is about.
+        notice = nil
         #if os(macOS)
         CameraPictures.shared.remove(id)
         #endif
@@ -164,7 +166,7 @@ final class ConnectionModel: ObservableObject {
     func pair(_ found: FoundCamera) async {
         notice = nil
         needsBondRemoval = false
-        state = .pairing("\(found.name)에 연결 중… \(Device.name)에 뜨는 창에 카메라 화면의 페어링 코드를 입력하세요.")
+        state = .pairing("\(found.name)에 연결 중… \(Device.name)에 뜨는 창에 카메라 화면의 페어링 코드를 입력해 주세요.")
         do {
             let (model, credentials) = try await ble.pair(cameraID: found.id, name: found.name)
             self.model = model
@@ -175,7 +177,7 @@ final class ConnectionModel: ObservableObject {
                                            credentials: credentials, pairedAt: .now))
             }
             selectedCameraID = found.id
-            notice = "\(found.name)을(를) 등록했습니다."
+            notice = "\(found.name)을(를) 등록했어요."
             try await joinCamera(credentials, camera: found.id)
         } catch {
             needsBondRemoval = (error as? BLEWaker.BLEError) == .staleBond
@@ -192,7 +194,7 @@ final class ConnectionModel: ObservableObject {
             try await ble.link(cameraID: camera.id)
             if case .failed = state { state = .disconnected }
         } catch {
-            state = .failed("Bluetooth 연결 실패: \(error.localizedDescription) 카메라가 켜져 있고 Bluetooth가 켜져 있는지 확인하세요.")
+            state = .failed("Bluetooth 연결 실패: \(error.localizedDescription) 카메라가 켜져 있고 Bluetooth가 켜져 있는지 확인해 주세요.")
         }
     }
 
@@ -214,7 +216,7 @@ final class ConnectionModel: ObservableObject {
     /// its public address after handing the camera an IRK), but the iPhone reconnects fine.
     func connectViaPhone(_ camera: SavedCamera) async {
         guard let credentials = camera.credentials else {
-            state = .failed("이 카메라의 Wi-Fi 정보가 없습니다. 다시 등록하세요.")
+            state = .failed("이 카메라의 Wi-Fi 정보가 없어요. 다시 등록해 주세요.")
             return
         }
         notice = nil
@@ -223,7 +225,7 @@ final class ConnectionModel: ObservableObject {
         let task = Task {
             do {
                 try await joinCamera(credentials, camera: camera.id, waitFor: 180,
-                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속합니다. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지됩니다(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 끕니다).")
+                                     waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속해요. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지돼요(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 꺼요).")
             } catch is CancellationError {
             } catch {
                 state = .failed(error.localizedDescription)
@@ -239,7 +241,7 @@ final class ConnectionModel: ObservableObject {
     /// cannot switch the camera's Wi-Fi on over Bluetooth: the user turns it on (메뉴 → 무선 LAN).
     func connect(_ camera: SavedCamera) async {
         guard let credentials = camera.credentials else {
-            state = .failed("이 카메라의 Wi-Fi 정보가 없습니다. 다시 등록하세요.")
+            state = .failed("이 카메라의 Wi-Fi 정보가 없어요. 다시 등록해 주세요.")
             return
         }
         notice = nil
@@ -269,7 +271,7 @@ final class ConnectionModel: ObservableObject {
         } catch let error as WiFi.WiFiError where error.notFound {
             if ble.linkedCameraID != camera.id {
                 needsRepair = true
-                state = .failed("카메라 Wi-Fi가 꺼져 있고, 켜 줄 Bluetooth 연결도 끊겨 있습니다(카메라를 끄거나 앱을 다시 실행하면 끊깁니다). ‘다시 페어링’을 누르면 Bluetooth를 다시 잇고 Wi-Fi까지 켭니다.")
+                state = .failed("카메라 Wi-Fi가 꺼져 있고, 켜 줄 Bluetooth 연결도 끊겨 있어요(카메라를 끄거나 앱을 다시 실행하면 끊겨요). ‘다시 페어링’을 누르면 Bluetooth를 다시 잇고 Wi-Fi까지 켜요.")
             } else {
                 state = .joining("주변 Wi-Fi 확인 중…")
                 state = .failed(await notFoundMessage(for: camera, credentials: credentials))
@@ -286,7 +288,7 @@ final class ConnectionModel: ObservableObject {
         needsRepair = false
         if await hasMacBond(camera) {
             needsBondRemoval = true
-            state = .failed("먼저 Mac Bluetooth에 남은 \(camera.bleName)을(를) 지워야 합니다. 열린 Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤, 카메라를 페어링 화면(메뉴 → 무선 통신 → Bluetooth → 페어링)에 두고 ‘다시 페어링’을 다시 누르세요.")
+            state = .failed("먼저 Mac Bluetooth에 남은 \(camera.bleName)을(를) 지워야 해요. 열린 Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤, 카메라를 페어링 화면(메뉴 → 무선 통신 → Bluetooth → 페어링)에 두고 ‘다시 페어링’을 다시 눌러 주세요.")
             needsRepair = true
             SystemSettings.openBluetooth()
             return
@@ -302,7 +304,7 @@ final class ConnectionModel: ObservableObject {
             ble.stopScan()
             guard let found = ble.found.first(where: { $0.id == camera.id }) else {
                 needsRepair = true
-                state = .failed("카메라를 찾지 못했습니다. 카메라가 페어링 화면인지 확인하고 다시 누르세요.")
+                state = .failed("카메라를 찾지 못했어요. 카메라가 페어링 화면인지 확인하고 다시 눌러 주세요.")
                 return
             }
             await pair(found)
@@ -316,15 +318,15 @@ final class ConnectionModel: ObservableObject {
     /// Say what the Mac actually sees, so "camera Wi-Fi is off" is not a guess.
     private func notFoundMessage(for camera: SavedCamera, credentials: WLANCredentials) async -> String {
         guard let networks = await WiFi.nearby() else {
-            return "\(Device.subject) 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했습니다. 카메라 Wi-Fi가 켜져 있는지 확인하세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Everyday를 허용하세요.)"
+            return "\(Device.subject) 카메라 Wi-Fi(\(credentials.ssid))를 찾지 못했어요. 카메라 Wi-Fi가 켜져 있는지 확인해 주세요.\n(주변 Wi-Fi 이름을 확인하려면 시스템 설정 → 개인정보 보호 → 위치 서비스에서 GR Everyday를 허용해 주세요.)"
         }
         DebugLog.write("nearby: " + networks.map { "\($0.ssid)(\($0.rssi) ch\($0.channel))" }.joined(separator: ", "))
         let cameraNetworks = networks.filter { $0.ssid.hasPrefix("GR") || $0.ssid.localizedCaseInsensitiveContains("RICOH") }
         if cameraNetworks.isEmpty {
-            return "\(Device.name) 주변에 카메라 Wi-Fi가 하나도 보이지 않습니다(주변 Wi-Fi \(networks.count)개 확인). 카메라 Wi-Fi가 실제로 켜지지 않았거나, 다른 기기(휴대폰 등)가 이미 카메라 Wi-Fi에 연결돼 있을 수 있습니다."
+            return "\(Device.name) 주변에 카메라 Wi-Fi가 하나도 보이지 않아요(주변 Wi-Fi \(networks.count)개 확인). 카메라 Wi-Fi가 실제로 켜지지 않았거나, 다른 기기(휴대폰 등)가 이미 카메라 Wi-Fi에 연결돼 있을 수 있어요."
         }
         let names = cameraNetworks.map { "\($0.ssid) (\($0.rssi) dBm)" }.joined(separator: ", ")
-        return "저장된 카메라 Wi-Fi(\(credentials.ssid))는 안 보이고, \(Device.name)에는 \(names)이(가) 보입니다. 카메라 Wi-Fi 이름이 바뀌었다면 카메라를 다시 등록하세요."
+        return "저장된 카메라 Wi-Fi(\(credentials.ssid))는 안 보이고, \(Device.name)에는 \(names)이(가) 보여요. 카메라 Wi-Fi 이름이 바뀌었다면 카메라를 다시 등록해 주세요."
     }
 
     /// `waiting` replaces the retry message while the camera's Wi-Fi is not up yet.
@@ -385,7 +387,7 @@ final class ConnectionModel: ObservableObject {
             connectedCameraID = nil
             await didConnect()
         } catch {
-            state = .failed("카메라에 접속할 수 없습니다. \(Device.subject) 카메라 Wi-Fi(GR_…)에 연결돼 있는지 확인하세요.")
+            state = .failed("카메라에 접속할 수 없어요. \(Device.subject) 카메라 Wi-Fi(GR_…)에 연결돼 있는지 확인해 주세요.")
         }
     }
 
@@ -416,7 +418,7 @@ final class ConnectionModel: ObservableObject {
             if await CameraAPI.ping() { return }
             try await Task.sleep(for: .seconds(1))
         }
-        throw CameraAPI.APIError(message: "카메라 Wi-Fi에 접속했지만 응답이 없습니다.")
+        throw CameraAPI.APIError(message: "카메라 Wi-Fi에 접속했지만 응답이 없어요.")
     }
 
     private func didConnect() async {
@@ -499,5 +501,16 @@ struct ChargeGuess {
         if level >= 100, let last, last < 95 { charging = true }
         if level < 100 { charging = false }
         last = level
+    }
+}
+
+extension ConnectionModel.State {
+    /// The message while busy or after a failure; nil when there is nothing to say.
+    var message: String? {
+        switch self {
+        case .pairing(let m), .waking(let m), .joining(let m), .failed(let m): return m
+        case .lost: return "카메라 연결이 끊겼어요. 다시 연결하는 중…"
+        case .connected, .disconnected: return nil
+        }
     }
 }

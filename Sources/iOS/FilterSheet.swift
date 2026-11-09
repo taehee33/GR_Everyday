@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Library filter: file type, saved or not, and shooting days. Changes are a draft until
+/// Library filter: file type, saved or not, image control and shooting days. Changes are a draft until
 /// 적용; the count at the bottom follows the draft, so it shows what applying would leave.
 struct FilterSheet: View {
     @EnvironmentObject var library: LibraryModel
@@ -18,12 +18,20 @@ struct FilterSheet: View {
                     chips(LibraryModel.Refine.Saved.allCases.map { ($0.rawValue, $0) }, selected: draft.saved) { draft.saved = $0 }
                 }
                 Section {
+                    Picker("이미지 컨트롤", selection: $draft.tone) {
+                        Text("모두").tag(Int?.none)
+                        ForEach(library.toneGroups) { Text("\($0.name) · \($0.count)장").tag(Optional($0.code)) }
+                    }
+                } footer: {
+                    if library.toneGroups.isEmpty { Text("카메라에 연결해 촬영 정보를 읽으면 고를 수 있어요.") }
+                }
+                Section {
                     dateRow("시작", date: $draft.from, other: draft.to, isStart: true)
                     dateRow("끝", date: $draft.to, other: draft.from, isStart: false)
                 } header: {
                     Text("촬영 날짜")
                 } footer: {
-                    if library.dateRange == nil { Text("카메라에 연결해 촬영 날짜를 읽으면 고를 수 있습니다.") }
+                    if library.dateRange == nil { Text("카메라에 연결해 촬영 날짜를 읽으면 고를 수 있어요.") }
                 }
                 Section {
                     Button("필터 해제") { draft = LibraryModel.Refine() }

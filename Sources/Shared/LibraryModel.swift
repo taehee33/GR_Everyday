@@ -21,6 +21,8 @@ final class LibraryModel: ObservableObject {
         /// Whole days, inclusive.
         var from: Date?
         var to: Date?
+        /// Image control by maker-note code (MakerNote.imageToneNames).
+        var tone: Int?
         var isActive: Bool { self != Refine() }
     }
 
@@ -210,7 +212,7 @@ final class LibraryModel: ObservableObject {
         filmstrip = UserDefaults.standard.object(forKey: "filmstrip") as? Bool ?? true
         // The grid redraws as photos are read while a 촬영 통계 filter is on.
         statsChanges = stats.objectWillChange.sink { [weak self] _ in
-            if self?.shotFilter != nil { self?.objectWillChange.send() }
+            if self?.shotFilter != nil || self?.refine.tone != nil { self?.objectWillChange.send() }
         }
         CardCache.migrate()
         infos = Self.readInfoCache()
@@ -362,7 +364,30 @@ final class LibraryModel: ObservableObject {
             if let to = r.to, let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to)),
                date >= end { return false }
         }
+        if let tone = r.tone, shotRecord(photo)?.imageTone != tone { return false }
         return true
+    }
+
+    /// Image controls on the card, by code: how many shots and the newest one, for the
+    /// 이미지 컨트롤 view and the filter sheet. A RAW+JPEG pair counts once.
+    struct ToneGroup: Identifiable {
+        let code: Int
+        let count: Int
+        let latest: Photo
+        var id: Int { code }
+        var name: String { MakerNote.imageToneNames[code] ?? "알 수 없음 (\(code))" }
+    }
+
+    var toneGroups: [ToneGroup] {
+        var counts: [Int: Int] = [:], latest: [Int: Photo] = [:]
+        // The camera lists files in shooting order, so the last one seen is the newest.
+        for photo in ShotStats.shots(photos) {
+            guard let code = shotRecord(photo)?.imageTone else { continue }
+            counts[code, default: 0] += 1
+            latest[code] = photo
+        }
+        return counts.keys.sorted { counts[$0]! > counts[$1]! }
+            .map { ToneGroup(code: $0, count: counts[$0]!, latest: latest[$0]!) }
     }
 
     /// What the filter sheet would show, before it is applied.
@@ -460,7 +485,7 @@ final class LibraryModel: ObservableObject {
             refreshSaved()
             loadInfos()
         } catch {
-            self.error = "사진 목록을 불러오지 못했습니다: \(error.localizedDescription)"
+            self.error = "사진 목록을 불러오지 못했어요: \(error.localizedDescription)"
         }
     }
 
@@ -603,7 +628,7 @@ final class LibraryModel: ObservableObject {
     func save(_ queue: [Photo]) {
         guard !queue.isEmpty, !isTransferring else { return }
         guard CameraAPI.online else {
-            error = "카메라에 연결하면 저장할 수 있습니다."
+            error = "카메라에 연결하면 저장할 수 있어요."
             return
         }
         transfers = queue.map { Transfer(photo: $0) }
@@ -776,7 +801,7 @@ final class LibraryModel: ObservableObject {
     /// camera wrote them. (ImageIO's lossless copy drops APP7.) Falls back to that copy only
     /// when the file has no orientation tag.
     nonisolated static func writeOrientation(_ value: Int, of url: URL) throws {
-        let failed = CameraAPI.APIError(message: "사진 방향을 저장하지 못했습니다")
+        let failed = CameraAPI.APIError(message: "사진 방향을 저장하지 못했어요")
         let handle = try FileHandle(forUpdating: url)
         defer { try? handle.close() }
         let head = [UInt8](try handle.read(upToCount: 128 * 1024) ?? Data())

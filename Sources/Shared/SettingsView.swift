@@ -35,7 +35,7 @@ struct SettingsView: View {
         "efc_retro": "복고풍", "efc_HDRTone": "HDR 톤", "efc_negaFilm": "네거티브 필름", "efc_cinemaYellow": "시네마톤 (옐로)",
         "efc_cinemaGreen": "시네마톤 (그린)", "efc_cineYellow": "시네마톤 (옐로)", "efc_cineGreen": "시네마톤 (그린)",
         "efc_crossProcess": "크로스 프로세스", "col_custom3": "사용자 3",
-        "jpeg": "JPEG", "dng": "DNG", "rawdng": "DNG + JPEG",
+        "jpeg": "JPEG", "dng": "RAW", "rawdng": "RAW + JPEG",
         "auto": "자동", "multiwb": "멀티 패턴 AWB", "daylight": "일광", "shade": "그늘", "cloud": "흐림",
         "fluorescent": "형광등", "tungsten": "백열등", "manual": "수동",
         "autoWarm": "자동(따뜻한 색)", "autoWhite": "자동(화이트 우선)", "daylightFluorescent": "주광색 형광등",
@@ -70,6 +70,7 @@ struct SettingsView: View {
             let known = Set(Self.colorKeys + Self.exposureKeys + Self.fileKeys)
             let others = settable.filter { !known.contains($0) && !Self.hidden.contains($0) }
             if !others.isEmpty { section("기타", keys: others) }
+            lockedSection(Self.colorKeys + Self.exposureKeys + Self.fileKeys + others)
 
             Section {
                 DisclosureGroup("카메라가 보고한 원본 값 (props)", isExpanded: $showRaw) {
@@ -80,32 +81,27 @@ struct SettingsView: View {
                     .frame(height: 240)
                 }
             } footer: {
-                Text("GR IV의 이미지 컨트롤 세부 조정(채도·색조 등)은 카메라가 이 API로 노출하는 항목만 바꿀 수 있습니다. 위 목록에 없는 값은 카메라에서 설정하세요.")
+                Text("GR IV의 이미지 컨트롤 세부 조정(채도·색조 등)은 카메라가 이 API로 노출하는 항목만 바꿀 수 있어요. 위 목록에 없는 값은 카메라에서 설정해 주세요.")
             }
         }
         .formStyle(.grouped)
         .task { await load() }
     }
 
+    /// The camera offers a choice for `key` right now (mode dial, current mode).
+    static func isChangeable(_ key: String, props: [String: Any]) -> Bool {
+        let options = props[key + "List"] as? [Any] ?? []
+        return options.count > 1 && !readOnly.contains(key)
+    }
+
+    /// Only what can be changed from here; the rest is listed at the bottom.
     @ViewBuilder
     private func section(_ title: String, keys: [String]) -> some View {
-        let present = keys.filter { settable.contains($0) }
+        let present = keys.filter { settable.contains($0) && Self.isChangeable($0, props: props) }
         if !present.isEmpty {
             Section(title) {
                 ForEach(present, id: \.self) { key in
                     let options = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
-                    if options.count <= 1 || Self.readOnly.contains(key) {
-                        // Fixed by the camera (mode dial, or automatic in this mode).
-                        LabeledContent {
-                            HStack(spacing: 6) {
-                                Text(props[key].map { Self.display(key, "\($0)") } ?? "-")
-                                Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
-                            }
-                        } label: {
-                            Text(Self.labels[key] ?? key)
-                            Text(Self.lockedReason(key, props: props))
-                        }
-                    } else {
                     Picker(selection: binding(key)) {
                         ForEach(options, id: \.self) { Text(Self.display(key, $0)).tag($0) }
                     } label: {
@@ -114,8 +110,35 @@ struct SettingsView: View {
                             if busyKey == key { ProgressView().controlSize(.small) }
                         }
                     }
-                    }
+                    .tint(.accentColor)
                 }
+            }
+        }
+    }
+
+    /// Settings fixed by the camera (mode dial, or automatic in this mode), greyed out with
+    /// the reason, so they never look like something to tap.
+    @ViewBuilder
+    private func lockedSection(_ keys: [String]) -> some View {
+        let locked = keys.filter { settable.contains($0) && !Self.isChangeable($0, props: props) }
+        if !locked.isEmpty {
+            Section {
+                ForEach(locked, id: \.self) { key in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).padding(.top, 3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(Self.labels[key] ?? key)
+                                Spacer()
+                                Text(props[key].map { Self.display(key, "\($0)") } ?? "-")
+                            }
+                            Text(Self.lockedReason(key, props: props)).font(.caption)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("지금은 카메라에서만 바꿀 수 있어요")
             }
         }
     }
@@ -131,15 +154,15 @@ struct SettingsView: View {
         let mode = (props["exposureMode"] as? String)?.uppercased() ?? ""
         switch key {
         case "exposureMode":
-            return "노출 모드는 카메라 상단의 모드 다이얼로만 바꿀 수 있습니다."
+            return "노출 모드는 카메라 상단의 모드 다이얼로만 바꿀 수 있어요."
         case "captureMode":
-            return "카메라에서 바꾸세요. 동영상으로 바꾸면 카메라 Wi-Fi가 꺼져 연결이 끊깁니다."
+            return "카메라에서 바꿔 주세요. 동영상으로 바꾸면 카메라 Wi-Fi가 꺼져 연결이 끊겨요."
         case "av" where ["P", "TV"].contains(mode):
-            return "\(mode) 모드에서는 조리개가 자동입니다. 조리개를 바꾸려면 카메라 모드 다이얼을 Av 또는 M으로 돌리세요."
+            return "\(mode) 모드에서는 조리개가 자동이에요. 바꾸려면 모드 다이얼을 Av 또는 M으로 돌려 주세요."
         case "tv" where ["P", "AV"].contains(mode):
-            return "\(mode) 모드에서는 셔터 속도가 자동입니다. 바꾸려면 카메라 모드 다이얼을 Tv 또는 M으로 돌리세요."
+            return "\(mode) 모드에서는 셔터 속도가 자동이에요. 바꾸려면 모드 다이얼을 Tv 또는 M으로 돌려 주세요."
         default:
-            return "\(labels[key] ?? key): 지금 카메라 상태에서는 바꿀 수 없습니다."
+            return "지금 카메라 상태에서는 바꿀 수 없어요."
         }
     }
 
@@ -177,7 +200,7 @@ struct SettingsView: View {
             props = try await CameraAPI.props()
             error = nil
         } catch {
-            self.error = "설정을 불러오지 못했습니다: \(error.localizedDescription)"
+            self.error = "설정을 불러오지 못했어요: \(error.localizedDescription)"
         }
     }
 

@@ -28,12 +28,12 @@ enum WiFi {
             case .alreadyAssociated:
                 return
             case .userDenied:
-                throw WiFiError(message: "카메라 Wi-Fi 연결을 허용하지 않았습니다.")
+                throw WiFiError(message: "카메라 Wi-Fi 연결을 허용하지 않았어요.")
             case .internal, .pending, .systemConfiguration:
                 throw WiFiError(message: "\(credentials.ssid) 접속 실패: \(error.localizedDescription)")
             default:
                 // iOS reports a network out of range as "unable to join".
-                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않아요. 카메라 Wi-Fi가 꺼져 있어요.", notFound: true)
             }
         }
         // apply() returns before iOS has switched networks; the caller waits for the camera.
@@ -45,6 +45,12 @@ enum WiFi {
         for ssid in ssids where ssid.hasPrefix("GR") {
             NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
         }
+    }
+
+    /// The network the phone is on. iOS answers for networks this app joined, and for others
+    /// once Location is allowed; otherwise nil.
+    static func currentSSID() async -> String? {
+        await NEHotspotNetwork.fetchCurrent()?.ssid
     }
 
     /// iOS doesn't let apps list nearby networks.

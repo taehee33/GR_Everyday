@@ -9,7 +9,7 @@ enum PhotosLibrary {
     static var pairRAW: Bool { UserDefaults.standard.bool(forKey: pairRAWKey) }
 
     struct Denied: LocalizedError {
-        var errorDescription: String? { "사진 앱에 저장할 권한이 없습니다. 설정 → GR Everyday → 사진에서 허용하세요." }
+        var errorDescription: String? { "사진 앱에 저장할 권한이 없어요. 설정 → GR Everyday → 사진에서 허용해 주세요." }
     }
 
     static func add(_ file: URL, isVideo: Bool) async throws {

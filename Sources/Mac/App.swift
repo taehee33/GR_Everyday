@@ -41,6 +41,7 @@ struct AppSettingsView: View {
     @AppStorage(LibraryModel.AutoSave.video) private var autoSaveVideo = false
     @AppStorage(LibraryModel.AutoSave.usb) private var autoSaveUSB = true
     @AppStorage(LibraryModel.AutoSave.wifi) private var autoSaveWiFi = true
+    @State private var showAbout = false
 
     private var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "개발 빌드"
@@ -178,9 +179,17 @@ struct AppSettingsView: View {
                 LabeledContent("진단 로그") {
                     Button("Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([DebugLog.url]) }
                 }
+                Button("앱 정보 및 지원…") { showAbout = true }
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showAbout) {
+            NavigationStack {
+                AboutView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { showAbout = false } } }
+            }
+            .frame(minWidth: 520, minHeight: 560)
+        }
     }
 }
 
@@ -188,6 +197,7 @@ struct AppSettingsView: View {
 struct ContentView: View {
     @EnvironmentObject var connection: ConnectionModel
     @EnvironmentObject var library: LibraryModel
+    /// Opens on the camera screen until a library has been seen once.
     @State private var section: Pane = .camera
     @State private var columns = NavigationSplitViewVisibility.all
 
@@ -203,6 +213,7 @@ struct ContentView: View {
             switch section {
             case .camera: CameraView(ble: connection.ble, section: $section)
             case .settings: AppSettingsView()
+            case .moment: MomentView()
             case .library, .remote, .stats:
                 // Without a camera, the library and 촬영 통계 show the list saved from the last
                 // connection; remote shooting needs the camera.

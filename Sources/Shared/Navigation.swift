@@ -2,7 +2,9 @@ import SwiftUI
 
 /// The app's sections: the Mac sidebar and the iPhone/iPad tabs.
 enum Pane: String, CaseIterable, Identifiable {
-    case camera = "카메라", library = "라이브러리", remote = "원격 촬영", stats = "촬영 통계", settings = "설정"
+    // Order is the Mac sidebar's and the iPhone/iPad tab bar's; on iPhone/iPad 촬영 통계 is a
+    // view inside 라이브러리 rather than a tab.
+    case camera = "카메라", remote = "촬영", library = "라이브러리", stats = "촬영 통계", moment = "Moment", settings = "설정"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -10,6 +12,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .library: return "photo.on.rectangle"
         case .remote: return "camera.aperture"
         case .stats: return "chart.bar.xaxis"
+        case .moment: return "sparkles.rectangle.stack"
         case .settings: return "gearshape"
         }
     }
