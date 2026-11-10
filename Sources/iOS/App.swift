@@ -1,7 +1,9 @@
 import SwiftUI
+import UIKit
 
 @main
 struct GRConnectApp: App {
+    @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
     @StateObject private var connection = ConnectionModel()
     @StateObject private var library = LibraryModel()
 
@@ -52,9 +54,8 @@ struct RootView: View {
     }
 }
 
-/// The connection screen, with the shooting screen pushed over it: on its own once the
-/// camera joins Wi-Fi, or from the 원격 촬영 tile even without a camera. Back (or the camera
-/// bar at its top) returns to the connection screen.
+/// The connection screen, with the shooting screen pushed over it from the 원격 촬영 tile
+/// (with or without a camera). Back, or the camera bar at its top, returns.
 struct CameraTab: View {
     let active: Bool
     let openLibrary: () -> Void
@@ -63,9 +64,6 @@ struct CameraTab: View {
 
     enum Route: Hashable { case shoot }
 
-    /// USB can't shoot, so it stays on the connection screen.
-    private var shooting: Bool { !connection.viaUSB && (connection.isConnected || connection.state == .lost) }
-
     var body: some View {
         NavigationStack(path: $path) {
             CameraScreen(openLibrary: openLibrary, openShoot: { path = [.shoot] })
@@ -73,8 +71,29 @@ struct CameraTab: View {
                     ShootView(active: active) { path = [] }
                 }
         }
-        .onChange(of: shooting, initial: true) { _, now in
-            if now, path.isEmpty { path = [.shoot] }
-        }
+    }
+}
+
+/// iPhone stays in portrait; the shooting screen's 가로 모드 button turns it to landscape
+/// (and back). iPad keeps every orientation.
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        Orientation.allowed
+    }
+}
+
+@MainActor
+enum Orientation {
+    static var allowed: UIInterfaceOrientationMask {
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : (landscape ? .landscape : .portrait)
+    }
+    private(set) static var landscape = false
+
+    static func set(landscape: Bool) {
+        self.landscape = landscape
+        guard UIDevice.current.userInterfaceIdiom != .pad,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
     }
 }

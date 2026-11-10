@@ -69,6 +69,7 @@ struct SettingsTab: View {
                 }
             }
             .navigationTitle("설정")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .task { cacheSize = library.cacheSize }
             .sheet(isPresented: $showSharpInfo) { sharpInfo }
         }

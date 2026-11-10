@@ -16,6 +16,9 @@ enum GRUUID {
     static let cameraPower = CBUUID(string: "B58CE84C-0666-4DE9-BEC8-2D27B27B3211")
     /// First byte: battery percent (100 while on outside power).
     static let batteryLevel = CBUUID(string: "875FC41D-4980-434C-A653-FD4A4D4410C4")
+    /// The camera's own name, as set in GR WORLD ("THB GR IV HDF"; 32 bytes, zero-padded).
+    /// Read on the GR IV HDF fw 1.20, 2026-11-09.
+    static let cameraName = CBUUID(string: "EF437870-180A-44AE-AFFD-99DBD85ADE43")
     static let wlanService = CBUUID(string: "F37F568F-9071-445D-A938-5441F2E82399")
     static let networkType = CBUUID(string: "9111CDD0-9F01-45C4-A2D4-E09E8FB0424D")
     static let ssid = CBUUID(string: "90638E5A-E77D-409D-B550-78F7E1CA5AB4")
@@ -53,6 +56,8 @@ final class BLEWaker: NSObject, ObservableObject {
     /// Battery percent read over the kept link; nil without one.
     @Published private(set) var batteryLevel: Int?
     private var charge = ChargeGuess()
+    /// Called with the linked camera's own name whenever it is read.
+    var onCameraName: ((UUID, String) -> Void)?
     var batteryText: String? {
         batteryLevel.map { charge.charging ? "충전 중" : "\($0)%" }
     }
@@ -158,6 +163,10 @@ final class BLEWaker: NSObject, ObservableObject {
             if c.uuid == GRUUID.batteryLevel, let level = data.first {
                 charge.update(Int(level))
                 batteryLevel = Int(level)
+            }
+            if c.uuid == GRUUID.cameraName, let id = linkedCameraID {
+                let name = Self.text(data).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { onCameraName?(id, name) }
             }
             guard lastProbe[c.uuid] != data else { continue }
             lastProbe[c.uuid] = data

@@ -44,8 +44,12 @@ struct CameraScreen: View {
                 Text("설정 앱에서 카메라 Wi-Fi(GR_…)에 직접 붙었을 때, 또는 케이블로 연결했을 때 써요. USB로는 사진 보기와 저장만 돼요.")
             }
         }
+        // No title on screen (the tab says 카메라); kept for the back button of the
+        // shooting screen.
         .navigationTitle("카메라")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
             ToolbarItem(placement: .primaryAction) {
                 Button { registering = true } label: { Image(systemName: "plus") }
                     .accessibilityLabel("카메라 등록")
@@ -53,6 +57,24 @@ struct CameraScreen: View {
             }
         }
         .sheet(isPresented: $registering) { RegisterSheet(ble: connection.ble) }
+        // "…을(를) 등록했어요" pops up at the top and goes away by itself.
+        .overlay(alignment: .top) {
+            if let notice = connection.notice {
+                Label(notice, systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(Color.green.gradient, in: Capsule())
+                    .shadow(radius: 8, y: 4)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(2.5))
+                        withAnimation { if connection.notice == notice { connection.notice = nil } }
+                    }
+            }
+        }
+        .animation(.snappy, value: connection.notice)
         .confirmationDialog("‘\(removing?.displayName ?? "")’ 카메라를 지울까요?",
                             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible) {
@@ -149,29 +171,26 @@ struct CameraScreen: View {
 
     private func cameraSection(_ camera: SavedCamera) -> some View {
         Section {
-            CameraRows(camera: camera, ble: connection.ble)
+            CameraRows(camera: camera, ble: connection.ble,
+                       repair: { Task { await connection.repair(camera) } },
+                       remove: { removing = camera })
         } header: {
-            HStack {
-                Text("내 카메라")
-                Spacer()
-                Menu {
-                    Button { Task { await connection.repair(camera) } } label: {
-                        Label("다시 페어링", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    Button(role: .destructive) { removing = camera } label: {
-                        Label("카메라 지우기", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle").font(.title3)
-                }
-                .disabled(connection.isBusy)
-                .accessibilityLabel("카메라 관리")
-            }
+            Text("My GR")
+        }
+    }
+
+    /// Pairing and failures. Connecting a registered camera shows its progress in the
+    /// camera card instead.
+    private var showsStatus: Bool {
+        switch connection.state {
+        case .pairing, .failed: return true
+        case .waking, .joining, .lost: return connection.cameras.isEmpty
+        case .connected, .disconnected: return false
         }
     }
 
     @ViewBuilder private var statusSection: some View {
-        if let message = connection.state.message {
+        if showsStatus, let message = connection.state.message {
             Section {
                 HStack(alignment: .top, spacing: 10) {
                     if connection.isBusy || connection.state == .lost {
@@ -185,8 +204,6 @@ struct CameraScreen: View {
                     Button("취소") { connection.cancelBluetooth() }
                 }
             }
-        } else if let notice = connection.notice {
-            Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green) }
         }
     }
 
@@ -344,8 +361,11 @@ struct CameraRows: View {
     let camera: SavedCamera
     /// Observed directly so the Bluetooth row follows the link.
     @ObservedObject var ble: BLEWaker
+    let repair: () -> Void
+    let remove: () -> Void
 
     @State private var showWiFiInfo = false
+    @AppStorage("cameraLinkDetails") private var showDetails = false
 
     private var linked: Bool { ble.linkedCameraID == camera.id }
     private var onWiFi: Bool {
@@ -357,17 +377,149 @@ struct CameraRows: View {
             GRCameraPicture()
                 .frame(height: 150)
                 .frame(maxWidth: .infinity)
+                .padding(.top, 44)
+                .overlay(alignment: .topTrailing) { manageMenu }
             VStack(spacing: 2) {
                 Text(camera.displayName).font(.title3.bold())
-                Text(camera.shortModel ?? "RICOH GR").font(.subheadline).foregroundStyle(.secondary)
+                // Not twice when the name is the model ("RICOH GR" before the first Wi-Fi link).
+                if let model = camera.shortModel ?? (camera.displayName == "RICOH GR" ? nil : "RICOH GR"),
+                   model != camera.displayName {
+                    Text(model).font(.subheadline).foregroundStyle(.secondary)
+                }
                 if !onWiFi, !linked, let last = camera.lastConnected {
                     Text("마지막 연결 \(last.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.top, 8)
 
+        connectRow
+
+        if showDetails {
+            bluetoothRow
+            wifiRow
+        }
+    }
+
+    /// ⓘ in the card's top-right corner: the camera's Bluetooth name, then 다시 페어링 and
+    /// 카메라 지우기.
+    private var manageMenu: some View {
+        Menu {
+            Section(camera.bleName) {
+                Button(action: repair) {
+                    Label("다시 페어링", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(connection.isBusy)
+                Button(role: .destructive, action: remove) {
+                    Label("카메라 지우기", systemImage: "trash")
+                }
+                .disabled(connection.isBusy)
+            }
+        } label: {
+            Image(systemName: "info.circle").font(.title3)
+        }
+        .accessibilityLabel("카메라 정보")
+    }
+
+    /// One line: where each link stands, and one button that brings up whatever is missing
+    /// (Bluetooth first if needed, then the camera's Wi-Fi). 자세히 shows each link on its own.
+    private var connectRow: some View {
+        VStack(spacing: 10) {
+            // The two links centred; ⋯ on the right opens each link on its own.
+            HStack(spacing: 8) {
+                linkPill("Bluetooth", icon: "dot.radiowaves.left.and.right", state: bluetoothState)
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                linkPill("Wi-Fi", icon: "wifi", state: wifiState)
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
+                Button {
+                    withAnimation(.snappy) { showDetails.toggle() }
+                } label: {
+                    Image(systemName: showDetails ? "ellipsis.circle.fill" : "ellipsis.circle")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(showDetails ? "자세히 닫기" : "자세히")
+            }
+            if let message = progressMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
+            Group {
+                if onWiFi {
+                    Button(role: .destructive) { Task { await connection.disconnect() } } label: {
+                        Text("연결 끊기").frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.bordered)
+                } else if working {
+                    Button { connection.cancelBluetooth() } label: {
+                        HStack(spacing: 8) { ProgressView(); Text("연결하는 중… 취소") }
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button { Task { await connection.connect(camera) } } label: {
+                        Text(linked ? "Wi-Fi 연결" : "연결").font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connection.isBusy || connection.bluetoothBusy)
+                }
+            }
+            .buttonBorderShape(.capsule)
+        }
+        .padding(.bottom, 4)
+        .listRowSeparator(.hidden, edges: .top)
+        // Sit close under the camera name rather than a full row gap below it.
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 16, trailing: 20))
+    }
+
+    private enum LinkState { case off, working, on }
+
+    /// This camera is the one connecting right now.
+    private var working: Bool {
+        connection.isBusy && (connection.selectedCameraID == camera.id || connection.connectedCameraID == camera.id
+                              || connection.cameras.count == 1)
+    }
+
+    private var bluetoothState: LinkState {
+        if linked { return .on }
+        if connection.bluetoothBusy { return .working }
+        if working, case .waking = connection.state { return .working }
+        return .off
+    }
+
+    private var wifiState: LinkState {
+        if onWiFi { return connection.state == .lost ? .working : .on }
+        if working, case .joining = connection.state { return .working }
+        return .off
+    }
+
+    private var progressMessage: String? {
+        guard working || connection.state == .lost else { return nil }
+        return connection.state.message
+    }
+
+    private func linkPill(_ title: String, icon: String, state: LinkState) -> some View {
+        let color: Color = state == .on ? .green : state == .working ? .orange : .secondary
+        return HStack(spacing: 5) {
+            if state == .working {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: icon).font(.caption)
+            }
+            Text(title).font(.caption.weight(.semibold))
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .foregroundStyle(color)
+        .background(color.opacity(0.14), in: Capsule())
+        .accessibilityLabel("\(title) \(state == .on ? "연결됨" : state == .working ? "연결 중" : "연결 안 됨")")
+    }
+
+    private var bluetoothRow: some View {
         HStack {
             Label {
                 VStack(alignment: .leading, spacing: 1) {
@@ -390,6 +542,9 @@ struct CameraRows: View {
             }
         }
 
+    }
+
+    private var wifiRow: some View {
         HStack {
             Label {
                 VStack(alignment: .leading, spacing: 1) {

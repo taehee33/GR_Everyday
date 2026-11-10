@@ -134,7 +134,7 @@ struct RemoteView: View {
     /// The values shown under the live view, each a menu of what the camera allows now
     /// (<key>List in /v1/props; it changes with the exposure mode).
     private func paramMenu(_ key: String, icon: String? = nil) -> some View {
-        let options = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
+        let options = SettingsView.options(key, props: props)
         let current = props[key].map { "\($0)" }
         return Menu {
             ForEach(options, id: \.self) { value in

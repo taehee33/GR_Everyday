@@ -9,13 +9,19 @@ struct SavedCamera: Codable, Identifiable, Hashable {
     /// Bluetooth name, e.g. GR_HCB02EB.
     var bleName: String
     var nickname: String?
+    /// The name set on the camera (GR WORLD's camera name), read over Bluetooth.
+    var cameraName: String?
     var model: String?
     /// Camera Wi-Fi SSID / passphrase, read over Bluetooth while pairing.
     var credentials: WLANCredentials?
     var pairedAt: Date?
     var lastConnected: Date?
 
-    var displayName: String { nickname?.isEmpty == false ? nickname! : bleName }
+    var displayName: String {
+        if let nickname, !nickname.isEmpty { return nickname }
+        if let cameraName, !cameraName.isEmpty { return cameraName }
+        return bleName
+    }
     /// "RICOH GR IV HDF" → "GR IV HDF"; known after the first Wi-Fi connection.
     var shortModel: String? { model.map { $0.hasPrefix("RICOH ") ? String($0.dropFirst(6)) : $0 } }
 }
@@ -122,6 +128,10 @@ final class ConnectionModel: ObservableObject {
                                    credentials: credentials)]
         }
         self.cameras = cameras
+        ble.onCameraName = { [weak self] id, name in
+            guard let self, self.cameras.first(where: { $0.id == id })?.cameraName != name else { return }
+            self.update(id) { $0.cameraName = name }
+        }
         selectedCameraID = lastID ?? cameras.first?.id
         // Views read connection.usb.detected; pass its changes on.
         usbChanges = usb.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }

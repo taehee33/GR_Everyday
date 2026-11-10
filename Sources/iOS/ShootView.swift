@@ -31,28 +31,23 @@ struct ShootView: View {
     /// Focus methods where the camera doesn't autofocus, so a tap can't move the focus.
     private static let fixedFocus = ["manual": "수동(MF)", "snap": "스냅", "inf": "∞"]
 
-    /// Live view hidden behind everything but the photo and the controls.
+    /// Landscape, full screen: the phone turns sideways and only the photo and the controls
+    /// stay. The only other layout is portrait.
     @State private var fullscreen = false
 
     /// On the camera's Wi-Fi (or briefly lost from it): the live view can run.
     private var ready: Bool { !connection.viaUSB && (connection.isConnected || connection.state == .lost) }
 
     var body: some View {
-        GeometryReader { geo in
-            let landscape = geo.size.width > geo.size.height
+        GeometryReader { _ in
             Group {
                 if fullscreen {
                     ZStack {
                         liveView.ignoresSafeArea()
-                        if landscape {
-                            HStack(spacing: 0) {
-                                VStack { Spacer(); settingsPanel.padding() }
-                                    .frame(maxWidth: .infinity)
-                                buttonColumn
-                            }
-                        } else {
-                            VStack { Spacer(); controls.background(fade(.bottom)) }
-                        }
+                        // Chips centred on the screen, kept clear of the button column on
+                        // both sides so they line up with the photo.
+                        VStack { Spacer(); settingsPanel.padding(.horizontal, 96).padding(.bottom, 12) }
+                        HStack { Spacer(); buttonColumn }
                     }
                 } else {
                     VStack(spacing: 0) {
@@ -94,9 +89,16 @@ struct ShootView: View {
         }
         .onChange(of: connection.state) { _, state in
             if state == .connected, active, !connection.viaUSB { live.start(); Task { await loadProps() } }
-            if !ready { fullscreen = false }
+            if !ready { setLandscape(false) }
         }
-        .onDisappear { live.stop(); shootTask?.cancel() }
+        .onDisappear { live.stop(); shootTask?.cancel(); setLandscape(false) }
+    }
+
+    /// Turns the phone sideways into the full-screen layout, or back to portrait.
+    private func setLandscape(_ on: Bool) {
+        guard on != fullscreen || Orientation.landscape != on else { return }
+        withAnimation(.easeInOut(duration: 0.25)) { fullscreen = on }
+        Orientation.set(landscape: on)
     }
 
     private func fade(_ edge: Edge) -> LinearGradient {
@@ -170,17 +172,19 @@ struct ShootView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if ready {
+                // In landscape the button sits in the right-hand column instead, clear of
+                // the rounded corner.
+                if ready && !fullscreen {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) { fullscreen.toggle() }
+                        setLandscape(!fullscreen)
                     } label: {
-                        Image(systemName: fullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        Image(systemName: fullscreen ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate")
                             .font(.body.weight(.semibold))
                             .frame(width: 40, height: 40)
                             .background(.black.opacity(0.45), in: Circle())
                     }
                     .padding(12)
-                    .accessibilityLabel(fullscreen ? "전체 화면 끝내기" : "전체 화면")
+                    .accessibilityLabel(fullscreen ? "세로 모드로" : "가로 모드")
                 }
             }
         }
@@ -211,10 +215,22 @@ struct ShootView: View {
 
     /// Landscape full screen: grid, shutter and timer down the right edge.
     private var buttonColumn: some View {
+        // Shutter in the vertical middle; the back-to-portrait button pinned at the top.
         VStack(spacing: 28) {
             timerMenu
             shutterButton
             gridToggle
+        }
+        .frame(maxHeight: .infinity)
+        .overlay(alignment: .top) {
+            Button { setLandscape(false) } label: {
+                Image(systemName: "rectangle.portrait.rotate")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .background(.white.opacity(0.15), in: Circle())
+            }
+            .accessibilityLabel("세로 모드로")
+            .padding(.top, 12)
         }
         .padding(.horizontal, 20)
         .frame(maxHeight: .infinity)
@@ -261,7 +277,14 @@ struct ShootView: View {
     /// Current settings as chips. Ones the camera lets you change open a dial; the rest are
     /// greyed with a lock and say why when tapped.
     private var quickSettings: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ViewThatFits(in: .horizontal) {
+            chipRow
+            ScrollView(.horizontal, showsIndicators: false) { chipRow }
+        }
+    }
+
+    /// The chips in one row; centred by `quickSettings` when they all fit.
+    private var chipRow: some View {
             HStack(spacing: 8) {
                 ForEach(Self.quickKeys.filter { props[$0] != nil }, id: \.self) { key in
                     let changeable = SettingsView.isChangeable(key, props: props)
@@ -292,7 +315,6 @@ struct ShootView: View {
                     .buttonStyle(.plain)
                 }
             }
-        }
     }
 
     private static func shortLabel(_ key: String) -> String {
@@ -311,8 +333,8 @@ struct ShootView: View {
     /// A strip of values that scrolls like a dial; the one under the yellow mark is applied
     /// when the strip comes to rest. Tapping a value also picks it.
     private func dial(_ key: String) -> some View {
-        let options = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
-        return DialStrip(options: options, label: { value -> String in
+        let options = SettingsView.options(key, props: props)
+        return DialStrip(options: options, itemWidth: ["effect": 150, "WBMode": 160][key] ?? 76, label: { value -> String in
             key == "xv" ? value : key == "sv" ? value : SettingsView.display(key, value)
         }, selected: props[key].map { "\($0)" }) { value in
             Task { await set(key, value) }
@@ -329,8 +351,10 @@ struct ShootView: View {
             try await CameraAPI.setParams([key: value])
             props[key] = value
             status = nil
+            DebugLog.write("shoot set \(key)=\(value): ok")
         } catch {
             status = "\(SettingsView.labels[key] ?? key) 변경 실패: \(error.localizedDescription)"
+            DebugLog.write("shoot set \(key)=\(value): \(error.localizedDescription)")
         }
         await loadProps()
     }
@@ -344,6 +368,12 @@ struct ShootView: View {
 
     private func loadProps() async {
         props = (try? await CameraAPI.props()) ?? [:]
+        // Which settings the camera offers right now, to tell "locked by the camera" apart
+        // from "not offered by the API" later.
+        let summary = Self.quickKeys.map { key in
+            "\(key)=\(props[key].map { "\($0)" } ?? "-") [\((props[key + "List"] as? [Any])?.count.description ?? "no list")]"
+        }
+        DebugLog.write("shoot props: mode=\(props["exposureMode"] ?? "-") " + summary.joined(separator: " "))
     }
 
     private func tapFocus(_ loc: CGPoint, fitted: CGRect) {
@@ -398,6 +428,9 @@ struct ShootView: View {
 /// Horizontal value dial: scroll and let go, the value under the mark is chosen.
 struct DialStrip: View {
     let options: [String]
+    /// Every value gets the same width: the strip snaps item edges to its margin, so equal
+    /// widths put the chosen one exactly under the mark.
+    let itemWidth: CGFloat
     let label: (String) -> String
     let selected: String?
     let choose: (String) -> Void
@@ -414,8 +447,9 @@ struct DialStrip: View {
                             .font(.subheadline.monospacedDigit().weight(on ? .bold : .regular))
                             .foregroundStyle(on ? Color.yellow : .white.opacity(0.6))
                             .lineLimit(1)
-                            .padding(.horizontal, 12)
-                            .frame(minWidth: 64, minHeight: 40)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 4)
+                            .frame(width: itemWidth, height: 40)
                             .contentShape(Rectangle())
                             .onTapGesture { withAnimation(.snappy) { position = option } }
                     }
@@ -424,7 +458,7 @@ struct DialStrip: View {
             }
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $position, anchor: .center)
-            .contentMargins(.horizontal, geo.size.width / 2 - 32, for: .scrollContent)
+            .contentMargins(.horizontal, max(geo.size.width / 2 - itemWidth / 2, 0), for: .scrollContent)
             .overlay(alignment: .top) {
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 7)).foregroundStyle(.yellow)
             }

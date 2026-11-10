@@ -90,8 +90,25 @@ struct SettingsView: View {
 
     /// The camera offers a choice for `key` right now (mode dial, current mode).
     static func isChangeable(_ key: String, props: [String: Any]) -> Bool {
-        let options = props[key + "List"] as? [Any] ?? []
-        return options.count > 1 && !readOnly.contains(key)
+        options(key, props: props).count > 1 && !readOnly.contains(key)
+    }
+
+    /// The values `key` can take now: the camera's <key>List. The GR IV HDF (fw 1.20) sends
+    /// an empty xvList in P although it takes exposure compensation there: setting -4.3 …
+    /// 0.0 from the app worked and moved tv/av (verified 2026-11-09). So outside M the
+    /// camera's ±5 EV in ⅓ steps is offered, written as it reports them ("+2.0", "-0.7").
+    static func options(_ key: String, props: [String: Any]) -> [String] {
+        let listed = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
+        if key == "xv", listed.isEmpty, props["xv"] != nil,
+           (props["exposureMode"] as? String)?.uppercased() != "M" {
+            return evSteps
+        }
+        return listed
+    }
+
+    static let evSteps: [String] = (-15...15).map { i in
+        let v = (Double(i) / 3 * 10).rounded() / 10
+        return i > 0 ? String(format: "+%.1f", v) : String(format: "%.1f", v)
     }
 
     /// Only what can be changed from here; the rest is listed at the bottom.
@@ -101,7 +118,7 @@ struct SettingsView: View {
         if !present.isEmpty {
             Section(title) {
                 ForEach(present, id: \.self) { key in
-                    let options = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
+                    let options = Self.options(key, props: props)
                     Picker(selection: binding(key)) {
                         ForEach(options, id: \.self) { Text(Self.display(key, $0)).tag($0) }
                     } label: {

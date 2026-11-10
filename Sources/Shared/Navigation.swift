@@ -4,7 +4,7 @@ import SwiftUI
 enum Pane: String, CaseIterable, Identifiable {
     // Order is the Mac sidebar's and the iPhone/iPad tab bar's; on iPhone/iPad 촬영 통계 is a
     // view inside 라이브러리 rather than a tab.
-    case camera = "카메라", remote = "촬영", library = "라이브러리", stats = "촬영 통계", moment = "Moment", settings = "설정"
+    case camera = "카메라", remote = "촬영", library = "라이브러리", stats = "촬영 통계", moment = "순간들", settings = "설정"
     var id: String { rawValue }
     var icon: String {
         switch self {
