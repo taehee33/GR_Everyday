@@ -138,6 +138,9 @@ struct CameraAPI {
     /// The focus method lives under /params/lens; everything else under /params/camera.
     static func setParams(_ params: [String: String]) async throws {
         var camera = params
+        // The camera reports positive exposure compensation as "+0.7" but answers 400 to
+        // that; "0.7" is what it takes (GR IV HDF fw 1.20, 2026-11-10).
+        if let xv = camera["xv"], xv.hasPrefix("+") { camera["xv"] = String(xv.dropFirst()) }
         if let focus = camera.removeValue(forKey: "focusSetting") {
             try await request("PUT", "/params/lens", form: ["focusSetting": focus])
         }

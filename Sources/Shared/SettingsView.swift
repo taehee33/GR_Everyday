@@ -96,7 +96,8 @@ struct SettingsView: View {
     /// The values `key` can take now: the camera's <key>List. The GR IV HDF (fw 1.20) sends
     /// an empty xvList in P although it takes exposure compensation there: setting -4.3 …
     /// 0.0 from the app worked and moved tv/av (verified 2026-11-09). So outside M the
-    /// camera's ±5 EV in ⅓ steps is offered, written as it reports them ("+2.0", "-0.7").
+    /// camera's ±5 EV in ⅓ steps is offered, written as it reports them ("+2.0", "-0.7");
+    /// CameraAPI.setParams drops the "+" when sending, which the camera requires.
     static func options(_ key: String, props: [String: Any]) -> [String] {
         let listed = (props[key + "List"] as? [Any] ?? []).map { "\($0)" }
         if key == "xv", listed.isEmpty, props["xv"] != nil,

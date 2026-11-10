@@ -420,6 +420,7 @@ struct ShootView: View {
                 await loadProps()
             } catch {
                 status = "촬영 실패: \(error.localizedDescription)"
+                DebugLog.write("shoot failed: \(error)")
             }
         }
     }
