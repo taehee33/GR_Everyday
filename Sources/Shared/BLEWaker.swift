@@ -80,7 +80,7 @@ final class BLEWaker: NSObject, ObservableObject {
         var errorDescription: String? { message }
 
         /// macOS holds a pairing key the camera refuses; only the user can remove it.
-        static let staleBond = BLEError(message: "Mac에 남아 있는 이 카메라의 페어링 정보 때문에 연결이 막혀 있습니다. 아래 ‘Bluetooth 설정 열기’에서 GR_로 시작하는 카메라 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤 다시 시도하세요. (처음 한 번만 필요)")
+        static let staleBond = BLEError(message: "Mac에 남아 있는 이 카메라의 페어링 정보 때문에 연결이 막혀 있어요. 아래 ‘Bluetooth 설정 열기’에서 GR_로 시작하는 카메라 옆 ⓘ → ‘이 기기 지우기’를 누른 뒤 다시 시도해 주세요. (처음 한 번만 필요)")
     }
 
     override init() {
@@ -91,8 +91,8 @@ final class BLEWaker: NSObject, ObservableObject {
     private func waitPoweredOn() async throws {
         switch central.state {
         case .poweredOn: return
-        case .unauthorized: throw BLEError(message: "Bluetooth 권한이 없습니다. \(Device.bluetoothPermissionPath) 허용하세요.")
-        case .poweredOff: throw BLEError(message: "\(Device.name)의 Bluetooth가 꺼져 있습니다.")
+        case .unauthorized: throw BLEError(message: "Bluetooth 권한이 없어요. \(Device.bluetoothPermissionPath) 허용해 주세요.")
+        case .poweredOff: throw BLEError(message: "\(Device.name)의 Bluetooth가 꺼져 있어요.")
         default:
             try await withCheckedThrowingContinuation { poweredOn = $0 }
         }
@@ -204,7 +204,7 @@ final class BLEWaker: NSObject, ObservableObject {
     func raiseWLANOnLink() async throws -> WLANCredentials {
         guard let held, held.state == .connected else {
             linkedCameraID = nil
-            throw BLEError(message: "카메라와 Bluetooth 연결이 없습니다.")
+            throw BLEError(message: "카메라와 Bluetooth 연결이 없어요.")
         }
         DebugLog.write("link: raising WLAN over kept link")
         return try await raiseWLAN(on: held)
@@ -237,12 +237,12 @@ final class BLEWaker: NSObject, ObservableObject {
         while true {
             do {
                 _ = try await read(GRUUID.passphrase, on: peripheral, timeout: 90,
-                                   timeoutMessage: "페어링 코드 입력 시간이 지났습니다. 다시 시도하세요.")
+                                   timeoutMessage: "페어링 코드 입력 시간이 지났어요. 다시 시도해 주세요.")
                 break
             } catch let error as CBATTError where [.insufficientAuthentication, .insufficientEncryption].contains(error.code) {
                 // The system is pairing; the read is refused until it finishes.
                 DebugLog.write("pair: waiting for authentication (\(error.code.rawValue))")
-                guard Date() < deadline else { throw BLEError(message: "페어링이 완료되지 않았습니다.") }
+                guard Date() < deadline else { throw BLEError(message: "페어링이 완료되지 않았어요.") }
                 try await Task.sleep(for: .seconds(2))
             }
         }
@@ -315,7 +315,7 @@ final class BLEWaker: NSObject, ObservableObject {
         DebugLog.write("waiting for advertisement from \(cameraID)")
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         defer { central.stopScan(); isScanning = false }
-        try await withTimeout(timeout, "카메라의 Bluetooth 신호가 없습니다. 카메라 전원을 켜고, 메뉴 → 무선 통신 → Bluetooth가 켜져 있는지 확인하세요. 카메라를 끈 상태에서도 연결하려면 Bluetooth 동작 조건을 ‘항상’으로 설정하세요.") {
+        try await withTimeout(timeout, "카메라의 Bluetooth 신호가 없어요. 카메라 전원을 켜고, 메뉴 → 무선 통신 → Bluetooth가 켜져 있는지 확인해 주세요. 카메라를 끈 상태에서도 연결하려면 Bluetooth 동작 조건을 ‘항상’으로 설정해 주세요.") {
             try await withCheckedThrowingContinuation { self.awaitedAdvert = (cameraID, $0) }
         }
         DebugLog.write("advertisement heard")
@@ -324,12 +324,12 @@ final class BLEWaker: NSObject, ObservableObject {
     /// Connect and discover the GR services. Works for a camera seen in this scan
     /// or one this Mac connected to before (by its saved CoreBluetooth identifier).
     private func open(_ cameraID: UUID, connectTimeout: Double = 20,
-                      timeoutMessage: String = "Bluetooth 연결 시간 초과 — 카메라가 켜져 있고 가까이 있는지 확인하세요.") async throws -> CBPeripheral {
+                      timeoutMessage: String = "Bluetooth 연결 시간 초과 — 카메라가 켜져 있고 가까이 있는지 확인해 주세요.") async throws -> CBPeripheral {
         try await waitPoweredOn()
         stopScan()
         guard let peripheral = peripherals[cameraID]
             ?? central.retrievePeripherals(withIdentifiers: [cameraID]).first else {
-            throw BLEError(message: "카메라를 찾을 수 없습니다. 카메라 Bluetooth가 켜져 있는지 확인하세요.")
+            throw BLEError(message: "카메라를 찾을 수 없어요. 카메라 Bluetooth가 켜져 있는지 확인해 주세요.")
         }
         peripherals[cameraID] = peripheral
         peripheral.delegate = self
@@ -360,7 +360,7 @@ final class BLEWaker: NSObject, ObservableObject {
 
     private func read(_ uuid: CBUUID, on peripheral: CBPeripheral, timeout: Double = 15,
                       timeoutMessage: String = "값 읽기 시간 초과 (페어링 승인 필요?)") async throws -> Data {
-        guard let c = characteristics[uuid] else { throw BLEError(message: "특성 \(uuid) 없음 — 이 모델은 다른 UUID를 쓰는 것 같습니다.") }
+        guard let c = characteristics[uuid] else { throw BLEError(message: "특성 \(uuid) 없음 — 이 모델은 다른 UUID를 쓰는 것 같아요.") }
         return try await withTimeout(timeout, timeoutMessage) {
             try await withCheckedThrowingContinuation {
                 // A read that timed out earlier is still waiting; fail it before replacing it.
@@ -395,7 +395,7 @@ final class BLEWaker: NSObject, ObservableObject {
     func cancel() {
         DebugLog.write("cancel requested")
         if let current, current != held { central.cancelPeripheralConnection(current) }
-        failPending(BLEError(message: "취소했습니다."))
+        failPending(BLEError(message: "취소했어요."))
     }
 
     private func withTimeout<T>(_ seconds: Double, _ message: String, _ body: @escaping () async throws -> T) async throws -> T {
@@ -435,7 +435,7 @@ extension BLEWaker: CBCentralManagerDelegate, CBPeripheralDelegate {
             switch central.state {
             case .poweredOn: c.resume(); poweredOn = nil
             case .unauthorized, .poweredOff, .unsupported:
-                c.resume(throwing: BLEError(message: "Bluetooth를 사용할 수 없습니다 (\(central.state.rawValue))."))
+                c.resume(throwing: BLEError(message: "Bluetooth를 사용할 수 없어요 (\(central.state.rawValue))."))
                 poweredOn = nil
             default: break
             }
@@ -494,7 +494,7 @@ extension BLEWaker: CBCentralManagerDelegate, CBPeripheralDelegate {
                 charge = ChargeGuess()
                 keepAlive?.cancel()
             }
-            failPending(BLEError(message: "카메라 연결이 끊겼습니다\(error.map { ": \($0.localizedDescription)" } ?? ".")"))
+            failPending(BLEError(message: "카메라 연결이 끊겼어요\(error.map { ": \($0.localizedDescription)" } ?? ".")"))
         }
     }
 
@@ -504,7 +504,7 @@ extension BLEWaker: CBCentralManagerDelegate, CBPeripheralDelegate {
             DebugLog.write("services: \(services.map(\.uuid.uuidString)) error=\(error?.localizedDescription ?? "-")")
             if let error { discovered?.resume(throwing: error); discovered = nil; return }
             guard !services.isEmpty else {
-                discovered?.resume(throwing: BLEError(message: "GR 서비스가 없습니다. 이 모델은 다른 UUID를 쓰는 것 같습니다."))
+                discovered?.resume(throwing: BLEError(message: "GR 서비스가 없어요. 이 모델은 다른 UUID를 쓰는 것 같아요."))
                 discovered = nil
                 return
             }

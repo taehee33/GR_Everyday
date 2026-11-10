@@ -39,7 +39,7 @@ struct CameraView: View {
                     RegisterPanel(ble: ble)
                 }
                 if connection.isConnected && connection.connectedCameraID == nil {
-                    Label("등록되지 않은 카메라(\(connection.model))에 연결돼 있습니다.", systemImage: "info.circle")
+                    Label("등록되지 않은 카메라(\(connection.model))에 연결돼 있어요.", systemImage: "info.circle")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Button("이미 Mac이 카메라 Wi-Fi에 연결돼 있어요") { Task { await connection.connectDirect() } }
@@ -70,7 +70,7 @@ struct CameraView: View {
             Button("저장") { if let c = renaming { connection.rename(c.id, to: newName) } }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("이 Mac에서만 쓰는 이름입니다. 비워 두면 Bluetooth 이름(GR_…)으로 표시됩니다.")
+            Text("이 Mac에서만 쓰는 이름이에요. 비워 두면 Bluetooth 이름(GR_…)으로 표시돼요.")
         }
         .confirmationDialog("‘\(removing?.displayName ?? "")’ 카메라 정보를 지울까요?",
                             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
@@ -83,9 +83,9 @@ struct CameraView: View {
             }
         } message: {
             if removing != nil, macBond == true {
-                Text("저장된 Wi-Fi 암호도 지워집니다. 다시 쓰려면 새로 등록해야 합니다.\n이 카메라가 아직 Mac Bluetooth에 남아 있습니다. 다시 등록하기 전에 ‘기기 지우기’도 해 두세요.")
+                Text("저장된 Wi-Fi 암호도 지워져요. 다시 쓰려면 새로 등록해야 해요.\n이 카메라가 아직 Mac Bluetooth에 남아 있어요. 다시 등록하기 전에 ‘기기 지우기’도 해 두세요.")
             } else {
-                Text("저장된 Wi-Fi 암호도 지워집니다. 다시 쓰려면 ‘+’에서 새로 등록해야 합니다.")
+                Text("저장된 Wi-Fi 암호도 지워져요. 다시 쓰려면 ‘+’에서 새로 등록해야 해요.")
             }
         }
     }
@@ -99,18 +99,27 @@ struct CameraView: View {
             Spacer()
             VStack(spacing: 10) {
                 if let camera = current {
-                    Text(camera.displayName).font(.largeTitle.bold())
-                    Text(camera.shortModel ?? "RICOH GR").font(.title3).foregroundStyle(.secondary)
-                    statusIcons(camera)
                     CameraPicture(camera: camera)
-                        .padding(.vertical, 18)
+                        .padding(.top, 8)
+                    Text(camera.displayName).font(.largeTitle.bold())
+                    if let model = camera.shortModel, model != camera.displayName {
+                        Text(model).font(.title3).foregroundStyle(.secondary)
+                    }
+                    statusIcons(camera)
+                        .padding(.top, 4)
                 } else {
-                    Text("새 카메라").font(.largeTitle.bold())
-                    Text("RICOH GR").font(.title3).foregroundStyle(.secondary)
-                    Image(systemName: "camera")
-                        .font(.system(size: 110, weight: .ultraLight))
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 18)
+                    GRDrawing()
+                        .frame(width: 256, height: 152)
+                        .opacity(0.55)
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 34))
+                                .foregroundStyle(.white, Color.accentColor)
+                                .offset(x: 10, y: 10)
+                        }
+                        .padding(.top, 8)
+                    Text("카메라를 등록해 주세요").font(.largeTitle.bold())
+                    Text("한 번 등록하면 다음부터는 버튼 하나로 연결돼요.").font(.title3).foregroundStyle(.secondary)
                 }
             }
             Spacer()
@@ -138,36 +147,48 @@ struct CameraView: View {
         connection.connectedCameraID == camera.id && (connection.isConnected || connection.state == .lost)
     }
 
+    /// Bluetooth › Wi-Fi (or USB) as pills like the iPhone app, then battery and storage.
     private func statusIcons(_ camera: SavedCamera) -> some View {
         let connected = isConnected(camera)
-        return HStack(spacing: 16) {
-            if connected && connection.viaUSB {
-                Label("USB 연결됨", systemImage: "cable.connector").foregroundStyle(.green)
-            } else {
-                Label(connected ? "Wi-Fi 연결됨" : "Wi-Fi 연결 안 됨", systemImage: connected ? "wifi" : "wifi.slash")
-                    .foregroundStyle(connected ? .green : .secondary)
-            }
-            let linked = ble.linkedCameraID == camera.id
-            Label(linked ? "Bluetooth 연결됨" : "Bluetooth 끊김", systemImage: "dot.radiowaves.left.and.right")
-                .foregroundStyle(linked ? .blue : .secondary)
-                .help(linked ? "이 연결로 카메라 Wi-Fi를 켤 수 있습니다." : "카메라 WLAN(Wi-Fi)은 휴대폰의 GR WORLD로 켜야 합니다.")
-            if connected, let battery = connection.battery, let text = connection.batteryText {
-                Label(text, systemImage: connection.onExternalPower ? "battery.100percent.bolt" : batteryIcon(battery))
+        let linked = ble.linkedCameraID == camera.id
+        return VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                if connected && connection.viaUSB {
+                    pill("USB", icon: "cable.connector", on: true)
+                } else {
+                    pill("Bluetooth", icon: "dot.radiowaves.left.and.right", on: linked)
+                        .help(linked ? "이 연결로 카메라 Wi-Fi를 켤 수 있어요." : "카메라 Wi-Fi는 휴대폰의 GR WORLD로 켜야 해요.")
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                    pill("Wi-Fi", icon: "wifi", on: connected)
+                }
             }
             if connected {
-                ForEach(connection.storages, id: \.self) { storage in
-                    if let remain = storage.remain {
-                        HStack(spacing: 4) {
-                            Text(storage.name.uppercased())
-                                .font(.caption.bold()).padding(.horizontal, 4).padding(.vertical, 1)
-                                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.primary, lineWidth: 1))
-                            Text("\(remain)장")
+                HStack(spacing: 14) {
+                    if let battery = connection.battery, let text = connection.batteryText {
+                        Label(text, systemImage: connection.onExternalPower ? "battery.100percent.bolt" : batteryIcon(battery))
+                    }
+                    ForEach(connection.storages, id: \.self) { storage in
+                        if let remain = storage.remain {
+                            HStack(spacing: 4) {
+                                Text(storage.name.uppercased())
+                                    .font(.caption.bold()).padding(.horizontal, 4).padding(.vertical, 1)
+                                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.secondary, lineWidth: 1))
+                                Text("\(remain)장")
+                            }
                         }
                     }
                 }
+                .font(.callout).foregroundStyle(.secondary)
             }
         }
-        .font(.callout)
+    }
+
+    private func pill(_ title: String, icon: String, on: Bool) -> some View {
+        Label(title, systemImage: icon)
+            .font(.callout.weight(.semibold))
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .foregroundStyle(on ? Color.green : .secondary)
+            .background((on ? Color.green : Color.secondary).opacity(0.14), in: Capsule())
     }
 
     private func batteryIcon(_ level: Int) -> String {
@@ -186,34 +207,28 @@ struct CameraView: View {
         let connected = isConnected(camera)
         stateMessages
 
-        VStack(spacing: 0) {
-            // Same as the old "다시 연결": join the camera Wi-Fi with the saved password,
-            // then show the library.
-            Button {
-                if connected { section = .library } else {
-                    openLibraryWhenConnected = true
-                    Task { await connection.connect(camera) }
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "wifi").font(.title2)
-                    Spacer()
-                    Text(connected ? "연결됨 · 라이브러리 열기" : "카메라 연결 (Wi-Fi)").font(.title3)
-                    Spacer()
-                    Image(systemName: "wifi").font(.title2).hidden()
-                }
-                .padding(.horizontal, 24).padding(.vertical, 18)
-                .contentShape(Rectangle())
+        // Same as the old "다시 연결": join the camera Wi-Fi with the saved password, then
+        // show the library.
+        Button {
+            if connected { section = .library } else {
+                openLibraryWhenConnected = true
+                Task { await connection.connect(camera) }
             }
-            .buttonStyle(.plain)
-            .background(Color.primary.opacity(0.9))
-            .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-            .disabled(connection.isBusy)
+        } label: {
+            Text(connected ? "라이브러리 열기" : "연결")
+                .font(.title3.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 40)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .disabled(connection.isBusy)
 
+        VStack(spacing: 0) {
             HStack(spacing: 1) {
-                tile("원격 촬영", "dot.radiowaves.left.and.right", enabled: connected && !connection.viaUSB) { section = .remote }
+                tile("원격 촬영", "camera.aperture", enabled: connected && !connection.viaUSB) { section = .remote }
                 tile("카메라 설정", "slider.horizontal.3", enabled: connected && !connection.viaUSB) { showCameraSettings = true }
-                tile(showInfo ? "정보 숨기기" : "연결 정보", "info.circle", enabled: true) { showInfo.toggle() }
+                tile(showInfo ? "정보 숨기기" : "연결 정보", showInfo ? "info.circle.fill" : "info.circle", enabled: true) { showInfo.toggle() }
                 Menu {
                     Button("이름 바꾸기…") { newName = camera.displayName; renaming = camera }
                     CameraPictureMenu(camera: camera)
@@ -223,7 +238,7 @@ struct CameraView: View {
                     Button("카메라 정보 지우기…", role: .destructive) { removing = camera }
                 } label: {
                     VStack(spacing: 8) {
-                        Image(systemName: "wrench.and.screwdriver").font(.title2)
+                        Image(systemName: "ellipsis.circle").font(.title2)
                         Text("관리").font(.callout)
                     }
                     .frame(maxWidth: .infinity, minHeight: 72)
@@ -234,8 +249,8 @@ struct CameraView: View {
             }
             .background(.separator)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.separator))
 
         if connected {
             Button("연결 끊기") { Task { await connection.disconnect() } }
@@ -258,7 +273,7 @@ struct CameraView: View {
                 openLibraryWhenConnected = true
                 Task { await connection.connectUSB() }
             } label: {
-                Label(connection.usb.detected == nil ? "USB로 연결 (케이블을 연결하고 카메라를 켜세요)" : "USB로 연결",
+                Label(connection.usb.detected == nil ? "USB로 연결 (케이블을 연결하고 카메라를 켜 주세요)" : "USB로 연결",
                       systemImage: "cable.connector")
                     .frame(maxWidth: .infinity)
             }
@@ -266,10 +281,10 @@ struct CameraView: View {
             .disabled(connection.isBusy || connection.usb.detected == nil)
         }
         if connected && connection.viaUSB {
-            Text("USB로 연결됨: 사진 보기·저장만 됩니다. 원격 촬영과 카메라 설정은 Wi-Fi 연결에서만 됩니다. Mac의 Wi-Fi(인터넷·AirPlay)는 그대로 쓸 수 있습니다.")
+            Text("USB로 연결됨: 사진 보기·저장만 돼요. 원격 촬영과 카메라 설정은 Wi-Fi 연결에서만 돼요. Mac의 Wi-Fi(인터넷·AirPlay)는 그대로 쓸 수 있어요.")
                 .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
-        Text("카메라 Wi-Fi는 Bluetooth로만 켜집니다. 페어링한 Bluetooth 연결은 앱이 켜져 있는 동안 유지되고, 끊긴 뒤에는 Mac이 카메라에 다시 붙을 수 없습니다. 그때는 휴대폰의 GR WORLD에서 카메라 WLAN(Wi-Fi)을 켜고 ‘휴대폰 GR WORLD로 WLAN(Wi-Fi) 켜고 연결’을 누르세요. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지됩니다(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 끕니다). Wi-Fi에 연결된 동안 Mac의 인터넷은 끊깁니다.")
+        Text("카메라 Wi-Fi는 Bluetooth로만 켜져요. 페어링한 Bluetooth 연결은 앱이 켜져 있는 동안 유지되고, 끊긴 뒤에는 Mac이 카메라에 다시 붙을 수 없어요. 그때는 휴대폰의 GR WORLD에서 카메라 WLAN(Wi-Fi)을 켜고 ‘휴대폰 GR WORLD로 WLAN(Wi-Fi) 켜고 연결’을 눌러 주세요. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지돼요(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 꺼요). Wi-Fi에 연결된 동안 Mac의 인터넷은 끊겨요.")
             .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
 
         if showInfo { infoBox(camera, connected: connected) }
@@ -310,7 +325,7 @@ struct CameraView: View {
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
         .background(.background.secondary)
-        .help(enabled ? title : "카메라에 연결하면 쓸 수 있습니다")
+        .help(enabled ? title : "카메라에 연결하면 쓸 수 있어요")
     }
 
     // MARK: Connection info
@@ -339,7 +354,7 @@ struct CameraView: View {
                 row("Bluetooth 이름", camera.bleName)
                 row("Bluetooth 연결", ble.linkedCameraID == camera.id
                     ? "유지 중 — 이 연결로 카메라 Wi-Fi를 켭니다"
-                    : "끊김 — 카메라 WLAN(Wi-Fi)은 휴대폰의 GR WORLD로 켜세요")
+                    : "끊김 — 카메라 WLAN(Wi-Fi)은 휴대폰의 GR WORLD로 켜 주세요")
                 GridRow {
                     Text("Mac Bluetooth").foregroundStyle(.secondary)
                     HStack {
@@ -367,12 +382,12 @@ struct CameraView: View {
             .padding(8)
             Divider()
             HStack {
-                Text("이 Mac에 저장된 이 카메라의 이름·Wi-Fi 암호·기록을 지웁니다.")
+                Text("이 Mac에 저장된 이 카메라의 이름·Wi-Fi 암호·기록을 지워요.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("카메라 정보 지우기…", role: .destructive) { removing = camera }
                     .disabled(connected)
-                    .help(connected ? "연결을 끊은 뒤 지울 수 있습니다" : "이 카메라의 등록을 삭제합니다")
+                    .help(connected ? "연결을 끊은 뒤 지울 수 있어요" : "이 카메라의 등록을 삭제해요")
             }
             .padding(8)
         }
@@ -390,7 +405,7 @@ struct CameraView: View {
     /// so it has to go before re-registering. Apps can't remove it themselves, so this
     /// opens Bluetooth settings; the state is checked again when the user comes back.
     private func removeBond(_ camera: SavedCamera) async {
-        bondMessage = "Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 누르세요."
+        bondMessage = "Bluetooth 설정에서 \(camera.bleName) 옆 ⓘ → ‘이 기기 지우기’를 눌러 주세요."
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings")!)
     }
 
@@ -405,7 +420,7 @@ struct CameraView: View {
         if connected {
             guard connection.state == .lost else { return "연결됨" }
             return connection.cameraWLANOff
-                ? "카메라 WLAN(Wi-Fi) 꺼짐 — 휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다. 다음부터는 연결된 뒤 휴대폰 Bluetooth를 끄고 잠그세요"
+                ? "카메라 WLAN(Wi-Fi) 꺼짐 — 휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결해요. 다음부터는 연결된 뒤 휴대폰 Bluetooth를 끄고 잠그세요"
                 : "응답 없음 — 재시도 중"
         }
         switch connection.state {
@@ -447,7 +462,7 @@ private struct RegisterPanel: View {
                         Step(number: 2, title: "Mac에서 카메라 찾기",
                              detail: "아래 ‘카메라 찾기’를 누르면 GR_로 시작하는 카메라가 나타납니다.")
                         Step(number: 3, title: "페어링 코드 입력",
-                             detail: "‘페어링’을 누르면 Mac에 Bluetooth 페어링 요청 창이 뜹니다. 카메라 화면의 코드를 입력하면 Wi-Fi 암호를 받아 바로 연결합니다.")
+                             detail: "‘페어링’을 누르면 Mac에 Bluetooth 페어링 요청 창이 뜹니다. 카메라 화면의 코드를 입력하면 Wi-Fi 암호를 받아 바로 연결해요.")
 
                         Divider()
 
@@ -468,7 +483,7 @@ private struct RegisterPanel: View {
                             }
                         }
                         if ble.found.isEmpty {
-                            Text(ble.isScanning ? "찾는 중… 카메라가 페어링 대기 화면인지 확인하세요." : "아직 찾은 카메라가 없습니다.")
+                            Text(ble.isScanning ? "찾는 중… 카메라가 페어링 대기 화면인지 확인해 주세요." : "아직 찾은 카메라가 없어요.")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         ForEach(ble.found) { camera in
@@ -541,7 +556,7 @@ struct PairingProgress: View {
             VStack(spacing: 14) {
                 ProgressView()
                 Text(message).multilineTextAlignment(.center)
-                Label("코드 입력 창이 안 보이면 다른 창 뒤에 있을 수 있습니다. 카메라는 페어링 화면을 유지하세요.",
+                Label("코드 입력 창이 안 보이면 다른 창 뒤에 있을 수 있어요. 카메라는 페어링 화면을 유지해 주세요.",
                       systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("취소", action: onCancel)

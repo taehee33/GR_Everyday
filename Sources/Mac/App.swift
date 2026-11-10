@@ -75,7 +75,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("사진 저장")
             } footer: {
-                Text("‘미저장’은 카메라 사진의 파일 이름(예: R0000209.JPG)이 저장 폴더나 그 안의 날짜 폴더에 있는지로 판단합니다. 저장한 파일을 다른 곳으로 옮기거나 이름을 바꾸면 다시 미저장으로 표시됩니다.")
+                Text("‘미저장’은 카메라 사진의 파일 이름(예: R0000209.JPG)이 저장 폴더나 그 안의 날짜 폴더에 있는지로 판단해요. 저장한 파일을 다른 곳으로 옮기거나 이름을 바꾸면 다시 미저장으로 표시돼요.")
             }
 
             Section {
@@ -100,7 +100,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("자동 저장")
             } footer: {
-                Text("연결할 때마다 ‘미저장’ 사진을 위 저장 폴더로 받습니다. 카메라의 사진은 지우지 않습니다. 처음 켜면 카드에 있는 미저장 사진을 모두 받으니, 원하지 않으면 먼저 저장 폴더를 정리하거나 파일 종류를 줄이세요. Wi-Fi는 USB보다 훨씬 느리고, 동영상은 크기가 큽니다.")
+                Text("연결할 때마다 ‘미저장’ 사진을 위 저장 폴더로 받아요. 카메라의 사진은 지우지 않아요. 처음 켜면 카드에 있는 미저장 사진을 모두 받으니, 원하지 않으면 먼저 저장 폴더를 정리하거나 파일 종류를 줄여 주세요. Wi-Fi는 USB보다 훨씬 느리고, 동영상은 크기가 커요.")
             }
 
             Section("라이브러리") {
@@ -139,14 +139,14 @@ struct AppSettingsView: View {
             } header: {
                 Text("조작")
             } footer: {
-                Text("확대 보기·편집 화면에 적용됩니다. ⌘ 또는 ⌥를 누른 채 스크롤하면 설정과 상관없이 확대/축소, 트랙패드 핀치도 항상 확대/축소입니다. 단축키는 라이브러리 툴바의 키보드 버튼에서 볼 수 있습니다.")
+                Text("확대 보기·편집 화면에 적용돼요. ⌘ 또는 ⌥를 누른 채 스크롤하면 설정과 상관없이 확대/축소, 트랙패드 핀치도 항상 확대/축소예요. 단축키는 라이브러리 툴바의 키보드 버튼에서 볼 수 있어요.")
             }
 
             Section {
                 Toggle("연결을 끊으면 Mac Wi-Fi를 원래 네트워크로 되돌리기", isOn: $restoreWiFi)
                 Toggle("연결을 끊을 때 카메라 Wi-Fi도 끄기", isOn: $turnOffCameraWiFi)
                 if turnOffCameraWiFi {
-                    Text("배터리는 아끼지만, 다시 연결하려면 카메라 메뉴에서 Wi-Fi를 직접 켜야 합니다. Mac은 Bluetooth로 카메라 Wi-Fi를 켤 수 없습니다.")
+                    Text("배터리는 아끼지만, 다시 연결하려면 카메라 메뉴에서 Wi-Fi를 직접 켜야 해요. Mac은 Bluetooth로 카메라 Wi-Fi를 켤 수 없어요.")
                         .font(.caption).foregroundStyle(.orange)
                 }
             } header: {
@@ -169,7 +169,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("캐시")
             } footer: {
-                Text("마지막으로 본 카드의 사진 목록·썸네일, 촬영 날짜·방향, 재생하려고 받은 동영상을 Mac에 남겨 둡니다. 그래서 카메라 없이도 라이브러리를 볼 수 있고, 다시 열 때 카메라에 묻지 않습니다. 비우면 카메라 없이는 라이브러리를 볼 수 없습니다. 카드에서 지운 사진의 썸네일은 연결할 때 지웁니다. 카드를 포맷해 파일 이름(R000xxxx)이 다시 쓰이면 연결할 때 알아채고 저절로 비웁니다. 지운 사진의 촬영 통계 기록은 남습니다.")
+                Text("마지막으로 본 카드의 사진 목록·썸네일, 촬영 날짜·방향, 재생하려고 받은 동영상을 Mac에 남겨 둬요. 그래서 카메라 없이도 라이브러리를 볼 수 있고, 다시 열 때 카메라에 묻지 않아요. 비우면 카메라 없이는 라이브러리를 볼 수 없어요. 카드에서 지운 사진의 썸네일은 연결할 때 지워요. 카드를 포맷해 파일 이름(R000xxxx)이 다시 쓰이면 연결할 때 알아채고 저절로 비워요. 지운 사진의 촬영 통계 기록은 남아요.")
             }
             .task { cacheSize = library.cacheSize }
 
@@ -227,7 +227,7 @@ struct ContentView: View {
                     ContentUnavailableView {
                         Label("카메라에 연결되지 않음", systemImage: "camera")
                     } description: {
-                        Text("카메라 탭에서 Wi-Fi 또는 USB로 연결하세요.")
+                        Text("카메라 탭에서 Wi-Fi 또는 USB로 연결해 주세요.")
                     } actions: {
                         Button("카메라 탭으로") { section = .camera }.buttonStyle(.borderedProminent)
                     }

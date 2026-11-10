@@ -69,13 +69,13 @@ struct RemoteView: View {
             Color.black.opacity(0.6)
             VStack(spacing: 12) {
                 Image(systemName: "wifi.exclamationmark").font(.system(size: 44))
-                Text(connection.viaUSB ? "USB 연결에서는 원격 촬영을 쓸 수 없습니다" : "카메라 연결 끊김").font(.title2.bold())
-                Text(connection.viaUSB ? "카메라가 USB로는 사진 파일만 제공합니다. 원격 촬영은 Wi-Fi로 연결하세요."
+                Text(connection.viaUSB ? "USB 연결에서는 원격 촬영을 쓸 수 없어요" : "카메라 연결 끊김").font(.title2.bold())
+                Text(connection.viaUSB ? "카메라가 USB로는 사진 파일만 제공해요. 원격 촬영은 Wi-Fi로 연결해 주세요."
                      : connection.state == .lost
                      ? (connection.cameraWLANOff
-                        ? "카메라 WLAN(Wi-Fi)이 꺼졌습니다.\n휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결합니다.\n연결된 뒤 휴대폰 Bluetooth를 끄면 휴대폰을 잠가도 유지됩니다."
-                        : "카메라 Wi-Fi 응답이 없습니다. 다시 연결을 시도하는 중입니다…\n카메라 전원과 Wi-Fi가 켜져 있는지 확인하세요.")
-                     : "카메라 탭에서 다시 연결하세요.")
+                        ? "카메라 WLAN(Wi-Fi)이 꺼졌어요.\n휴대폰의 GR WORLD를 다시 열어 WLAN을 켜면 자동으로 다시 연결해요.\n연결된 뒤 휴대폰 Bluetooth를 끄면 휴대폰을 잠가도 유지돼요."
+                        : "카메라 Wi-Fi 응답이 없어요. 다시 연결을 시도하는 중이에요…\n카메라 전원과 Wi-Fi가 켜져 있는지 확인해 주세요.")
+                     : "카메라 탭에서 다시 연결해 주세요.")
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)
                 if connection.state == .lost { ProgressView().controlSize(.small) }
             }
@@ -114,7 +114,7 @@ struct RemoteView: View {
             .keyboardShortcut(.space, modifiers: [])
             .disabled(countdown != nil || !cameraReachable)
             .opacity(cameraReachable ? 1 : 0.3)
-            .help(cameraReachable ? "셔터 (스페이스)" : "카메라에 연결되지 않았습니다")
+            .help(cameraReachable ? "셔터 (스페이스)" : "카메라에 연결되지 않았어요")
 
             HStack(spacing: 16) {
                 if countdown != nil {
@@ -198,7 +198,7 @@ struct RemoteView: View {
         guard fitted.contains(loc) else { return }
         if let setting = props["focusSetting"] as? String, let name = Self.fixedFocus[setting] {
             focusPoint = nil
-            status = "초점 방식이 \(name)이라 눌러서 초점을 맞출 수 없습니다. 카메라 설정에서 초점 방식을 바꾸세요."
+            status = "초점 방식이 \(name)이라 눌러서 초점을 맞출 수 없어요. 카메라 설정에서 초점 방식을 바꿔 주세요."
             return
         }
         let p = CGPoint(x: (loc.x - fitted.minX) / fitted.width, y: (loc.y - fitted.minY) / fitted.height)
@@ -213,7 +213,7 @@ struct RemoteView: View {
                 // A newer tap replaced this one: leave the box and message to it.
                 guard !Task.isCancelled else { return }
                 focusHit = hit
-                status = hit ? "초점 맞춤" : "초점을 맞추지 못했습니다. 너무 가까우면 카메라를 매크로 모드로 바꾸세요."
+                status = hit ? "초점 맞춤" : "초점을 맞추지 못했어요. 너무 가까우면 카메라를 매크로 모드로 바꿔 주세요."
             } catch {
                 // Cancelling also ends the request in flight, which reports URLError.cancelled.
                 guard !Task.isCancelled, (error as? URLError)?.code != .cancelled, !(error is CancellationError) else { return }

@@ -44,7 +44,7 @@ struct LibraryView: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("처음 저장할 때 한 번만 묻습니다. 나중에 왼쪽 ‘설정’에서 바꿀 수 있습니다.")
+            Text("처음 저장할 때 한 번만 물어요. 나중에 왼쪽 ‘설정’에서 바꿀 수 있어요.")
         }
     }
 
@@ -70,7 +70,7 @@ struct LibraryView: View {
                 }
             }
             if records.isEmpty {
-                Text("‘촬영 통계’를 한 번 열면 촬영 정보로 거를 수 있습니다.")
+                Text("‘촬영 통계’를 한 번 열면 촬영 정보로 거를 수 있어요.")
             }
         } label: {
             let text = "필터: " + (library.shotFilter?.label ?? "전체")
@@ -146,7 +146,7 @@ struct LibraryView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(library.selection.isEmpty || library.isTransferring || !online)
-                .help(online ? "" : "카메라에 연결하면 저장할 수 있습니다")
+                .help(online ? "" : "카메라에 연결하면 저장할 수 있어요")
             }
             .fixedSize()
             .layoutPriority(1)
@@ -208,8 +208,8 @@ struct LibraryView: View {
         let when = library.listSavedAt.map {
             $0.formatted(.dateTime.locale(Locale(identifier: "ko_KR")).month().day().hour().minute())
         }
-        return "카메라 연결 안 됨 · " + (when.map { "\($0)에 본 목록입니다. " } ?? "")
-            + "미리 저장해 둔 사진만 크게 보고 편집할 수 있고, 저장은 연결한 뒤에 할 수 있습니다."
+        return "카메라 연결 안 됨 · " + (when.map { "\($0)에 본 목록이에요. " } ?? "")
+            + "미리 저장해 둔 사진만 크게 보고 편집할 수 있고, 저장은 연결한 뒤에 할 수 있어요."
     }
 
     private func switchMode(_ mode: LibraryModel.Mode) {
@@ -345,7 +345,7 @@ struct ShortcutHelp: View {
                     }
                 }
             }
-            Text("스크롤·드래그·클릭 동작은 설정 → 조작에서 바꿀 수 있습니다.")
+            Text("스크롤·드래그·클릭 동작은 설정 → 조작에서 바꿀 수 있어요.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(16)
@@ -868,7 +868,7 @@ struct LoupeFooter: View {
             if photo.kind != .video, library.localURL(photo) == nil {
                 Toggle("카메라 원본", isOn: $cameraOriginal)
                     .toggleStyle(.checkbox)
-                    .help("카메라에서 원본 파일을 받아 표시합니다 (느릴 수 있음). 저장된 사진은 항상 Mac의 원본으로 표시됩니다.")
+                    .help("카메라에서 원본 파일을 받아 표시해요 (느릴 수 있음). 저장된 사진은 항상 Mac의 원본으로 표시돼요.")
             }
 
             Spacer()

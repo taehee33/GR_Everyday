@@ -211,11 +211,11 @@ enum AppDocument {
         switch self {
         case .guide:
             return [
-                ("처음 연결하기", "카메라에서 메뉴 → 무선 통신 설정 → Bluetooth → 페어링을 열어 두세요. \(app)의 카메라 연결에서 카메라 등록을 누르고, 목록에 나온 카메라를 고르세요. \(Self.deviceName)에 창이 뜨면 카메라 화면의 코드를 입력하세요."),
-                ("사진 받기", "연결되면 사진 탭에 카메라의 사진이 보여요. 선택을 누르고 사진을 고른 뒤 사진 앱에 저장을 누르세요. 설정에서 새 사진 자동 저장을 켜면 연결할 때마다 아직 받지 않은 사진을 받아요. 카메라의 사진은 지우지 않아요."),
-                ("원격 촬영", "촬영 탭에서 카메라 화면을 보며 셔터를 누를 수 있어요. 노출·이미지 컨트롤 같은 설정도 여기서 바꿀 수 있어요."),
-                ("USB로 연결", "USB-C 케이블이나 USB 카메라 어댑터로 카메라를 연결하고 켠 뒤 카메라 연결에서 USB로 연결을 누르세요. USB로는 사진 보기와 저장만 돼요."),
-                ("연결이 안 될 때", "카메라를 껐다 켠 뒤 다시 연결해 보세요. 그래도 안 되면 설정 → 앱 정보 및 지원 → 연결 진단에서 원인을 확인하세요. 예전 페어링 정보가 남아 등록이 안 되면, \(Self.deviceName)의 Bluetooth 설정에서 그 GR 카메라를 지운 뒤 다시 등록하세요."),
+                ("처음 연결하기", "카메라에서 메뉴 → 무선 통신 설정 → Bluetooth → 페어링을 열어 두세요. \(app)의 카메라 탭에서 카메라 등록을 누르고, 목록에 나온 카메라를 고르세요. \(Self.deviceName)에 창이 뜨면 카메라 화면의 코드를 입력해 주세요."),
+                ("사진 받기", "연결되면 라이브러리 탭에 카메라의 사진이 보여요. 선택을 누르고 사진을 고른 뒤 사진 앱에 저장을 눌러 주세요. 설정에서 새 사진 자동 저장을 켜면 연결할 때마다 아직 받지 않은 사진을 받아요. 카메라의 사진은 지우지 않아요."),
+                ("원격 촬영", "카메라 탭의 원격 촬영에서 카메라 화면을 보며 셔터를 누를 수 있어요. 노출·이미지 컨트롤 같은 설정도 여기서 바꿀 수 있어요."),
+                ("USB로 연결", "USB-C 케이블이나 USB 카메라 어댑터로 카메라를 연결하고 켠 뒤 카메라 탭의 USB로 연결을 눌러 주세요. USB로는 사진 보기와 저장만 돼요."),
+                ("연결이 안 될 때", "카메라를 껐다 켠 뒤 다시 연결해 보세요. 그래도 안 되면 설정 → 앱 정보 및 지원 → 연결 진단에서 원인을 확인해 주세요. 예전 페어링 정보가 남아 등록이 안 되면, \(Self.deviceName)의 Bluetooth 설정에서 그 GR 카메라를 지운 뒤 다시 등록해 주세요."),
             ]
         case .privacy:
             return [
@@ -270,12 +270,12 @@ struct ConnectionCheckView: View {
             Section {
                 row("등록된 카메라", ok: !connection.cameras.isEmpty,
                     detail: connection.cameras.isEmpty ? nil : "\(connection.cameras.count)대",
-                    fix: "카메라 연결에서 카메라를 먼저 등록해 주세요.")
+                    fix: "카메라 탭에서 카메라를 먼저 등록해 주세요.")
                 row("Bluetooth 연결", ok: connection.ble.linkedCameraID != nil, detail: nil,
                     fix: "카메라가 켜져 있고 가까이 있는지 확인해 주세요.")
                 row("카메라 Wi-Fi", ok: connection.isConnected,
                     detail: connection.isConnected ? connection.route : nil,
-                    fix: "카메라 연결에서 Wi-Fi 연결을 눌러 주세요.")
+                    fix: "카메라 탭에서 연결을 눌러 주세요.")
                 if let message = connection.state.message {
                     Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                 }

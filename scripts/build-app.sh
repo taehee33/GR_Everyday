@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 xcodebuild -project "GR Mac.xcodeproj" -scheme "GR Mac" -configuration Release \
-    -derivedDataPath build/xcode -allowProvisioningUpdates -quiet build
+    -derivedDataPath build/xcode -allowProvisioningUpdates -allowProvisioningDeviceRegistration -quiet build
 # A running copy keeps its old signature while the file changes under it; quit it first.
 # (Earlier builds were "GR Mac.app", bundle id com.hantaehee.grconnect; that copy is left alone.)
 osascript -e 'tell application "GR Everyday" to quit' 2>/dev/null || true

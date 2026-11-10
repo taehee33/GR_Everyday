@@ -15,7 +15,7 @@ enum WiFi {
 
     static func interface() throws -> CWInterface {
         guard let iface = CWWiFiClient.shared().interface() else {
-            throw WiFiError(message: "Wi-Fi 인터페이스를 찾을 수 없습니다.")
+            throw WiFiError(message: "Wi-Fi 인터페이스를 찾을 수 없어요.")
         }
         return iface
     }
@@ -23,7 +23,7 @@ enum WiFi {
     static func join(_ credentials: WLANCredentials) async throws {
         guard await LocationPermission.shared.request() else {
             try Task.checkCancellation()
-            throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Everyday를 켜세요.")
+            throw WiFiError(message: "카메라 Wi-Fi 이름을 찾으려면 위치 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 GR Everyday를 켜 주세요.")
         }
         let iface = try interface()
         if iface.ssid() == credentials.ssid { return }
@@ -32,13 +32,13 @@ enum WiFi {
             // An exact-name scan also finds networks that don't broadcast often.
             let found = (try? iface.scanForNetworks(withName: credentials.ssid)) ?? []
             guard let network = found.max(by: { $0.rssiValue < $1.rssiValue }) else {
-                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않아요. 카메라 Wi-Fi가 꺼져 있어요.", notFound: true)
             }
             do {
                 try iface.associate(to: network, password: credentials.passphrase)
             } catch let error as NSError where error.code == -3912 {
                 // CoreWLAN -3912: the network went out of range — the camera's AP is off.
-                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않습니다. 카메라 Wi-Fi가 꺼져 있습니다.", notFound: true)
+                throw WiFiError(message: "카메라 Wi-Fi(\(credentials.ssid))가 보이지 않아요. 카메라 Wi-Fi가 꺼져 있어요.", notFound: true)
             } catch {
                 throw WiFiError(message: "\(credentials.ssid) 접속 실패: \(error.localizedDescription)")
             }

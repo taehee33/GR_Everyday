@@ -70,7 +70,7 @@ struct StatsView: View {
                         table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
                     }
                 }
-                Text("줄을 누르면 사진 탭에서 그 사진만 보여 줘요. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줘요. 흐린 +숫자는 카드에서 지운 사진이라 사진 탭에는 없어요.")
+                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줘요. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줘요. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없어요.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(compact ? 16 : 24)
@@ -217,7 +217,7 @@ struct StatsView: View {
                             Text(field.label(k)).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
                         .disabled(allOnCard == 0)
-                        .help("사진 탭에서 \(field.label(k)) 사진 \(allOnCard)장 보기")
+                        .help("라이브러리에서 \(field.label(k)) 사진 \(allOnCard)장 보기")
                         Button { open(ShotFilter(field: field, value: k, day: self.day)) } label: {
                             split(dayOnCard, dayDeleted).underline(dayOnCard > 0)
                         }

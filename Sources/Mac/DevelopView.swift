@@ -49,8 +49,8 @@ struct DevelopView: View {
     @ViewBuilder private var main: some View {
         if let photo = library.current {
             if photo.kind == .video {
-                ContentUnavailableView("동영상은 편집할 수 없습니다", systemImage: "video",
-                                       description: Text("확대 보기(E)에서 재생할 수 있습니다."))
+                ContentUnavailableView("동영상은 편집할 수 없어요", systemImage: "video",
+                                       description: Text("확대 보기(E)에서 재생할 수 있어요."))
             } else if library.localURL(photo) == nil {
                 notSaved(photo)
             } else {
@@ -63,7 +63,7 @@ struct DevelopView: View {
 
     private func notSaved(_ photo: Photo) -> some View {
         ContentUnavailableView {
-            Label("Mac에 저장한 사진만 편집할 수 있습니다", systemImage: "square.and.arrow.down")
+            Label("Mac에 저장한 사진만 편집할 수 있어요", systemImage: "square.and.arrow.down")
         } description: {
             Text("저장하면 원본(JPG·DNG)으로 바로 편집합니다. 편집은 원본 파일을 바꾸지 않고, ‘다른 이름으로 저장’으로 내보냅니다.")
         } actions: {
@@ -319,7 +319,7 @@ private struct DevelopPanel: View {
                         }
                     }
                     geometry
-                    Text("보정은 Apple Core Image 기본 필터(macOS 사진 앱과 같은 엔진)로 처리하며, 카메라의 이미지 컨트롤이나 카메라 내부 처리와는 다릅니다. 슬라이더 이름에 마우스를 올리면 쓰는 필터가 보입니다.")
+                    Text("보정은 Apple Core Image 기본 필터(macOS 사진 앱과 같은 엔진)로 처리해서, 카메라의 이미지 컨트롤이나 카메라 내부 처리와는 달라요. 슬라이더 이름에 마우스를 올리면 쓰는 필터가 보입니다.")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -415,13 +415,13 @@ private struct DevelopPanel: View {
                     library.setAdjustments(Adjustments(), for: photo)
                 }
                 .disabled(adj.isDefault)
-                .help("모든 편집을 지웁니다 (실행 취소 가능)")
+                .help("모든 편집을 지워요 (실행 취소 가능)")
                 Spacer()
                 Menu {
                     Button("설정 복사") {
                         copiedAdjustments = adj
                         hasCopy = true
-                        message = "설정을 복사했습니다"
+                        message = "설정을 복사했어요"
                     }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     Button("붙여넣기") { paste([photo]) }
@@ -457,7 +457,7 @@ private struct DevelopPanel: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("e", modifiers: [.command, .shift])
             .disabled(session.busy != nil)
-            Label("편집은 이 Mac에만 저장됩니다. 카메라의 사진과 저장 폴더의 원본은 바뀌지 않으며, ‘다른 이름으로 저장’하면 새 파일로 만들어집니다.",
+            Label("편집은 이 Mac에만 저장돼요. 카메라의 사진과 저장 폴더의 원본은 바뀌지 않고, ‘다른 이름으로 저장’하면 새 파일로 만들어져요.",
                   systemImage: "info.circle")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -494,7 +494,7 @@ private struct DevelopPanel: View {
         guard let copied = copiedAdjustments else { return }
         if photos.contains(photo) { snapshot() }
         for p in photos { library.setAdjustments(copied, for: p) }
-        message = "\(photos.count)장에 설정을 붙여넣었습니다"
+        message = "\(photos.count)장에 설정을 붙여넣었어요"
     }
 
     private func saveAs() {
@@ -504,7 +504,7 @@ private struct DevelopPanel: View {
         panel.canCreateDirectories = true
         panel.directoryURL = source.deletingLastPathComponent()
         panel.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + "-edit." + format.fileExtension
-        panel.message = "편집한 사진을 \(format.rawValue)로 저장합니다. 원본 파일은 그대로 남습니다."
+        panel.message = "편집한 사진을 \(format.rawValue)로 저장해요. 원본 파일은 그대로 남아요."
         guard panel.runModal() == .OK, let target = panel.url else { return }
         let adj = self.adj, source = self.source, quality = self.quality
         session.busy = "저장 중"

@@ -242,8 +242,8 @@ enum DevelopEngine {
 
     /// Full-resolution render of `source` with `adj`, keeping its metadata.
     static func export(source: URL, adj: Adjustments, to target: URL, format: ExportFormat, quality: Double) throws {
-        guard let image = load(source) else { throw Failure(message: "원본 파일을 읽을 수 없습니다") }
-        guard let cg = cgImage(apply(adj, to: image)) else { throw Failure(message: "이미지를 만들 수 없습니다") }
+        guard let image = load(source) else { throw Failure(message: "원본 파일을 읽을 수 없어요") }
+        guard let cg = cgImage(apply(adj, to: image)) else { throw Failure(message: "이미지를 만들 수 없어요") }
         var props: [CFString: Any] = [:]
         if let src = CGImageSourceCreateWithURL(source as CFURL, nil),
            let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
@@ -266,10 +266,10 @@ enum DevelopEngine {
         }
         if format.isLossy { props[kCGImageDestinationLossyCompressionQuality] = quality }
         guard let dest = CGImageDestinationCreateWithURL(target as CFURL, format.type.identifier as CFString, 1, nil) else {
-            throw Failure(message: "\(format.rawValue) 파일을 만들 수 없습니다")
+            throw Failure(message: "\(format.rawValue) 파일을 만들 수 없어요")
         }
         CGImageDestinationAddImage(dest, cg, props as CFDictionary)
-        guard CGImageDestinationFinalize(dest) else { throw Failure(message: "파일을 쓰지 못했습니다") }
+        guard CGImageDestinationFinalize(dest) else { throw Failure(message: "파일을 쓰지 못했어요") }
     }
 }
 

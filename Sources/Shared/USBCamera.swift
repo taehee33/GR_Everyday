@@ -125,7 +125,7 @@ final class USBCamera: NSObject, ObservableObject {
         #if os(iOS)
         await requestAccess()
         if accessDenied {
-            throw USBError(message: "USB 카메라 접근이 꺼져 있습니다. 설정 → GR Everyday에서 허용하세요.")
+            throw USBError(message: "USB 카메라 접근이 꺼져 있어요. 설정 → GR Everyday에서 허용해 주세요.")
         }
         // The browser reports a camera that was already plugged in shortly after it starts.
         for _ in 0..<40 where detected == nil { try? await Task.sleep(for: .milliseconds(250)) }
@@ -133,14 +133,14 @@ final class USBCamera: NSObject, ObservableObject {
         #endif
         guard let camera = detected else {
             #if os(iOS)
-            throw USBError(message: "USB로 연결된 GR이 없습니다. 카메라 어댑터(또는 USB-C 케이블)로 연결하고 카메라를 켜세요.")
+            throw USBError(message: "USB로 연결된 GR이 없어요. 카메라 어댑터(또는 USB-C 케이블)로 연결하고 카메라를 켜 주세요.")
             #else
-            throw USBError(message: "USB로 연결된 GR이 없습니다. 케이블을 연결하고 카메라를 켜세요.")
+            throw USBError(message: "USB로 연결된 GR이 없어요. 케이블을 연결하고 카메라를 켜 주세요.")
             #endif
         }
         if serving !== camera {
             DebugLog.write("usb: opening \(camera.name ?? "?")")
-            try await withTimeout(30, "카메라가 USB로 응답하지 않습니다. 카메라를 켜고 케이블을 다시 연결하세요.") {
+            try await withTimeout(30, "카메라가 USB로 응답하지 않아요. 카메라를 켜고 케이블을 다시 연결해 주세요.") {
                 try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                     self.opened = c
                     camera.requestOpenSession()
@@ -149,7 +149,7 @@ final class USBCamera: NSObject, ObservableObject {
             // The system reads every file's details before the list is complete: about 36 s for
             // 648 files on the GR IV, so this wait grows with the card.
             if camera.contentCatalogPercentCompleted < 100 {
-                try await withTimeout(600, "USB로 사진 목록을 다 읽지 못했습니다. 케이블을 다시 연결해 보세요.") {
+                try await withTimeout(600, "USB로 사진 목록을 다 읽지 못했어요. 케이블을 다시 연결해 보세요.") {
                     try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                         self.ready = c
                     }
@@ -248,7 +248,7 @@ final class USBCamera: NSObject, ObservableObject {
     private func answer(_ request: LocalServer.Request) async -> LocalServer.Response {
         let parts = request.path.split(separator: "/").map(String.init)   // ["v1", "photos", dir, name, "info"]
         guard parts.first == "v1", request.method == "GET" else {
-            return .error(501, "USB 연결에서는 지원하지 않는 기능입니다.")
+            return .error(501, "USB 연결에서는 지원하지 않는 기능이에요.")
         }
         switch Array(parts.dropFirst()) {
         case ["ping"]:
@@ -272,7 +272,7 @@ final class USBCamera: NSObject, ObservableObject {
                 return .error(500, error.localizedDescription)
             }
         default:
-            return .error(501, "USB 연결에서는 지원하지 않는 기능입니다.")
+            return .error(501, "USB 연결에서는 지원하지 않는 기능이에요.")
         }
     }
 
@@ -328,7 +328,7 @@ final class USBCamera: NSObject, ObservableObject {
         let (image, _) = try await generator.image(at: .zero)
         let out = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else {
-            throw USBError(message: "영상 썸네일을 만들 수 없습니다.")
+            throw USBError(message: "영상 썸네일을 만들 수 없어요.")
         }
         CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
         CGImageDestinationFinalize(dest)
@@ -337,17 +337,17 @@ final class USBCamera: NSObject, ObservableObject {
 
     /// A downscaled JPEG of the original, unrotated (the app applies the EXIF orientation).
     private func preview(_ file: ICCameraFile, maxPixels: Int) async throws -> Data {
-        guard !Self.isVideo(file) else { throw USBError(message: "영상은 미리보기가 없습니다.") }
+        guard !Self.isVideo(file) else { throw USBError(message: "영상은 미리보기가 없어요.") }
         let original = try await whole(file)
         guard let source = CGImageSourceCreateWithData(original as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,
                   kCGImageSourceThumbnailMaxPixelSize: maxPixels,
                   kCGImageSourceCreateThumbnailWithTransform: false,
-              ] as CFDictionary) else { throw USBError(message: "미리보기를 만들 수 없습니다.") }
+              ] as CFDictionary) else { throw USBError(message: "미리보기를 만들 수 없어요.") }
         let out = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else {
-            throw USBError(message: "미리보기를 만들 수 없습니다.")
+            throw USBError(message: "미리보기를 만들 수 없어요.")
         }
         CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
         CGImageDestinationFinalize(dest)
