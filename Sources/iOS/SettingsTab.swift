@@ -12,10 +12,25 @@ struct SettingsTab: View {
     @AppStorage(ImageCache.sharpThumbnailsKey) private var sharpThumbnails = false
     @State private var cacheSize: Int64 = 0
     @State private var showSharpInfo = false
+    @AppStorage(IPadMenu.key) private var iPadMenu = IPadMenu.bottom
 
     var body: some View {
         NavigationStack {
             Form {
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    Section {
+                        Picker("메뉴 위치", selection: $iPadMenu) {
+                            Text("아래 탭").tag(IPadMenu.bottom)
+                            Text("왼쪽 사이드바").tag(IPadMenu.sidebar)
+                        }
+                        .pickerStyle(.segmented)
+                    } header: {
+                        Text("화면")
+                    } footer: {
+                        Text("카메라 · 라이브러리 · 순간들 · 설정을 아래 탭으로 보일지, 왼쪽 사이드바로 보일지 골라요.")
+                    }
+                }
+
                 Section {
                     Toggle("연결하면 새 사진 자동 저장", isOn: $autoSave)
                     if autoSave {
@@ -68,6 +83,7 @@ struct SettingsTab: View {
                     }
                 }
             }
+            .readableWidth()
             .navigationTitle("설정")
             .toolbarTitleDisplayMode(.inlineLarge)
             .task { cacheSize = library.cacheSize }

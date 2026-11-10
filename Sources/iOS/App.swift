@@ -25,16 +25,7 @@ struct RootView: View {
     @State private var section: Pane = .camera
 
     var body: some View {
-        TabView(selection: $section) {
-            CameraTab(active: section == .camera) { section = .library }
-                .tabItem { Label(Pane.camera.rawValue, systemImage: Pane.camera.icon) }.tag(Pane.camera)
-            LibraryTab { section = .camera }
-                .tabItem { Label(Pane.library.rawValue, systemImage: Pane.library.icon) }.tag(Pane.library)
-            NavigationStack { MomentView() }
-                .tabItem { Label(Pane.moment.rawValue, systemImage: Pane.moment.icon) }.tag(Pane.moment)
-            SettingsTab()
-                .tabItem { Label(Pane.settings.rawValue, systemImage: Pane.settings.icon) }.tag(Pane.settings)
-        }
+        tabs
         // Already on the camera's Wi-Fi (joined in Settings, or still joined from last time):
         // connect without asking.
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -50,6 +41,79 @@ struct RootView: View {
                 library.prepareAutoSave(viaUSB: connection.viaUSB)
                 Task { await library.reload() }
             }
+        }
+    }
+
+    /// iPad: 설정 → 메뉴 위치. "bottom" (default) is the iPhone's tab bar at the bottom;
+    /// "sidebar" is the Mac-like sidebar (iPadOS 18+).
+    @AppStorage(IPadMenu.key) private var iPadMenu = IPadMenu.bottom
+    /// The real width class, handed back to the tabs' content when the bar is forced to the
+    /// iPhone style.
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    @ViewBuilder private var tabs: some View {
+        if #available(iOS 18, *), UIDevice.current.userInterfaceIdiom == .pad, iPadMenu == IPadMenu.sidebar {
+            TabView(selection: $section) {
+                Tab(Pane.camera.rawValue, systemImage: Pane.camera.icon, value: Pane.camera) {
+                    CameraTab(active: section == .camera) { section = .library }
+                }
+                Tab(Pane.library.rawValue, systemImage: Pane.library.icon, value: Pane.library) {
+                    LibraryTab { section = .camera }
+                }
+                Tab(Pane.moment.rawValue, systemImage: Pane.moment.icon, value: Pane.moment) {
+                    NavigationStack { MomentView() }
+                }
+                Tab(Pane.settings.rawValue, systemImage: Pane.settings.icon, value: Pane.settings) {
+                    SettingsTab()
+                }
+            }
+            .tabViewStyle(.sidebarAdaptable)
+            .defaultAdaptableTabBarPlacement(.sidebar)
+        } else {
+            // A compact width class makes iPad draw the tab bar at the bottom, as on iPhone;
+            // each tab gets the real class back so its own layout still uses the space.
+            let real = sizeClass
+            TabView(selection: $section) {
+                CameraTab(active: section == .camera) { section = .library }
+                    .environment(\.horizontalSizeClass, real)
+                    .tabItem { Label(Pane.camera.rawValue, systemImage: Pane.camera.icon) }.tag(Pane.camera)
+                LibraryTab { section = .camera }
+                    .environment(\.horizontalSizeClass, real)
+                    .tabItem { Label(Pane.library.rawValue, systemImage: Pane.library.icon) }.tag(Pane.library)
+                NavigationStack { MomentView() }
+                    .environment(\.horizontalSizeClass, real)
+                    .tabItem { Label(Pane.moment.rawValue, systemImage: Pane.moment.icon) }.tag(Pane.moment)
+                SettingsTab()
+                    .environment(\.horizontalSizeClass, real)
+                    .tabItem { Label(Pane.settings.rawValue, systemImage: Pane.settings.icon) }.tag(Pane.settings)
+            }
+            .environment(\.horizontalSizeClass, .compact)
+        }
+    }
+}
+
+/// Where iPad shows the four sections.
+enum IPadMenu {
+    static let key = "iPadMenu"
+    static let bottom = "bottom", sidebar = "sidebar"
+}
+
+extension View {
+    /// Keeps lists and forms at a readable width on iPad instead of running edge to edge.
+    func readableWidth(_ maxWidth: CGFloat = 720) -> some View {
+        modifier(ReadableWidth(maxWidth: maxWidth))
+    }
+}
+
+private struct ReadableWidth: ViewModifier {
+    let maxWidth: CGFloat
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    func body(content: Content) -> some View {
+        GeometryReader { geo in
+            content.contentMargins(.horizontal,
+                                   sizeClass == .regular ? max((geo.size.width - maxWidth) / 2, 20) : 0,
+                                   for: .scrollContent)
         }
     }
 }

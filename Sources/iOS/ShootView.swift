@@ -39,9 +39,12 @@ struct ShootView: View {
     private var ready: Bool { !connection.viaUSB && (connection.isConnected || connection.state == .lost) }
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geo in
+            // iPad turns freely: held sideways it gets the side-column layout without the
+            // 가로 모드 button (which only exists to turn the iPhone).
+            let sideLayout = fullscreen || (Self.isPad && geo.size.width > geo.size.height)
             Group {
-                if fullscreen {
+                if sideLayout {
                     ZStack {
                         liveView.ignoresSafeArea()
                         // Chips centred on the screen, kept clear of the button column on
@@ -93,6 +96,8 @@ struct ShootView: View {
         }
         .onDisappear { live.stop(); shootTask?.cancel(); setLandscape(false) }
     }
+
+    private static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     /// Turns the phone sideways into the full-screen layout, or back to portrait.
     private func setLandscape(_ on: Bool) {
@@ -173,8 +178,8 @@ struct ShootView: View {
             }
             .overlay(alignment: .topTrailing) {
                 // In landscape the button sits in the right-hand column instead, clear of
-                // the rounded corner.
-                if ready && !fullscreen {
+                // the rounded corner. iPad rotates by itself, so it has no button.
+                if ready && !fullscreen && !Self.isPad {
                     Button {
                         setLandscape(!fullscreen)
                     } label: {
@@ -223,6 +228,7 @@ struct ShootView: View {
         }
         .frame(maxHeight: .infinity)
         .overlay(alignment: .top) {
+            if fullscreen {
             Button { setLandscape(false) } label: {
                 Image(systemName: "rectangle.portrait.rotate")
                     .font(.body.weight(.semibold))
@@ -231,6 +237,7 @@ struct ShootView: View {
             }
             .accessibilityLabel("세로 모드로")
             .padding(.top, 12)
+            }
         }
         .padding(.horizontal, 20)
         .frame(maxHeight: .infinity)

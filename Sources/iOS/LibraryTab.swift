@@ -12,6 +12,9 @@ struct LibraryTab: View {
     @State private var showFilter = false
     @State private var page: Page = .photos
     @AppStorage("iosThumbSize") private var thumbSize = 100.0
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// iPad's wider grid gets proportionally larger tiles for the same 작게/보통/크게.
+    private var tileSize: CGFloat { sizeClass == .regular ? thumbSize * 1.6 : thumbSize }
 
     enum Page: String, CaseIterable { case photos = "사진", tones = "이미지 컨트롤", stats = "촬영 통계" }
 
@@ -105,7 +108,7 @@ struct LibraryTab: View {
     private var grid: some View {
         ScrollView {
             CameraStatusCard(ble: connection.ble, openCamera: openCamera)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: thumbSize), spacing: 2)], spacing: 2,
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 2)], spacing: 2,
                       pinnedViews: [.sectionHeaders]) {
                 ForEach(library.sections) { section in
                     Section {

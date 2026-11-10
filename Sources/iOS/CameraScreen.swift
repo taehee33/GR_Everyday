@@ -44,6 +44,7 @@ struct CameraScreen: View {
                 Text("설정 앱에서 카메라 Wi-Fi(GR_…)에 직접 붙었을 때, 또는 케이블로 연결했을 때 써요. USB로는 사진 보기와 저장만 돼요.")
             }
         }
+        .readableWidth()
         // No title on screen (the tab says 카메라); kept for the back button of the
         // shooting screen.
         .navigationTitle("카메라")

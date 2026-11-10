@@ -118,6 +118,9 @@ struct AboutView: View {
             }
         }
         .formStyle(.grouped)
+        #if os(iOS)
+        .readableWidth()
+        #endif
         .navigationTitle("앱 정보 및 지원")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
