@@ -45,30 +45,15 @@ struct RootView: View {
     }
 
     /// iPad: 설정 → 메뉴 위치. "bottom" (default) is the iPhone's tab bar at the bottom;
-    /// "sidebar" is the Mac-like sidebar (iPadOS 18+).
+    /// "sidebar" is a Mac-like sidebar that narrows to icons.
     @AppStorage(IPadMenu.key) private var iPadMenu = IPadMenu.bottom
     /// The real width class, handed back to the tabs' content when the bar is forced to the
     /// iPhone style.
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     @ViewBuilder private var tabs: some View {
-        if #available(iOS 18, *), UIDevice.current.userInterfaceIdiom == .pad, iPadMenu == IPadMenu.sidebar {
-            TabView(selection: $section) {
-                Tab(Pane.camera.rawValue, systemImage: Pane.camera.icon, value: Pane.camera) {
-                    CameraTab(active: section == .camera) { section = .library }
-                }
-                Tab(Pane.library.rawValue, systemImage: Pane.library.icon, value: Pane.library) {
-                    LibraryTab { section = .camera }
-                }
-                Tab(Pane.moment.rawValue, systemImage: Pane.moment.icon, value: Pane.moment) {
-                    NavigationStack { MomentView() }
-                }
-                Tab(Pane.settings.rawValue, systemImage: Pane.settings.icon, value: Pane.settings) {
-                    SettingsTab()
-                }
-            }
-            .tabViewStyle(.sidebarAdaptable)
-            .defaultAdaptableTabBarPlacement(.sidebar)
+        if UIDevice.current.userInterfaceIdiom == .pad, iPadMenu == IPadMenu.sidebar {
+            SidebarLayout(section: $section)
         } else {
             // A compact width class makes iPad draw the tab bar at the bottom, as on iPhone;
             // each tab gets the real class back so its own layout still uses the space.
@@ -89,6 +74,70 @@ struct RootView: View {
             }
             .environment(\.horizontalSizeClass, .compact)
         }
+    }
+}
+
+/// iPad's sidebar: always there, either with names or narrowed to icons by the button at
+/// its top (the system sidebar would turn into a tab bar instead). Every section stays
+/// alive underneath so switching keeps its scroll position and navigation.
+private struct SidebarLayout: View {
+    @Binding var section: Pane
+    @AppStorage("iPadSidebarWide") private var wide = true
+
+    private let panes: [Pane] = [.camera, .library, .moment, .settings]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider().ignoresSafeArea()
+            ZStack {
+                page(.camera) { CameraTab(active: section == .camera) { section = .library } }
+                page(.library) { LibraryTab { section = .camera } }
+                page(.moment) { NavigationStack { MomentView() } }
+                page(.settings) { SettingsTab() }
+            }
+        }
+    }
+
+    private func page<V: View>(_ pane: Pane, @ViewBuilder _ view: () -> V) -> some View {
+        view()
+            .opacity(section == pane ? 1 : 0)
+            .allowsHitTesting(section == pane)
+            .accessibilityHidden(section != pane)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.snappy) { wide.toggle() }
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(wide ? "사이드바 줄이기" : "사이드바 늘리기")
+            .padding(.bottom, 8)
+            ForEach(panes) { pane in
+                let on = section == pane
+                Button { section = pane } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: pane.icon).font(.title3).frame(width: 28)
+                        if wide { Text(pane.rawValue).font(.body.weight(on ? .semibold : .regular)) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: wide ? .leading : .center)
+                    .padding(.horizontal, wide ? 12 : 0).padding(.vertical, 10)
+                    .foregroundStyle(on ? Color.accentColor : .primary)
+                    .background(on ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                    .contentShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(pane.rawValue)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10).padding(.top, 8)
+        .frame(width: wide ? 220 : 68)
+        .background(Color(.secondarySystemBackground))
     }
 }
 

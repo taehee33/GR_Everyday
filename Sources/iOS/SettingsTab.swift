@@ -19,15 +19,11 @@ struct SettingsTab: View {
             Form {
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     Section {
-                        Picker("메뉴 위치", selection: $iPadMenu) {
-                            Text("아래 탭").tag(IPadMenu.bottom)
-                            Text("왼쪽 사이드바").tag(IPadMenu.sidebar)
-                        }
-                        .pickerStyle(.segmented)
+                        menuChoice("아래 탭", detail: "iPhone처럼 화면 아래에", icon: "dock.rectangle", value: IPadMenu.bottom)
+                        menuChoice("왼쪽 사이드바", detail: "Mac처럼 왼쪽에, 아이콘만 보이게 줄일 수 있어요",
+                                   icon: "sidebar.left", value: IPadMenu.sidebar)
                     } header: {
-                        Text("화면")
-                    } footer: {
-                        Text("카메라 · 라이브러리 · 순간들 · 설정을 아래 탭으로 보일지, 왼쪽 사이드바로 보일지 골라요.")
+                        Text("메뉴 위치")
                     }
                 }
 
@@ -89,6 +85,26 @@ struct SettingsTab: View {
             .task { cacheSize = library.cacheSize }
             .sheet(isPresented: $showSharpInfo) { sharpInfo }
         }
+    }
+
+    private func menuChoice(_ title: String, detail: String, icon: String, value: String) -> some View {
+        Button {
+            withAnimation { iPadMenu = value }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.title3).frame(width: 30).foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if iPadMenu == value {
+                    Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.accentColor)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// What 미리보기 더 선명하게 changes. Measured on a GR IV HDF: the camera's thumbs for
