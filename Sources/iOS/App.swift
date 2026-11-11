@@ -167,11 +167,14 @@ private struct ReadableWidth: ViewModifier {
     let maxWidth: CGFloat
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    func body(content: Content) -> some View {
-        GeometryReader { geo in
-            content.contentMargins(.horizontal,
-                                   sizeClass == .regular ? max((geo.size.width - maxWidth) / 2, 20) : 0,
-                                   for: .scrollContent)
+    @ViewBuilder func body(content: Content) -> some View {
+        if sizeClass == .regular {
+            GeometryReader { geo in
+                content.contentMargins(.horizontal, max((geo.size.width - maxWidth) / 2, 20), for: .scrollContent)
+            }
+        } else {
+            // iPhone keeps the list's own side margins; setting them to 0 removed them.
+            content
         }
     }
 }
