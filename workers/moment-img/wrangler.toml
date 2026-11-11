@@ -1,0 +1,10 @@
+# Deploy: npx wrangler deploy (from this folder). The address will be
+# https://moment-img.<your account subdomain>.workers.dev — put it in app_config.image_base_url.
+name = "moment-img"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "moments"

@@ -8,5 +8,10 @@
 	<!-- Read the current network's name (NEHotspotNetwork.fetchCurrent) to notice the camera Wi-Fi -->
 	<key>com.apple.developer.networking.wifi-info</key>
 	<true/>
+	<!-- Sign in with Apple for 순간 (Moments); Supabase verifies the identity token -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

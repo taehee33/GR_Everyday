@@ -5,3 +5,9 @@ build/
 *.pklg
 xcuserdata/
 *.xcworkspace/xcuserdata/
+
+# Moment server tooling
+node_modules/
+.wrangler/
+supabase/.temp/
+supabase/.branches/

@@ -1,0 +1,29 @@
+# Supabase CLI settings for Moment. Remote project ref: rqnwgvfirkfxfawnawzf (Seoul).
+# Link once with: npx supabase link --project-ref rqnwgvfirkfxfawnawzf
+project_id = "gr-everyday"
+
+[functions.moment-upload]
+verify_jwt = true
+
+[functions.moment-publish]
+verify_jwt = true
+
+[functions.moment-delete]
+verify_jwt = true
+
+[functions.account-delete]
+verify_jwt = true
+
+# Called by pg_cron, not by the app; checks the x-cron-secret header itself.
+[functions.moment-cleanup]
+verify_jwt = false
+
+[auth]
+# Where the apps' web sign-in (Google) returns; ASWebAuthenticationSession catches this scheme.
+additional_redirect_urls = ["com.hantaehee.greveryday://login-callback"]
+
+# Sign in with Apple from the apps (native flow: no secret key needed, only the bundle id).
+[auth.external.apple]
+enabled = true
+client_id = "com.hantaehee.greveryday"
+secret = ""
