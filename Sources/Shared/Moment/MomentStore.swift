@@ -77,10 +77,39 @@ struct MomentPhoto: Codable, Equatable, Identifiable {
     let createdAt: Date
     /// On the Moment feed since; nil = only on the owner's wall.
     var sharedAt: Date?
+    /// The owner's names, when the store read them with the photo (the feed does).
+    var author: MomentAuthor? = nil
 
     enum Status: String, Codable { case uploading, published, hidden }
 
     var isShared: Bool { sharedAt != nil }
+}
+
+/// Who took a photo, as shown on the feed: display name and @handle.
+struct MomentAuthor: Codable, Equatable {
+    var handle: String?
+    var displayName: String?
+
+    /// The display name, or @handle when there is none.
+    var title: String {
+        displayName ?? handle.map { "@\($0)" } ?? "이름 없음"
+    }
+}
+
+/// Why a photo is reported; the raw values are the database's reports.reason check.
+enum MomentReportReason: String, CaseIterable, Identifiable {
+    case nudity, violence, spam, copyright, other
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .nudity: return "선정적인 내용"
+        case .violence: return "폭력적이거나 불쾌한 내용"
+        case .spam: return "스팸·광고"
+        case .copyright: return "다른 사람의 사진 (저작권)"
+        case .other: return "기타"
+        }
+    }
 }
 
 /// One photo's place on a Photowall. Both layouts are kept so switching style loses nothing.
@@ -195,6 +224,8 @@ protocol MomentStore: AnyObject {
     func saveWall(style: MomentProfile.WallStyle, items: [WallItem]) async throws
 
     func like(_ photo: UUID, _ on: Bool) async throws
+    /// Which of `photos` I have liked (empty when signed out).
+    func likes(among photos: [UUID]) async throws -> Set<UUID>
     func report(_ photo: UUID, reason: String, note: String?) async throws
     func block(_ owner: UUID) async throws
 
@@ -322,7 +353,12 @@ final class MockMomentStore: MomentStore {
             .filter { $0.status == .published && $0.sharedAt != nil && !blocked.contains($0.owner) }
             .filter { before == nil || $0.sharedAt! < before! }
             .sorted { $0.sharedAt! > $1.sharedAt! }
-            .prefix(limit).map { $0 }
+            .prefix(limit).map { photo in
+                var photo = photo
+                let owner = profiles[photo.owner]
+                photo.author = MomentAuthor(handle: owner?.handle, displayName: owner?.displayName)
+                return photo
+            }
     }
 
     func wall(of owner: UUID) async throws -> (profile: MomentProfile, photos: [MomentPhoto], items: [WallItem]) {
@@ -410,6 +446,10 @@ final class MockMomentStore: MomentStore {
         guard photos[id] != nil else { throw MomentError.notFound }
         if on, liked.insert(id).inserted { photos[id]?.likeCount += 1 }
         if !on, liked.remove(id) != nil { photos[id]?.likeCount -= 1 }
+    }
+
+    func likes(among ids: [UUID]) async throws -> Set<UUID> {
+        me == nil ? [] : liked.intersection(ids)
     }
 
     func report(_ id: UUID, reason: String, note: String?) async throws {

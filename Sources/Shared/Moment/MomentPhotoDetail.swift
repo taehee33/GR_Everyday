@@ -37,18 +37,7 @@ struct MomentPhotoDetail: View {
     private func content(_ photo: MomentPhoto) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                AsyncImage(url: account.store.displayURL(photo)) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    AsyncImage(url: account.store.thumbURL(photo)) { image in
-                        image.resizable().scaledToFit().blur(radius: 2)
-                    } placeholder: {
-                        Rectangle().fill(.quaternary)
-                            .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                MomentFullImage(store: account.store, photo: photo)
 
                 statusLine(photo)
 
@@ -56,11 +45,7 @@ struct MomentPhotoDetail: View {
                     Text(caption).font(.body).textSelection(.enabled)
                 }
 
-                if let place = placeText(photo) {
-                    Label(place, systemImage: "mappin.and.ellipse").font(.callout)
-                }
-
-                infoRows(photo.info)
+                MomentInfoSection(info: photo.info)
 
                 actions(photo)
 
@@ -100,34 +85,6 @@ struct MomentPhotoDetail: View {
         .font(.footnote)
     }
 
-    private func placeText(_ photo: MomentPhoto) -> String? {
-        if let place = photo.info.place { return place }
-        if photo.info.lat != nil { return "대략적인 위치 있음" }
-        return nil
-    }
-
-    @ViewBuilder private func infoRows(_ info: MomentShotInfo) -> some View {
-        let rows: [(String, String)] = [
-            ("카메라", info.camera),
-            ("노출", info.exposureSummary),
-            ("이미지 컨트롤", info.imageControlSummary(maxSettings: 12)),
-            ("HDF", info.imageControl?.hdf),
-            ("촬영 일시", info.takenAt?.formatted(date: .long, time: .shortened)),
-        ].compactMap { label, value in value.map { (label, $0) } }
-        if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("촬영 정보").font(.headline)
-                ForEach(rows, id: \.0) { row in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(row.0).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
-                        Text(row.1).textSelection(.enabled)
-                    }
-                    .font(.callout)
-                }
-            }
-        }
-    }
-
     @ViewBuilder private func actions(_ photo: MomentPhoto) -> some View {
         VStack(spacing: 10) {
             if photo.status == .published {
@@ -158,5 +115,62 @@ struct MomentPhotoDetail: View {
         }
         .disabled(account.busy)
         .padding(.top, 4)
+    }
+}
+
+/// The full view (3072 px), with the thumbnail blurred underneath until it arrives.
+struct MomentFullImage: View {
+    let store: MomentStore
+    let photo: MomentPhoto
+
+    var body: some View {
+        AsyncImage(url: store.displayURL(photo)) { image in
+            image.resizable().scaledToFit()
+        } placeholder: {
+            AsyncImage(url: store.thumbURL(photo)) { image in
+                image.resizable().scaledToFit().blur(radius: 2)
+            } placeholder: {
+                Rectangle().fill(.quaternary)
+                    .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Place and the shot info the owner chose to share.
+struct MomentInfoSection: View {
+    let info: MomentShotInfo
+
+    var body: some View {
+        if let place {
+            Label(place, systemImage: "mappin.and.ellipse").font(.callout)
+        }
+        let rows: [(String, String)] = [
+            ("카메라", info.camera),
+            ("노출", info.exposureSummary),
+            ("이미지 컨트롤", info.imageControlSummary(maxSettings: 12)),
+            ("HDF", info.imageControl?.hdf),
+            ("촬영 일시", info.takenAt?.formatted(date: .long, time: .shortened)),
+        ].compactMap { label, value in value.map { (label, $0) } }
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("촬영 정보").font(.headline)
+                ForEach(rows, id: \.0) { row in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(row.0).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
+                        Text(row.1).textSelection(.enabled)
+                    }
+                    .font(.callout)
+                }
+            }
+        }
+    }
+
+    private var place: String? {
+        if let place = info.place { return place }
+        if info.lat != nil { return "대략적인 위치 있음" }
+        return nil
     }
 }

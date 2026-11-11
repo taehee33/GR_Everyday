@@ -327,7 +327,11 @@ struct MomentUploadView: View {
             }
             Section {
                 Button {
-                    Task { await model.upload(with: account.store); await account.reloadPhotos() }
+                    Task {
+                        await model.upload(with: account.store)
+                        await account.reloadPhotos()
+                        if account.feed.loaded { await account.feed.reload() }
+                    }
                 } label: {
                     HStack {
                         Spacer()

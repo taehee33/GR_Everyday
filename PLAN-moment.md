@@ -13,7 +13,8 @@
 - 이름 규칙 (2026-11-11, `20261111010000_moment_names.sql`, 적용·시험함): **표시 이름**은 한글·이모지 가능 1–20자, 대소문자·한글 조합 방식 무시하고 중복 불가, 언제든 변경. **@사용자명**은 `set_handle()`로만 변경(앱이 직접 못 바꿈). 처음 정한 뒤로는 30일에 한 번, 이전 사용자명은 `handle_holds`에 14일 보호. 중복 확인은 `handle_available()` / `display_name_available()`(로그인한 사용자만).
 - 사용자명 (2026-11-11): 2–20자(`20261111000000_moment_handle_min2.sql`, 적용됨). 입력하는 동안 형식과 중복을 바로 알려 줌. 로그인 후 언제든 "사용자명 변경". 로그아웃·탈퇴 버튼은 사용자명을 정하기 전 단계부터 보임.
 - 시뮬레이터(iOS 26.3 런타임)는 Google 로그인 페이지에서 WebContent가 JavaScriptCore 충돌로 죽음 → 실제 기기나 Mac 앱으로 시험.
-- 남은 것: Apple 로그인 실제 확인, 업로드 화면, 피드, Photowall 화면.
+- 피드 (2026-11-11, `MomentFeedView.swift`): 순간들 탭 위쪽에 "피드 / 내 순간들" 전환. 피드는 공유된 사진 그리드(30장씩, 끝에 닿으면 다음 페이지), 타일에 표시 이름과 좋아요 수. 누르면 상세: 크게 보기, 표시 이름 + @사용자명(내 사진이면 "나"), 캡션, 촬영 정보, 좋아요(바로 반영, 실패하면 되돌림). 다른 사람 사진은 ⋯ 메뉴에서 신고(이유 5가지 = `reports.reason`)·차단. 신고하거나 차단하면 내 피드에서 바로 빠짐. 작성자 이름은 `author:profiles!photos_owner_fkey(handle,display_name)`로 함께 읽음(`likes` 때문에 `profiles`만 쓰면 관계가 두 개라 PGRST201). 내가 누른 좋아요는 `likes(among:)`로 읽음. Mac 앱에서 피드·상세·좋아요/취소(서버 like_count 1→0) 확인. 신고·차단은 다른 계정의 공유 사진이 있어야 시험 가능.
+- 남은 것: Photowall 배치(그리드·자유), 차단 목록·차단 해제(설정), 썸네일 WebP, 약관 동의.
 - Supabase 연결(`SupabaseMomentStore`)과 화면은 아직 없음. `Sources/Shared/MomentView.swift`는 자리만 잡아 둔 화면.
 
 ## 0. 확정된 것

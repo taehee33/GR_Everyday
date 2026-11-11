@@ -41,11 +41,14 @@ final class MomentAccount: ObservableObject {
     private var checkTasks: [NameKind: Task<Void, Never>] = [:]
 
     let store: MomentStore
+    /// The shared photos everyone sees; kept here so the tab's screens use one copy.
+    let feed: MomentFeed
     /// The raw nonce of the Sign in with Apple request in flight; Supabase checks its hash.
     private var nonce: String?
 
     init(store: MomentStore = SupabaseMomentStore()) {
         self.store = store
+        self.feed = MomentFeed(store: store)
     }
 
     func load() async {
@@ -180,6 +183,8 @@ final class MomentAccount: ObservableObject {
         do {
             try await work()
             await reloadPhotos()
+            // Sharing, unsharing and deleting change what the feed shows.
+            if feed.loaded { await feed.reload() }
             return true
         } catch {
             errorMessage = error.localizedDescription
