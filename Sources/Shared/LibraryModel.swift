@@ -484,9 +484,20 @@ final class LibraryModel: ObservableObject {
             error = nil
             refreshSaved()
             loadInfos()
+        } catch is CancellationError {
+        } catch let error as URLError where error.code == .cancelled {
+            // A pull-to-refresh that iOS called off; nothing went wrong with the camera.
         } catch {
             self.error = "사진 목록을 불러오지 못했어요: \(error.localizedDescription)"
         }
+    }
+
+    /// After a shot: the camera needs a moment to write the file before it is listed, and a
+    /// reload already running would make this one a no-op, so wait for both.
+    func reloadAfterShot() async {
+        for _ in 0..<20 where isLoading { try? await Task.sleep(for: .milliseconds(250)) }
+        try? await Task.sleep(for: .seconds(1.5))
+        await reload()
     }
 
     /// One small request per photo, newest first, so the top of the grid fills in first.

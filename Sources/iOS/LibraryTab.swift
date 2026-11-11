@@ -59,12 +59,14 @@ struct LibraryTab: View {
                 .background(.bar)
             }
             .safeAreaInset(edge: .bottom) { if page == .photos { bottomBar } }
-            .refreshable { if online { await library.reload() } }
+            // Run outside the refresh task: iOS cancels that one when the list redraws
+            // mid-refresh, which cancelled the request to the camera.
+            .refreshable { if online { await Task { await library.reload() }.value } }
             .sheet(isPresented: $showFilter) { FilterSheet() }
             .fullScreenCover(item: $viewing) { photo in
                 PhotoPager(start: photo, photos: library.visible)
             }
-            .alert("저장하지 못했어요", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
+            .alert(library.error?.hasPrefix("사진 목록") == true ? "사진을 불러오지 못했어요" : "저장하지 못했어요", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 Button("확인", role: .cancel) {}
             } message: {
                 Text(library.error ?? "")

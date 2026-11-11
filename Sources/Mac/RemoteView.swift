@@ -234,7 +234,7 @@ struct RemoteView: View {
             do {
                 try await CameraAPI.shoot()
                 status = "촬영됨 — 카메라에 저장"
-                await library.reload()
+                await library.reloadAfterShot()
                 await loadProps()
             } catch {
                 status = "촬영 실패: \(error.localizedDescription)"

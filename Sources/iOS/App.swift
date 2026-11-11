@@ -83,15 +83,24 @@ struct RootView: View {
 private struct SidebarLayout: View {
     @Binding var section: Pane
     @AppStorage("iPadSidebarWide") private var wide = true
+    /// The shooting screen is open in the 카메라 section.
+    @State private var shooting = false
 
     private let panes: [Pane] = [.camera, .library, .moment, .settings]
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-            Divider().ignoresSafeArea()
+            if !(shooting && section == .camera) {
+                sidebar
+                Divider().ignoresSafeArea()
+            }
             ZStack {
-                page(.camera) { CameraTab(active: section == .camera) { section = .library } }
+                page(.camera) {
+                    CameraTab(active: section == .camera) { section = .library }
+                        .onPreferenceChange(HidesAppMenu.self) { hide in
+                            withAnimation(.snappy) { shooting = hide }
+                        }
+                }
                 page(.library) { LibraryTab { section = .camera } }
                 page(.moment) { NavigationStack { MomentView() } }
                 page(.settings) { SettingsTab() }

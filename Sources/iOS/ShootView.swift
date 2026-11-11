@@ -67,7 +67,9 @@ struct ShootView: View {
         .toolbarBackground(.black, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar(fullscreen ? .hidden : .visible, for: .navigationBar)
-        .toolbar(fullscreen ? .hidden : .visible, for: .tabBar)
+        // The back button leads out, so the app's tab bar / sidebar stay hidden here.
+        .toolbar(.hidden, for: .tabBar)
+        .preference(key: HidesAppMenu.self, value: true)
         .statusBarHidden(fullscreen)
         .persistentSystemOverlays(fullscreen ? .hidden : .automatic)
         .toolbar {
@@ -423,7 +425,7 @@ struct ShootView: View {
             do {
                 try await CameraAPI.shoot()
                 status = "촬영됨 — 카메라에 저장"
-                await library.reload()
+                await library.reloadAfterShot()
                 await loadProps()
             } catch {
                 status = "촬영 실패: \(error.localizedDescription)"
@@ -485,4 +487,10 @@ struct DialStrip: View {
             }
         }
     }
+}
+
+/// Set by screens that want the app's own menu (the iPad sidebar) out of the way.
+struct HidesAppMenu: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
 }
