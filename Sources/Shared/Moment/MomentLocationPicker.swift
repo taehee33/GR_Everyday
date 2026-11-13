@@ -3,7 +3,7 @@ import MapKit
 import SwiftUI
 
 /// Where a photo was taken, picked by hand on Apple Maps (no API key, nothing to pay). Search a
-/// place or move the map so the pin sits on the spot. Only a rounded position (~1 km) is shared;
+/// place or move the map so the pin sits on the spot. The picked position is shared as is;
 /// see MomentShotInfo.shared.
 struct MomentLocationPicker: View {
     /// Where the map starts (the current choice, the photo's GPS, or Seoul).
@@ -113,7 +113,7 @@ struct MomentLocationPicker: View {
             Text(placeName ?? "지도를 움직여 핀을 찍은 곳에 맞춰 주세요")
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
-            Text("다른 사람에게는 약 1km 단위의 대략적인 위치만 보여요.")
+            Text("고른 위치는 사진 정보(i)에서 다른 사람도 지도로 볼 수 있어요.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(12)

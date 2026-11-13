@@ -309,56 +309,73 @@ final class MomentComments: ObservableObject {
     }
 }
 
-/// The comments under a photo, and a box to write one. Long-press (right-click on the Mac) a
-/// comment to delete it (mine, or any under my photo), report it or block its writer.
-struct MomentCommentsSection: View {
+/// The comments under a photo in a sheet that slides up, Instagram style: the list, and a box
+/// pinned to the bottom to write one. Dragging the list or tapping anywhere off the box puts
+/// the keyboard away. Long-press (right-click on the Mac) or ⋯ on a comment to delete it (mine,
+/// or any under my photo), report it or block its writer. The detail screen owns `model`, so
+/// its comment count follows what happens here.
+struct MomentCommentsSheet: View {
     @ObservedObject var account: MomentAccount
+    @ObservedObject var model: MomentComments
     let photo: MomentPhoto
-    /// Opens a writer's gallery.
+    /// Opens a writer's gallery (the sheet closes first).
     var onOpenPerson: ((UUID) -> Void)? = nil
-    @StateObject private var model: MomentComments
+    @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var reporting: MomentComment?
     @FocusState private var focused: Bool
-
-    init(account: MomentAccount, photo: MomentPhoto, onOpenPerson: ((UUID) -> Void)? = nil) {
-        self.account = account
-        self.photo = photo
-        self.onOpenPerson = onOpenPerson
-        _model = StateObject(wrappedValue: MomentComments(store: account.store, photoID: photo.id))
-    }
 
     private var myID: UUID? { account.me?.id }
     private var canWrite: Bool { account.state == .ready && photo.status == .published }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Text("댓글").font(.headline)
-                if !model.list.isEmpty {
-                    Text("\(model.list.count)").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if !model.loaded {
+                        ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                    } else if model.list.isEmpty {
+                        VStack(spacing: 6) {
+                            Text("아직 댓글이 없어요").font(.headline)
+                            Text(canWrite ? "첫 댓글을 남겨 보세요." : "").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity).padding(.top, 40)
+                    }
+                    ForEach(model.list) { comment in
+                        row(comment)
+                    }
+                    if let notice = model.notice {
+                        Label(notice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if let message = model.errorMessage {
+                        Text(message).font(.footnote).foregroundStyle(.red)
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !model.loaded {
-                ProgressView().controlSize(.small)
-            } else if model.list.isEmpty {
-                Text("아직 댓글이 없어요.").font(.footnote).foregroundStyle(.secondary)
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { focused = false })
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            .navigationTitle("댓글")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #else
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
             }
-            ForEach(model.list) { comment in
-                row(comment)
-            }
-            if let notice = model.notice {
-                Label(notice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
-            }
-            if let message = model.errorMessage {
-                Text(message).font(.footnote).foregroundStyle(.red)
-            }
-            if canWrite {
-                composer
-            } else if account.me == nil {
-                Text("댓글은 로그인한 뒤에 남길 수 있어요.").font(.footnote).foregroundStyle(.secondary)
-            }
+            #endif
         }
+        #if os(iOS)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        #else
+        .frame(minWidth: 460, minHeight: 520)
+        #endif
         .task { await model.reload() }
         .confirmationDialog("댓글을 신고하는 이유를 골라 주세요",
                             isPresented: Binding(get: { reporting != nil }, set: { if !$0 { reporting = nil } }),
@@ -369,16 +386,41 @@ struct MomentCommentsSection: View {
         }
     }
 
+    @ViewBuilder private var bottomBar: some View {
+        if canWrite {
+            composer
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.bar)
+                .overlay(alignment: .top) { Divider() }
+        } else if account.me == nil {
+            Text("댓글은 로그인한 뒤에 남길 수 있어요.")
+                .font(.footnote).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(.bar)
+        }
+    }
+
+    private func openPerson(_ id: UUID) {
+        guard let onOpenPerson else { return }
+        dismiss()
+        // Let this sheet finish closing before the next one opens.
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            onOpenPerson(id)
+        }
+    }
+
     private func row(_ comment: MomentComment) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Button { onOpenPerson?(comment.author) } label: {
-                MomentAvatarView(store: account.store, owner: comment.author, author: comment.authorInfo, size: 30)
+        HStack(alignment: .top, spacing: 12) {
+            Button { openPerson(comment.author) } label: {
+                MomentAvatarView(store: account.store, owner: comment.author, author: comment.authorInfo, size: 36)
             }
             .buttonStyle(.plain)
             .disabled(onOpenPerson == nil)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Button { onOpenPerson?(comment.author) } label: {
+                    Button { openPerson(comment.author) } label: {
                         Text(comment.authorInfo?.title ?? "이름 없음").font(.subheadline.weight(.semibold))
                     }
                     .buttonStyle(.plain)
@@ -389,9 +431,9 @@ struct MomentCommentsSection: View {
                             .background(.quaternary, in: Capsule())
                     }
                     Text(comment.createdAt, format: .relative(presentation: .named))
-                        .font(.caption).foregroundStyle(.tertiary)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Text(comment.body).font(.callout).textSelection(.enabled)
+                Text(comment.body).font(.subheadline).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -400,7 +442,7 @@ struct MomentCommentsSection: View {
                     menuItems(comment)
                 } label: {
                     Image(systemName: "ellipsis").font(.footnote).foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
@@ -431,29 +473,41 @@ struct MomentCommentsSection: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            MomentAvatarView(store: account.store, profile: account.me, size: 30)
-            TextField("", text: $text, prompt: Text("댓글 달기…").foregroundStyle(.tertiary), axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .focused($focused)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.quaternary.opacity(0.5)))
-                .onChange(of: text) { _, new in
-                    if new.count > MomentComment.limit { text = String(new.prefix(MomentComment.limit)) }
-                }
-                .onSubmit(send)
-            Button(action: send) {
-                if model.sending {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("게시").bold()
+        HStack(alignment: .center, spacing: 10) {
+            MomentAvatarView(store: account.store, profile: account.me, size: 36)
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("", text: $text,
+                          prompt: Text(prompt).foregroundStyle(.tertiary),
+                          axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...5)
+                    .focused($focused)
+                    .onChange(of: text) { _, new in
+                        if new.count > MomentComment.limit { text = String(new.prefix(MomentComment.limit)) }
+                    }
+                    .onSubmit(send)
+                    .padding(.vertical, 9)
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.sending {
+                    Button(action: send) {
+                        if model.sending {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("게시").bold()
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.sending)
+                    .padding(.bottom, 9)
                 }
             }
-            .buttonStyle(.borderless)
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.sending)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 14)
+            .background(Capsule().strokeBorder(.quaternary))
         }
+    }
+
+    private var prompt: String {
+        if photo.owner == myID { return "댓글 달기…" }
+        return "\(photo.author?.title ?? "작가")님에게 댓글 달기…"
     }
 
     private func send() {

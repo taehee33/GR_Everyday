@@ -13,7 +13,8 @@ struct MomentShareOptions: Codable, Equatable {
     enum LocationShare: String, Codable, CaseIterable {
         /// Not shared.
         case off
-        /// Rounded to two decimals (about 1 km).
+        /// Shared as recorded. (The raw value is the old name, kept so saved defaults still load;
+        /// until 2026-11-13 it was rounded to about 1 km.)
         case approximate
     }
 
@@ -145,7 +146,7 @@ struct MomentShotInfo: Codable, Equatable {
         return info
     }
 
-    /// Keeps only what the owner chose to share. Location is rounded to about 1 km.
+    /// Keeps only what the owner chose to share.
     func shared(_ options: MomentShareOptions) -> MomentShotInfo {
         var out = MomentShotInfo()
         if options.camera { out.camera = camera }
@@ -154,8 +155,8 @@ struct MomentShotInfo: Codable, Equatable {
         if options.takenAt { out.takenAt = takenAt }
         out.place = place
         if options.location == .approximate, let lat, let lon {
-            out.lat = (lat * 100).rounded() / 100
-            out.lon = (lon * 100).rounded() / 100
+            out.lat = lat
+            out.lon = lon
         }
         return out
     }

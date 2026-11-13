@@ -44,17 +44,17 @@ final class MomentUploadModel: ObservableObject {
 
     var photoHasLocation: Bool { fullInfo.lat != nil && fullInfo.lon != nil }
 
-    /// What gets stored with the photo: the chosen groups, and a location rounded to ~1 km.
+    /// What gets stored with the photo: the chosen groups, and the exact location when the
+    /// owner chose to share one (2026-11-13: no longer rounded).
     var sharedInfo: MomentShotInfo {
         var groups = options
         groups.location = .off
         var info = fullInfo.shared(groups)
-        func rounded(_ v: Double) -> Double { (v * 100).rounded() / 100 }
         switch locationChoice {
         case .photo:
-            if let lat = fullInfo.lat, let lon = fullInfo.lon { info.lat = rounded(lat); info.lon = rounded(lon) }
+            if let lat = fullInfo.lat, let lon = fullInfo.lon { info.lat = lat; info.lon = lon }
         case .map:
-            if let c = mapLocation { info.lat = rounded(c.latitude); info.lon = rounded(c.longitude) }
+            if let c = mapLocation { info.lat = c.latitude; info.lon = c.longitude }
         case .none:
             break
         }
@@ -332,7 +332,7 @@ struct MomentUploadView: View {
                     Text(model.photoHasLocation ? "위치를 공유하지 않아요." : "이 사진에는 위치 정보가 없어요. 원하면 지도에서 고를 수 있어요.")
                         .font(.caption).foregroundStyle(.secondary)
                 case .photo:
-                    Label("사진에 기록된 위치를 약 1km 단위로 공유해요.", systemImage: "location")
+                    Label("사진에 기록된 위치를 그대로 공유해요.", systemImage: "location")
                         .font(.caption).foregroundStyle(.secondary)
                 case .map:
                     HStack {
@@ -349,7 +349,7 @@ struct MomentUploadView: View {
             } header: {
                 Text("위치")
             } footer: {
-                Text("장소 이름은 직접 써도 되고, 지도에서 고르면 자동으로 채워져요. 지도 위치는 다른 사람에게 약 1km 단위로만 보여요.")
+                Text("장소 이름은 직접 써도 되고, 지도에서 고르면 자동으로 채워져요. 공유한 위치는 사진 정보(i)에서 지도로 볼 수 있어요.")
             }
             Section {
                 Toggle(isOn: $model.shareNow) {

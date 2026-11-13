@@ -44,7 +44,35 @@ final class MomentAccount: ObservableObject {
     @Published private(set) var myPhotos: [MomentPhoto] = []
     /// Where each of my photos hangs on my wall (both layouts).
     @Published private(set) var wallItems: [UUID: WallItem] = [:]
+    /// Which of my photos I liked myself (the heart on 내 사진).
+    @Published private(set) var likedMine: Set<UUID> = []
     private var checkTasks: [NameKind: Task<Void, Never>] = [:]
+
+    /// Reads whether I liked this photo of mine.
+    func loadLike(_ id: UUID) async {
+        guard store.me != nil, let on = try? await store.likes(among: [id]) else { return }
+        if on.contains(id) { likedMine.insert(id) } else { likedMine.remove(id) }
+    }
+
+    /// Likes or unlikes one of my photos: shown at once, put back if the server says no.
+    func toggleLike(_ id: UUID) async {
+        guard store.me != nil else { errorMessage = MomentError.signedOut.localizedDescription; return }
+        let on = !likedMine.contains(id)
+        applyLike(id, on)
+        do {
+            try await store.like(id, on)
+        } catch {
+            applyLike(id, !on)
+            show(error)
+        }
+    }
+
+    private func applyLike(_ id: UUID, _ on: Bool) {
+        if on { likedMine.insert(id) } else { likedMine.remove(id) }
+        if let i = myPhotos.firstIndex(where: { $0.id == id }) {
+            myPhotos[i].likeCount = max(myPhotos[i].likeCount + (on ? 1 : -1), 0)
+        }
+    }
 
     let store: MomentStore
     /// The shared photos everyone sees; kept here so the tab's screens use one copy.

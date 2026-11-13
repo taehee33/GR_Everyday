@@ -295,26 +295,14 @@ private struct MomentCard: View {
                 .buttonStyle(.plain)
                 .disabled(!canLike)
                 .accessibilityLabel(liked ? "좋아요 취소" : "좋아요")
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                MomentShotTag(info: photo.info)
             }
 
             if let caption = photo.caption {
                 Text(caption).font(.callout).lineLimit(3)
             }
-            if let line = shotLine {
-                Text(line)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-            }
         }
-    }
-
-    /// "GR IV HDF · P · 1/30 · F2.8 · ISO 320 · 28mm · 스탠다드", whatever the owner shared.
-    private var shotLine: String? {
-        let parts = [photo.info.camera, photo.info.exposureSummary, photo.info.imageControl?.name]
-            .compactMap { $0 }.filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func doubleTapped() {
@@ -341,6 +329,20 @@ struct MomentFeedDetail: View {
     @State private var reporting = false
     @State private var confirmBlock = false
     @State private var person: MomentPersonRef?
+    @State private var showInfo = false
+    @State private var viewing: MomentPhoto?
+    @State private var viewHeight: CGFloat = 0
+    @State private var showComments = false
+    @StateObject private var comments: MomentComments
+
+    init(account: MomentAccount, feed: MomentFeed, photoID: UUID, linksAuthor: Bool = true, showsComments: Bool = false) {
+        self.account = account
+        self.feed = feed
+        self.photoID = photoID
+        self.linksAuthor = linksAuthor
+        self.showsComments = showsComments
+        _comments = StateObject(wrappedValue: MomentComments(store: account.store, photoID: photoID))
+    }
 
     private var photo: MomentPhoto? { feed.photo(photoID) }
     private var isMine: Bool { photo?.owner == account.me?.id }
@@ -362,8 +364,9 @@ struct MomentFeedDetail: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                if let photo, !isMine, signedIn {
-                    ToolbarItem(placement: .primaryAction) { moreMenu(photo) }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if photo != nil { MomentInfoButton { showInfo = true } }
+                    if let photo, !isMine, signedIn { moreMenu(photo) }
                 }
             }
         }
@@ -374,24 +377,25 @@ struct MomentFeedDetail: View {
 
     private func content(_ photo: MomentPhoto) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                MomentFullImage(store: feed.store, photo: photo)
-
-                HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
                     authorLine(photo)
-                    Spacer()
+                    MomentFullImage(store: feed.store, photo: photo)
+                        .momentOpensFullScreen { viewing = photo }
+                }
+                .momentDetailBand(viewHeight: viewHeight)
+
+                HStack(spacing: 4) {
                     likeButton(photo)
+                    if showsComments {
+                        MomentCommentButton(count: comments.list.count) { showComments = true }
+                    }
+                    Spacer(minLength: 8)
+                    MomentShotTag(info: photo.info)
                 }
 
-                if let caption = photo.caption {
-                    Text(caption).font(.body).textSelection(.enabled)
-                }
-                if let shared = photo.sharedAt {
-                    Text(shared.formatted(date: .long, time: .omitted))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                MomentInfoSection(info: photo.info)
+                MomentCaptionBlock(handle: photo.author?.handle ?? photo.author?.displayName,
+                                   caption: photo.caption, date: photo.sharedAt ?? photo.createdAt)
 
                 if !signedIn {
                     Text(showsComments ? "좋아요·댓글·신고·차단은 로그인한 뒤에 할 수 있어요."
@@ -402,13 +406,6 @@ struct MomentFeedDetail: View {
                     Text(message).font(.footnote).foregroundStyle(.red)
                 }
 
-                if showsComments {
-                    Divider()
-                    MomentCommentsSection(account: account, photo: photo) { owner in
-                        if !linksAuthor, owner == photo.owner { return }
-                        person = MomentPersonRef(id: owner)
-                    }
-                }
             }
             .padding(16)
             .frame(maxWidth: 820)
@@ -417,6 +414,18 @@ struct MomentFeedDetail: View {
         .sheet(item: $person) { ref in
             MomentPersonGallery(account: account, owner: ref.id)
         }
+        .sheet(isPresented: $showInfo) {
+            MomentInfoSheet(info: photo.info, sharedAt: photo.sharedAt)
+        }
+        .sheet(isPresented: $showComments) {
+            MomentCommentsSheet(account: account, model: comments, photo: photo) { owner in
+                if !linksAuthor, owner == photo.owner { return }
+                person = MomentPersonRef(id: owner)
+            }
+        }
+        .task(id: photo.id) { if showsComments { await comments.reload() } }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewHeight = $0 }
+        .momentPhotoViewer($viewing, store: feed.store)
         .confirmationDialog("신고하는 이유를 골라 주세요", isPresented: $reporting, titleVisibility: .visible) {
             ForEach(MomentReportReason.allCases) { reason in
                 Button(reason.title, role: .destructive) {
@@ -436,13 +445,13 @@ struct MomentFeedDetail: View {
         }
     }
 
-    /// 한태희 @taehee (or just @taehee), with "나" on my own photos.
+    /// Profile picture and username above the photo, with "나" on my own photos.
     private func authorLine(_ photo: MomentPhoto) -> some View {
         Button {
             if linksAuthor { person = MomentPersonRef(id: photo.owner) }
         } label: {
             HStack(spacing: 10) {
-                MomentAvatarView(store: feed.store, owner: photo.owner, author: photo.author, size: 40)
+                MomentAvatarView(store: feed.store, owner: photo.owner, author: photo.author, size: 34)
                 authorNames(photo)
             }
             .contentShape(Rectangle())
@@ -452,34 +461,21 @@ struct MomentFeedDetail: View {
     }
 
     private func authorNames(_ photo: MomentPhoto) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
-                Text(photo.author?.displayName ?? photo.author?.handle ?? "이름 없음")
-                    .font(.headline)
-                if isMine {
-                    Text("나").font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
-                }
-            }
-            if photo.author?.displayName != nil, let handle = photo.author?.handle {
-                Text(handle).font(.subheadline).foregroundStyle(.secondary)
+        HStack(spacing: 6) {
+            Text(photo.author?.handle ?? photo.author?.displayName ?? "이름 없음")
+                .font(.subheadline.weight(.semibold))
+            if isMine {
+                Text("나").font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(.quaternary, in: Capsule())
             }
         }
     }
 
     private func likeButton(_ photo: MomentPhoto) -> some View {
-        let liked = feed.liked.contains(photo.id)
-        return Button {
+        MomentHeartButton(liked: feed.liked.contains(photo.id), count: photo.likeCount, enabled: signedIn) {
             Task { await feed.toggleLike(photo.id) }
-        } label: {
-            Label("\(photo.likeCount)", systemImage: liked ? "heart.fill" : "heart")
-                .foregroundStyle(liked ? Color.red : Color.primary)
-                .contentTransition(.symbolEffect(.replace))
         }
-        .buttonStyle(.bordered)
-        .disabled(!signedIn)
-        .accessibilityLabel(liked ? "좋아요 취소" : "좋아요")
     }
 
     private func moreMenu(_ photo: MomentPhoto) -> some View {
