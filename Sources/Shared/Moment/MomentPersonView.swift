@@ -380,7 +380,7 @@ struct MomentCommentsSheet: View {
         .confirmationDialog("댓글을 신고하는 이유를 골라 주세요",
                             isPresented: Binding(get: { reporting != nil }, set: { if !$0 { reporting = nil } }),
                             titleVisibility: .visible, presenting: reporting) { comment in
-            ForEach(MomentReportReason.allCases) { reason in
+            ForEach(MomentReportReason.forComments) { reason in
                 Button(reason.title, role: .destructive) { Task { await model.report(comment, reason) } }
             }
         }

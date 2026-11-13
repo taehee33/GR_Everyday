@@ -10,6 +10,10 @@ import UniformTypeIdentifiers
 /// Only GR originals are accepted. A DNG is not developed here: GR DNGs embed the camera's
 /// own full-size JPEG (image control applied, verified on a GR IV HDF to match the camera
 /// JPG), and that JPEG is what gets used.
+///
+/// A photo without GR shot info (a film GR scan, a GR DIGITAL file) is accepted only once the
+/// owner has picked its camera (`declared`); then any image ImageIO reads will do, and nothing
+/// is read from its metadata (a scan's EXIF is the scanner's or the phone's, GPS included).
 enum MomentImage {
     static let displayEdge = 3072
     static let thumbEdge = 600
@@ -51,7 +55,12 @@ enum MomentImage {
     /// The camera original to read for one shot: the JPG when there is one (same pixels as the
     /// DNG's embedded JPEG, and faster), otherwise the DNG.
     static func pickSource(_ files: [URL]) -> URL? {
-        files.first { isJPEG($0) } ?? files.first { isDNG($0) }
+        files.first { isJPEG($0) } ?? files.first { isDNG($0) } ?? files.first { isImage($0) }
+    }
+
+    /// Any image file by extension (HEIC, PNG, TIFF, …), for photos whose camera is picked.
+    static func isImage(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
     }
 
     static func isDNG(_ url: URL) -> Bool { url.pathExtension.uppercased() == "DNG" }
@@ -80,11 +89,13 @@ enum MomentImage {
     }
 
     /// Reads the shot's original (JPG, or the DNG's embedded camera JPEG) for framing.
-    static func load(_ files: [URL]) throws -> Loaded {
+    /// `declared`: the owner picked the camera, so the file need not be a GR original, and a
+    /// DNG is developed by ImageIO (a scan's DNG has no camera JPEG inside).
+    static func load(_ files: [URL], declared: Bool = false) throws -> Loaded {
         guard let source = pickSource(files) else { throw Failure.noSource }
-        guard isGROriginal(source) else { throw Failure.notGROriginal }
+        guard declared || isGROriginal(source) else { throw Failure.notGROriginal }
         guard let src = CGImageSourceCreateWithURL(source as CFURL, nil) else { throw Failure.unreadable }
-        let image = try upright(src, maxEdge: workingEdge, embeddedOnly: isDNG(source))
+        let image = try upright(src, maxEdge: workingEdge, embeddedOnly: isDNG(source) && !declared)
         let edge = max(image.width, image.height)
         guard edge >= minimumEdge else { throw Failure.tooSmall(edge) }
         guard let srgb = toSRGB(image) else { throw Failure.encodeFailed }

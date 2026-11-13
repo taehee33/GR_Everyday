@@ -156,8 +156,11 @@ struct MomentComment: Identifiable, Equatable {
 
 /// Why a photo is reported; the raw values are the database's reports.reason check.
 enum MomentReportReason: String, CaseIterable, Identifiable {
-    case nudity, violence, spam, copyright, other
+    case nudity, violence, spam, copyright, notGR = "not_gr", other
     var id: String { rawValue }
+
+    /// The reasons a comment can be reported for (comment_reports has no not_gr).
+    static var forComments: [MomentReportReason] { allCases.filter { $0 != .notGR } }
 
     var title: String {
         switch self {
@@ -165,6 +168,7 @@ enum MomentReportReason: String, CaseIterable, Identifiable {
         case .violence: return "폭력적이거나 불쾌한 내용"
         case .spam: return "스팸·광고"
         case .copyright: return "다른 사람의 사진 (저작권)"
+        case .notGR: return "GR로 찍지 않은 사진"
         case .other: return "기타"
         }
     }
@@ -610,7 +614,11 @@ final class MockMomentStore: MomentStore {
     }
 
     func updateInfo(_ id: UUID, info: MomentShotInfo, caption: String?) async throws {
-        guard photos[id]?.owner == me?.id else { throw MomentError.notFound }
+        guard let old = photos[id], old.owner == me?.id else { throw MomentError.notFound }
+        // Like the photos_camera_source trigger: a changed camera counts as picked by the owner.
+        var info = info
+        info.cameraSource = info.camera == nil ? nil
+            : info.camera == old.info.camera ? old.info.cameraSource : .declared
         photos[id]?.info = info
         photos[id]?.caption = caption
     }
@@ -715,7 +723,7 @@ extension MockMomentStore {
             let photo = MomentPhoto(
                 id: UUID(), owner: me.id, status: .published, caption: shape.2,
                 width: shape.0, height: shape.1, thumbWidth: 600, thumbHeight: 600 * shape.1 / shape.0,
-                info: MomentShotInfo(camera: "GR IV"), likeCount: n,
+                info: MomentShotInfo(camera: "GR IV", cameraSource: .exif), likeCount: n,
                 createdAt: Date().addingTimeInterval(Double(-n) * 3600), sharedAt: n % 3 == 0 ? Date() : nil)
             store.photos[photo.id] = photo
             store.items[photo.id] = WallItem(photoID: photo.id, x: Double(n % 3) * 0.34,
@@ -729,7 +737,7 @@ extension MockMomentStore {
             let photo = MomentPhoto(
                 id: UUID(), owner: other.id, status: .published, caption: n == 0 ? "아침 산책" : nil,
                 width: 3072, height: n % 2 == 0 ? 2048 : 3072, thumbWidth: 600, thumbHeight: n % 2 == 0 ? 400 : 600,
-                info: MomentShotInfo(camera: "GR IIIx"), likeCount: 2,
+                info: MomentShotInfo(camera: "GR1v", cameraSource: .declared), likeCount: 2,
                 createdAt: Date().addingTimeInterval(Double(-n) * 7200), sharedAt: n < 2 ? Date().addingTimeInterval(-60) : nil)
             store.photos[photo.id] = photo
             if n == 0 {

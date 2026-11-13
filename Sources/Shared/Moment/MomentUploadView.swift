@@ -11,11 +11,16 @@ import AppKit
 /// Putting one GR photo on my Photowall (and, if chosen, sharing it to the feed).
 /// Flow: pick a file → check it is a GR original and build the upload images → choose which
 /// shot info to share → caption → upload. See PLAN-moment.md sections 2–3.
+/// A file without GR shot info (a film GR scan, a GR DIGITAL file) stops at `choosingCamera`:
+/// the owner picks the camera from `MomentShotInfo.declarableCameras`, and only that camera is
+/// kept as shot info (the file's own metadata is the scanner's or the phone's).
 @MainActor
 final class MomentUploadModel: ObservableObject {
     enum Phase: Equatable {
         case picking
         case preparing
+        /// No GR shot info in the file: waiting for the owner to pick the camera.
+        case choosingCamera
         case ready
         case uploading
         case done
@@ -33,6 +38,11 @@ final class MomentUploadModel: ObservableObject {
     @Published var caption = ""
     @Published var shareNow = false
     @Published private(set) var uploaded: MomentPhoto?
+    /// The files waiting for a camera while `choosingCamera`.
+    private var pendingFiles: [URL] = []
+
+    /// The camera the owner picked, for a photo without GR shot info.
+    var declaredCamera: String? { fullInfo.isCameraDeclared ? fullInfo.camera : nil }
 
     /// Where the location comes from: none, the photo's own GPS, or a spot picked on the map.
     enum LocationChoice: Hashable { case none, photo, map }
@@ -49,6 +59,8 @@ final class MomentUploadModel: ObservableObject {
     var sharedInfo: MomentShotInfo {
         var groups = options
         groups.location = .off
+        // A picked camera is the only thing saying the photo is a GR, so it is always shared.
+        if declaredCamera != nil { groups.camera = true }
         var info = fullInfo.shared(groups)
         switch locationChoice {
         case .photo:
@@ -67,8 +79,8 @@ final class MomentUploadModel: ObservableObject {
     func prepare(_ files: [URL]) async {
         phase = .preparing
         rendered = nil
-        guard files.contains(where: { MomentImage.isJPEG($0) || MomentImage.isDNG($0) }) else {
-            phase = .failed("GR로 찍은 JPG나 DNG 파일만 올릴 수 있어요.")
+        guard files.contains(where: MomentImage.isImage) else {
+            phase = .failed("사진 파일만 올릴 수 있어요.")
             return
         }
         loaded = nil
@@ -86,9 +98,42 @@ final class MomentUploadModel: ObservableObject {
             mapLocation = nil
             mapPlace = nil
             phase = .ready
+        } catch MomentImage.Failure.notGROriginal {
+            pendingFiles = files
+            phase = .choosingCamera
         } catch {
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// Builds the upload images for the waiting file with the camera the owner picked. Nothing
+    /// else is read from the file: no exposure, date or location.
+    func prepare(camera: String) async {
+        let files = pendingFiles
+        guard !files.isEmpty, MomentShotInfo.declarableCameras.contains(camera) else { return }
+        phase = .preparing
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                let loaded = try MomentImage.load(files, declared: true)
+                return (loaded, try MomentImage.render(loaded, edit: MomentCropEdit()))
+            }.value
+            loaded = result.0
+            rendered = result.1
+            fullInfo = MomentShotInfo(camera: camera, cameraSource: .declared)
+            locationChoice = .none
+            mapLocation = nil
+            mapPlace = nil
+            pendingFiles = []
+            phase = .ready
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Changes the picked camera on the upload form.
+    func changeDeclaredCamera(_ camera: String) {
+        guard declaredCamera != nil, MomentShotInfo.declarableCameras.contains(camera) else { return }
+        fullInfo.camera = camera
     }
 
     /// Turns and crops the photo as framed, and builds the upload files again.
@@ -128,6 +173,7 @@ final class MomentUploadModel: ObservableObject {
         loaded = nil
         edit = MomentCropEdit()
         fullInfo = MomentShotInfo()
+        pendingFiles = []
         caption = ""
         shareNow = false
         uploaded = nil
@@ -186,7 +232,7 @@ struct MomentUploadView: View {
                     }
                 }
         }
-        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.jpeg, .rawImage],
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.jpeg, .rawImage, .image],
                       allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             Task {
@@ -218,6 +264,8 @@ struct MomentUploadView: View {
         case .preparing:
             ProgressView("GR 원본인지 확인하고 업로드용 이미지를 만드는 중…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .choosingCamera:
+            cameraChoice
         case .ready, .uploading:
             form
         case .done:
@@ -237,7 +285,7 @@ struct MomentUploadView: View {
 
     private var pickButtons: some View {
         VStack(spacing: 14) {
-            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.")
+            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.\n필름 GR 스캔본이나 GR DIGITAL 사진은 카메라를 직접 골라 올릴 수 있어요.")
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let q = account.quota {
@@ -274,6 +322,44 @@ struct MomentUploadView: View {
         .disabled(account.quota?.wallFull == true)
     }
 
+    /// The "popup" for a photo without GR shot info: pick the camera, or pick another photo.
+    private var cameraChoice: some View {
+        Form {
+            Section {
+                Label("이 사진에는 GR 촬영 정보가 없어요", systemImage: "questionmark.circle")
+                    .font(.headline)
+                Text("필름 GR 스캔본이나 GR DIGITAL로 찍은 사진이라면 카메라를 골라 올릴 수 있어요. 직접 고른 카메라는 사진 정보(i)에 \u{201C}직접 선택\u{201D}으로 표시되고, 노출·촬영 일시·위치 같은 파일 속 정보는 쓰지 않아요.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Section("필름") {
+                ForEach(MomentShotInfo.filmCameras, id: \.self) { cameraButton($0) }
+            }
+            Section("GR DIGITAL") {
+                ForEach(MomentShotInfo.digitalCameras, id: \.self) { cameraButton($0) }
+            }
+            Section {
+                Button("다른 사진 고르기") { model.reset() }
+            } footer: {
+                Text("GR II·III·IIIx·IV로 찍은 사진은 편집하지 않은 카메라 원본(JPG·DNG)으로 올려 주세요. 원본에는 촬영 정보가 늘 들어 있어요. GR로 찍지 않은 사진은 신고될 수 있어요.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func cameraButton(_ camera: String) -> some View {
+        Button {
+            Task { await model.prepare(camera: camera) }
+        } label: {
+            HStack {
+                Text(camera).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var form: some View {
         Form {
             if let rendered = model.rendered {
@@ -305,7 +391,18 @@ struct MomentUploadView: View {
                 Label("캡션", systemImage: "text.bubble").font(.headline)
             }
             Section {
-                infoToggle("카메라", isOn: $model.options.camera, value: model.fullInfo.camera)
+                if let declared = model.declaredCamera {
+                    Picker(selection: Binding(get: { declared }, set: { model.changeDeclaredCamera($0) })) {
+                        ForEach(MomentShotInfo.declarableCameras, id: \.self) { Text($0).tag($0) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("카메라")
+                            Text("직접 선택 · 항상 공유돼요").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    infoToggle("카메라", isOn: $model.options.camera, value: model.fullInfo.camera)
+                }
                 infoToggle("노출", isOn: $model.options.exposure, value: model.fullInfo.exposureSummary)
                 infoToggle("이미지 컨트롤", isOn: $model.options.imageControl, value: model.fullInfo.imageControlSummary())
                 infoToggle("촬영 일시", isOn: $model.options.takenAt,

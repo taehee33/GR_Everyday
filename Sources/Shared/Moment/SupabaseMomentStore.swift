@@ -653,7 +653,7 @@ private struct ProfileRow: Decodable {
 }
 
 private struct PhotoRow: Decodable {
-    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,exposure,image_control,taken_at,lat,lon,place,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
+    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,camera_source,exposure,image_control,taken_at,lat,lon,place,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
 
     let id: UUID
     let owner: UUID
@@ -661,6 +661,7 @@ private struct PhotoRow: Decodable {
     let caption: String?
     let width, height, thumbWidth, thumbHeight, likeCount: Int
     let camera: String?
+    let cameraSource: MomentShotInfo.CameraSource?
     let exposure: MomentShotInfo.Exposure?
     let imageControl: MomentShotInfo.ImageControl?
     let takenAt: Date?
@@ -687,14 +688,14 @@ private struct PhotoRow: Decodable {
     enum CodingKeys: String, CodingKey {
         case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, author
         case thumbWidth = "thumb_width", thumbHeight = "thumb_height", likeCount = "like_count"
-        case imageControl = "image_control", takenAt = "taken_at"
+        case imageControl = "image_control", takenAt = "taken_at", cameraSource = "camera_source"
         case createdAt = "created_at", sharedAt = "shared_at"
     }
 
     var photo: MomentPhoto {
         MomentPhoto(id: id, owner: owner, status: status, caption: caption, width: width, height: height,
                     thumbWidth: thumbWidth, thumbHeight: thumbHeight,
-                    info: MomentShotInfo(camera: camera, exposure: exposure, imageControl: imageControl,
+                    info: MomentShotInfo(camera: camera, cameraSource: cameraSource, exposure: exposure, imageControl: imageControl,
                                          takenAt: takenAt, lat: lat, lon: lon, place: place),
                     likeCount: likeCount, createdAt: createdAt, sharedAt: sharedAt,
                     author: author?.author)

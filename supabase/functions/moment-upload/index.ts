@@ -2,8 +2,10 @@
 //
 // Body (sizes from MomentImage.Rendered, info from MomentShotInfo.shared):
 //   { width, height, thumb_width, thumb_height, display_bytes, thumb_bytes,
-//     thumb_type: "image/webp" | "image/jpeg", caption?, info: { camera?, exposure?,
-//     image_control?, taken_at?, lat?, lon?, place? } }
+//     thumb_type: "image/webp" | "image/jpeg", caption?, info: { camera?, camera_source?,
+//     exposure?, image_control?, taken_at?, lat?, lon?, place? } }
+// camera_source: "exif" (read from a GR original) or "declared" (picked by the owner, only from
+// DECLARED_CAMERAS: GRs whose files carry no GR shot info).
 // Reply: { id, display: { url, headers }, thumb: { url, headers }, expires_in }
 // The app PUTs both files, then calls moment-publish. Limits are checked in begin_upload.
 
@@ -18,6 +20,11 @@ const MAX_DISPLAY_BYTES = 8_000_000;
 const MAX_THUMB_BYTES = 300_000;
 const THUMB_TYPES = ["image/webp", "image/jpeg"];
 const EXPIRES_IN = 600;
+/** Keep in sync with MomentShotInfo.declarableCameras in the app. */
+const DECLARED_CAMERAS = [
+  "GR1", "GR1s", "GR1v", "GR21", "GR10",
+  "GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV",
+];
 
 function int(v: unknown, name: string, min: number, max: number): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
@@ -49,6 +56,16 @@ function shotInfo(v: unknown) {
   if (camera !== undefined && camera !== null && (typeof camera !== "string" || camera.length > 60)) {
     throw new HttpError(400, "bad_request", "info.camera");
   }
+  const source = info.camera_source ?? "exif";
+  if (source !== "exif" && source !== "declared") throw new HttpError(400, "bad_request", "info.camera_source");
+  if (typeof camera === "string") {
+    if (source === "declared" && !DECLARED_CAMERAS.includes(camera)) {
+      throw new HttpError(400, "bad_request", "info.camera is not a camera that can be picked");
+    }
+    if (source === "exif" && !camera.toUpperCase().includes("GR")) {
+      throw new HttpError(400, "bad_request", "info.camera is not a GR");
+    }
+  }
   const takenAt = info.taken_at;
   if (takenAt !== undefined && takenAt !== null &&
       (typeof takenAt !== "string" || Number.isNaN(Date.parse(takenAt)))) {
@@ -64,6 +81,7 @@ function shotInfo(v: unknown) {
   if ((lat === null) !== (lon === null)) throw new HttpError(400, "bad_request", "info.lat and info.lon go together");
   return {
     camera: camera ?? null,
+    camera_source: typeof camera === "string" ? source : null,
     exposure: smallObject(info.exposure, "info.exposure", 1_000),
     image_control: smallObject(info.image_control, "info.image_control", 4_000),
     taken_at: takenAt ?? null,

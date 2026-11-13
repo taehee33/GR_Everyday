@@ -36,6 +36,8 @@ struct MomentShareOptions: Codable, Equatable {
 /// uploaded image files never carry EXIF; this is the only place shot info goes.
 struct MomentShotInfo: Codable, Equatable {
     var camera: String?
+    /// Where `camera` came from (`photos.camera_source`); nil when no camera is shared.
+    var cameraSource: CameraSource?
     var exposure: Exposure?
     var imageControl: ImageControl?
     var takenAt: Date?
@@ -43,6 +45,24 @@ struct MomentShotInfo: Codable, Equatable {
     var lon: Double?
     /// A place name the owner typed or picked on the map ("성수동"); not read from the file.
     var place: String?
+
+    enum CameraSource: String, Codable {
+        /// Read from a GR original (Ricoh maker note and a GR model name).
+        case exif
+        /// Picked by the owner for a photo without GR shot info (a film GR scan, a GR DIGITAL file).
+        case declared
+    }
+
+    /// The cameras an owner may pick for a photo without GR shot info: GRs whose files the app
+    /// cannot recognise. GR II and later always write it, so a file of theirs without it has
+    /// been edited or exported and is still turned away. Keep in sync with DECLARED_CAMERAS in
+    /// supabase/functions/moment-upload.
+    static let filmCameras = ["GR1", "GR1s", "GR1v", "GR21", "GR10"]
+    static let digitalCameras = ["GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV"]
+    static var declarableCameras: [String] { filmCameras + digitalCameras }
+
+    /// True when the camera was picked by the owner rather than read from the file.
+    var isCameraDeclared: Bool { camera != nil && cameraSource == .declared }
 
     struct Exposure: Codable, Equatable {
         /// "1/30", "2\"" — as the camera shows it.
@@ -72,6 +92,7 @@ struct MomentShotInfo: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case camera, exposure, lat, lon, place
+        case cameraSource = "camera_source"
         case imageControl = "image_control"
         case takenAt = "taken_at"
     }
@@ -114,6 +135,7 @@ struct MomentShotInfo: Codable, Equatable {
         info.camera = (tiff[kCGImagePropertyTIFFModel] as? String)?
             .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "RICOH ", with: "")
+        if info.camera != nil { info.cameraSource = .exif }
 
         var exposure = Exposure()
         exposure.shutter = (exif[kCGImagePropertyExifExposureTime] as? Double).map(shutterText)
@@ -149,7 +171,10 @@ struct MomentShotInfo: Codable, Equatable {
     /// Keeps only what the owner chose to share.
     func shared(_ options: MomentShareOptions) -> MomentShotInfo {
         var out = MomentShotInfo()
-        if options.camera { out.camera = camera }
+        if options.camera, let camera {
+            out.camera = camera
+            out.cameraSource = cameraSource ?? .exif
+        }
         if options.exposure { out.exposure = exposure }
         if options.imageControl { out.imageControl = imageControl }
         if options.takenAt { out.takenAt = takenAt }
