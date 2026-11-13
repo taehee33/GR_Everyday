@@ -262,6 +262,7 @@ struct MomentProfileEditView: View {
     @State private var website = ""
     @State private var saving = false
     @State private var message: String?
+    @State private var confirmDelete = false
 
     private var instagramName: String? { instagram.isEmpty ? nil : MomentProfile.normalizeInstagram(instagram) }
     private var websiteLink: String? { website.isEmpty ? nil : MomentProfile.normalizeWebsite(website) }
@@ -312,6 +313,23 @@ struct MomentProfileEditView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        MomentNameEditPage(account: account, kind: .displayName)
+                    } label: {
+                        LabeledContent("표시 이름", value: account.me?.displayName ?? "")
+                    }
+                    NavigationLink {
+                        MomentNameEditPage(account: account, kind: .handle)
+                    } label: {
+                        LabeledContent("사용자명", value: account.me?.handle ?? "")
+                    }
+                } header: {
+                    Text("이름")
+                } footer: {
+                    Text("이름은 바로 저장돼요.")
+                }
+
+                Section {
                     TextField("어떤 순간을 담고 있나요?", text: $bio, axis: .vertical)
                         .lineLimit(3...6)
                 } header: {
@@ -319,6 +337,37 @@ struct MomentProfileEditView: View {
                 } footer: {
                     Text("\(bio.count)/\(MomentProfile.bioLimit)")
                         .foregroundStyle(bio.count > MomentProfile.bioLimit ? Color.red : Color.secondary)
+                }
+
+                Section {
+                    HStack(spacing: 10) {
+                        InstagramGlyph(size: 18).foregroundStyle(.secondary)
+                        TextField("인스타그램 사용자명", text: $instagram)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.asciiCapable)
+                            #endif
+                    }
+                    HStack(spacing: 10) {
+                        Image(systemName: "link").foregroundStyle(.secondary).frame(width: 18)
+                        TextField("웹사이트 (example.com)", text: $website)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            #endif
+                    }
+                } header: {
+                    Text("링크")
+                } footer: {
+                    if !instagram.isEmpty, instagramName == nil {
+                        Text("인스타그램 사용자명은 영문, 숫자, 마침표(.), 밑줄(_)로 30자까지예요.").foregroundStyle(.red)
+                    } else if !website.isEmpty, websiteLink == nil {
+                        Text("웹사이트 주소를 확인해 주세요.").foregroundStyle(.red)
+                    } else {
+                        Text("프로필에 아이콘으로 보이고, 누르면 바로 열려요.")
+                    }
                 }
 
                 Section {
@@ -353,42 +402,18 @@ struct MomentProfileEditView: View {
                     }
                 }
 
-                Section {
-                    HStack(spacing: 10) {
-                        InstagramGlyph(size: 18).foregroundStyle(.secondary)
-                        TextField("인스타그램 사용자명", text: $instagram)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.asciiCapable)
-                            #endif
-                    }
-                    HStack(spacing: 10) {
-                        Image(systemName: "link").foregroundStyle(.secondary).frame(width: 18)
-                        TextField("웹사이트 (example.com)", text: $website)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            #endif
-                    }
-                } header: {
-                    Text("링크")
-                } footer: {
-                    if !instagram.isEmpty, instagramName == nil {
-                        Text("인스타그램 사용자명은 영문, 숫자, 마침표(.), 밑줄(_)로 30자까지예요.").foregroundStyle(.red)
-                    } else if !website.isEmpty, websiteLink == nil {
-                        Text("웹사이트 주소를 확인해 주세요.").foregroundStyle(.red)
-                    } else {
-                        Text("프로필에 아이콘으로 보이고, 누르면 바로 열려요.")
-                    }
-                }
-
                 if let message {
                     Text(message).foregroundStyle(.red).font(.footnote)
                 }
+
+                Section {
+                    Button("탈퇴", role: .destructive) { confirmDelete = true }
+                        .momentDeleteAlert(account: account, isPresented: $confirmDelete)
+                }
             }
             .formStyle(.grouped)
+            // After 탈퇴 (or signing out elsewhere) there is no profile left to edit.
+            .onChange(of: account.state) { _, state in if state != .ready { dismiss() } }
             .navigationTitle("프로필 편집")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

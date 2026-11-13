@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 설정 › 계정: the 순간들 account in the settings form of both apps. Sign in, change names,
-/// see the photos I liked and what became of my reports, log out, leave.
+/// 설정 › 계정: the 순간들 account in the settings form of both apps. Sign in, open 프로필 편집
+/// (names and leaving live there), see the photos I liked and what became of my reports, log out.
 struct MomentAccountSection: View {
     @ObservedObject var account = MomentAccount.shared
     @State private var sheet: Sheet?
@@ -9,7 +9,7 @@ struct MomentAccountSection: View {
     @State private var confirmDelete = false
 
     enum Sheet: String, Identifiable {
-        case signIn, displayName, handle, profile, liked, reports
+        case signIn, profile, liked, reports
         var id: String { rawValue }
     }
 
@@ -26,17 +26,10 @@ struct MomentAccountSection: View {
                 signOutRows
             case .ready:
                 identity
-                row("표시 이름 변경", value: account.me?.displayName) { sheet = .displayName }
-                row("사용자명 변경", value: account.me?.handle) { sheet = .handle }
-                    .disabled(account.me?.nextHandleChange != nil)
-                if let next = account.me?.nextHandleChange {
-                    Text("사용자명은 \(next.formatted(date: .long, time: .omitted))부터 바꿀 수 있어요.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
                 row("프로필 편집", icon: "person.crop.circle") { sheet = .profile }
                 row("좋아요한 사진", icon: "heart") { sheet = .liked }
                 row("신고 내역", icon: "exclamationmark.bubble") { sheet = .reports }
-                signOutRows
+                signOutRow
             }
             if let message = account.errorMessage {
                 Text(message).font(.footnote).foregroundStyle(.red)
@@ -74,11 +67,15 @@ struct MomentAccountSection: View {
         .padding(.vertical, 2)
     }
 
-    @ViewBuilder private var signOutRows: some View {
-        // Each alert hangs on its own row: in a settings list, one attached to the footer
-        // never shows.
+    // Each alert hangs on its own row: in a settings list, one attached to the footer never shows.
+    private var signOutRow: some View {
         Button("로그아웃") { confirmSignOut = true }
             .momentSignOutAlert(account: account, isPresented: $confirmSignOut)
+    }
+
+    /// Before the names are set there is no 프로필 편집 yet, so 탈퇴 stays here too.
+    @ViewBuilder private var signOutRows: some View {
+        signOutRow
         Button("탈퇴", role: .destructive) { confirmDelete = true }
             .momentDeleteAlert(account: account, isPresented: $confirmDelete)
     }
@@ -116,23 +113,6 @@ struct MomentAccountSection: View {
                     }
                 }
                 .disabled(account.busy)
-            }
-        case .displayName, .handle:
-            let kind: MomentAccount.NameKind = sheet == .handle ? .handle : .displayName
-            SheetFrame(title: kind == .handle ? "사용자명 변경" : "표시 이름 변경", onClose: close) {
-                VStack(spacing: 12) {
-                    NameEditor(account: account, kind: kind, saveTitle: "저장",
-                               initial: (kind == .handle ? account.me?.handle : account.me?.displayName) ?? "",
-                               onSaved: close)
-                    Text(kind == .handle
-                         ? "사용자명은 30일에 한 번 바꿀 수 있고, 이전 사용자명은 14일 동안 다른 사람이 쓸 수 없어요."
-                         : "표시 이름은 사진 아래에 보이는 이름이에요. 언제든 바꿀 수 있어요.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center).frame(maxWidth: 300)
-                    if let message = account.errorMessage {
-                        Text(message).font(.footnote).foregroundStyle(.red)
-                    }
-                }
             }
         case .profile:
             MomentProfileEditView(account: account)
@@ -210,6 +190,41 @@ extension View {
 
     func momentDeleteAlert(account: MomentAccount, isPresented: Binding<Bool>) -> some View {
         modifier(MomentDeleteAlert(account: account, isPresented: isPresented))
+    }
+}
+
+/// 프로필 편집 › 표시 이름 / 사용자명: one name, checked as it is typed, saved on its own.
+struct MomentNameEditPage: View {
+    @ObservedObject var account: MomentAccount
+    let kind: MomentAccount.NameKind
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if kind == .handle, let next = account.me?.nextHandleChange {
+                    Text("사용자명은 \(next.formatted(date: .long, time: .omitted))부터 바꿀 수 있어요.")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else {
+                    NameEditor(account: account, kind: kind, saveTitle: "저장",
+                               initial: (kind == .handle ? account.me?.handle : account.me?.displayName) ?? "",
+                               onSaved: { dismiss() })
+                }
+                Text(kind == .handle
+                     ? "사용자명은 30일에 한 번 바꿀 수 있고, 이전 사용자명은 14일 동안 다른 사람이 쓸 수 없어요."
+                     : "표시 이름은 사진 아래에 보이는 이름이에요. 언제든 바꿀 수 있어요.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 300)
+                if let message = account.errorMessage {
+                    Text(message).font(.footnote).foregroundStyle(.red)
+                }
+            }
+            .padding(20).frame(maxWidth: .infinity)
+        }
+        .navigationTitle(kind == .handle ? "사용자명" : "표시 이름")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 }
 
