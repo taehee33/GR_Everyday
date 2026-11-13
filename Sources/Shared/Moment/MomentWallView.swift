@@ -39,6 +39,8 @@ struct MomentWallView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        // While frames are being moved, sideways drags on the wall belong to them.
+        .momentNoRoomSwipe(editing)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .sheet(item: $opened) { photo in
             MomentPhotoDetail(account: account, photoID: photo.id)
