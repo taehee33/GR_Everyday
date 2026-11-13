@@ -15,6 +15,11 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- 사진 저장을 앱을 닫은 뒤에도 이어 가는 BGContinuedProcessingTask (BackgroundSave.swift) -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.hantaehee.greveryday.save.*</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

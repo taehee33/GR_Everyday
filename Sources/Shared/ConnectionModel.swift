@@ -506,7 +506,8 @@ final class ConnectionModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 // Over USB the cable state says it; an HTTP ping to the local server can time
                 // out while it is busy making thumbnails and showed a false "연결 끊김".
-                let alive = self.viaUSB ? self.usb.serving != nil : await CameraAPI.ping()
+                let receiving = Date().timeIntervalSince(CameraAPI.lastTraffic) < 5
+                let alive = self.viaUSB ? self.usb.serving != nil : receiving ? true : await CameraAPI.ping()
                 if alive {
                     if self.state == .lost { self.state = .connected; self.cameraWLANOff = false }
                     await self.refreshProps()

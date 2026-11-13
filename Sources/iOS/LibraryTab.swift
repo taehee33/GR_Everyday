@@ -44,7 +44,9 @@ struct LibraryTab: View {
             .navigationTitle("라이브러리")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { if page == .photos { toolbar } }
-            .safeAreaInset(edge: .top) {
+            // spacing 0: the default gap let a strip of photos show between the banner and
+            // the pinned day header.
+            .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     Picker("보기", selection: $page) {
                         ForEach(Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -198,6 +200,15 @@ struct LibraryTab: View {
     @ViewBuilder private var bottomBar: some View {
         if !library.transfers.isEmpty {
             TransferBar()
+        } else if !library.resumable.isEmpty, connection.isConnected, !selecting {
+            HStack {
+                Label("저장하지 못한 \(library.resumable.count)장이 있어요", systemImage: "arrow.clockwise.circle")
+                    .font(.callout)
+                Spacer()
+                Button("이어서 저장") { library.resumeSave() }
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .background(.bar)
         } else if selecting {
             HStack(spacing: 12) {
                 Button {
@@ -521,23 +532,82 @@ struct TransferBar: View {
     @EnvironmentObject var library: LibraryModel
 
     var body: some View {
-        let done = library.transfers.filter { if case .done = $0.status { return true } else { return false } }.count
-        let failed = library.transfers.filter { if case .failed = $0.status { return true } else { return false } }.count
+        let s = library.transferSummary
+        let left = s.failed + s.cancelled + s.waiting
         HStack {
             if library.isTransferring {
-                ProgressView(value: Double(done), total: Double(max(library.transfers.count, 1)))
-                Text("\(done)/\(library.transfers.count)").font(.caption.monospacedDigit())
+                ProgressView(value: s.fraction)
+                Text("\(s.finished)/\(s.count)").font(.caption.monospacedDigit())
                 Button("취소") { library.cancelTransfers() }
             } else {
-                Label(failed == 0 ? "\(done)장을 사진 앱에 저장했어요" : "\(done)장 저장, \(failed)장 실패",
-                      systemImage: failed == 0 ? "checkmark.circle" : "exclamationmark.triangle")
+                if left > 0 {
+                    Button { showIssues = true } label: {
+                        Label("\(s.done)장 저장, \(left)장 못 함", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                        Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.secondary)
+                    }
+                    .tint(.primary)
+                } else {
+                    Label {
+                        Text("\(s.done)장을 사진 앱에 저장했어요")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
                     .font(.callout)
+                }
                 Spacer()
+                if left > 0 { Button("다시") { library.retryFailed() } }
                 Button("닫기") { library.dismissTransfers() }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
+        .sheet(isPresented: $showIssues) { TransferIssuesSheet() }
+    }
+
+    @State private var showIssues = false
+}
+
+/// The photos of the last save that weren't saved, each with why.
+struct TransferIssuesSheet: View {
+    @EnvironmentObject var library: LibraryModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let issues = library.transfers.filter(\.isRetryable)
+        NavigationStack {
+            List(issues) { t in
+                HStack(spacing: 12) {
+                    Thumb(photo: t.photo).frame(width: 56, height: 56).clipShape(.rect(cornerRadius: 6))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t.photo.name).font(.body.monospaced())
+                        Text(Self.reason(t.status)).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("저장하지 못한 \(issues.count)장")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("다시 저장") {
+                        dismiss()
+                        library.retryFailed()
+                    }
+                    .disabled(library.isTransferring)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    static func reason(_ status: LibraryModel.Transfer.Status) -> String {
+        switch status {
+        case .failed(let message): return message
+        case .cancelled: return "취소됨"
+        case .waiting: return "시작하지 못함"
+        default: return ""
+        }
     }
 }
 

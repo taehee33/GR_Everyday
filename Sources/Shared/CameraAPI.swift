@@ -17,6 +17,10 @@ struct CameraAPI {
     /// last connection and must not ask 192.168.0.1, which is often the home router.
     nonisolated(unsafe) static var online = false
 
+    /// When a download from the camera last moved. A long save keeps the camera's small web
+    /// server busy, so a ping can time out then; data still arriving says it's connected.
+    nonisolated(unsafe) static var lastTraffic = Date.distantPast
+
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
         // The camera's web server is small; flooding it with parallel requests stalls it.

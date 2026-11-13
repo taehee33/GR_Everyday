@@ -43,10 +43,49 @@ final class LibraryModel: ObservableObject {
     enum Compare: String { case off, sideBySide, split }
 
     struct Transfer: Identifiable {
-        enum Status { case waiting, running(Double), done, failed(String) }
+        enum Status: Equatable {
+            case waiting, running(Double), done
+            /// Already in the save folder (iPhone/iPad always, Mac with 설정 → 건너뛰기).
+            case skipped
+            /// Stopped by 취소 (or the system) before or while it was being received.
+            case cancelled
+            case failed(String)
+        }
         let photo: Photo
         var status: Status = .waiting
+        /// File size once the camera has said it (the photo list doesn't carry sizes).
+        var bytes: Int64?
+        var received: Int64 = 0
         var id: String { photo.id }
+
+        /// Not saved, and worth trying again: failed, cancelled, or never started.
+        var isRetryable: Bool {
+            switch status {
+            case .waiting, .cancelled, .failed: return true
+            case .running, .done, .skipped: return false
+            }
+        }
+    }
+
+    /// Totals for the progress bar, the transfer list and the system's progress UI.
+    struct TransferSummary {
+        var count = 0, done = 0, skipped = 0, failed = 0, cancelled = 0, waiting = 0
+        /// The one being received now.
+        var current: Transfer?
+        var receivedBytes: Int64 = 0
+        /// Known sizes, plus a guess by file kind for the ones not started yet.
+        var totalBytes: Int64 = 0
+        /// Bytes per second over the last few seconds; nil until there's enough to tell.
+        var bytesPerSecond: Double?
+
+        /// 0…1 by bytes, so a long movie moves the bar as it comes in.
+        var fraction: Double { totalBytes > 0 ? min(1, Double(receivedBytes) / Double(totalBytes)) : 0 }
+        /// Done, skipped, failed or cancelled.
+        var finished: Int { done + skipped + failed + cancelled }
+        var secondsLeft: Double? {
+            guard let rate = bytesPerSecond, rate > 0 else { return nil }
+            return Double(max(0, totalBytes - receivedBytes)) / rate
+        }
     }
 
     @Published private(set) var photos: [Photo] = [] {
@@ -99,6 +138,9 @@ final class LibraryModel: ObservableObject {
     @Published var error: String?
     @Published private(set) var transfers: [Transfer] = []
     @Published private(set) var isTransferring = false
+    /// Photos left over from a save that didn't finish (app closed, camera off, 취소), still
+    /// on the card and not saved. Filled in when the card's list loads; see resumeSave().
+    @Published private(set) var resumable: [Photo] = []
     /// Shooting time and orientation per photo id, filled in after the list loads.
     @Published private(set) var infos: [String: PhotoInfo] = [:]
     @Published var mode: Mode = .grid
@@ -483,6 +525,7 @@ final class LibraryModel: ObservableObject {
             infos = infos.filter { ids.contains($0.key) }
             error = nil
             refreshSaved()
+            updateResumable()
             loadInfos()
         } catch is CancellationError {
         } catch let error as URLError where error.code == .cancelled {
@@ -643,7 +686,13 @@ final class LibraryModel: ObservableObject {
             return
         }
         transfers = queue.map { Transfer(photo: $0) }
+        rateSamples = []
         isTransferring = true
+        rememberUnfinished()
+        resumable = []
+        #if os(iOS)
+        BackgroundSave.shared.begin(count: queue.count) { [weak self] in self?.cancelTransfers() }
+        #endif
         transferTask = Task { [weak self] in
             await self?.runTransfers()
         }
@@ -656,13 +705,115 @@ final class LibraryModel: ObservableObject {
     func dismissTransfers() {
         guard !isTransferring else { return }
         transfers = []
+        // Closing the list means the leftovers have been seen; don't offer them again.
+        UserDefaults.standard.removeObject(forKey: Self.unfinishedKey)
+        resumable = []
+    }
+
+    /// Failed, cancelled and never-started photos of the last save, once more.
+    func retryFailed() {
+        save(transfers.filter(\.isRetryable).map(\.photo))
+    }
+
+    /// The photos left over from a save that didn't finish (see resumable).
+    func resumeSave() {
+        requestSave(resumable)
+    }
+
+    /// Photos of the current save not yet saved, by id, kept so a save cut short (the app
+    /// closed, the camera turned off) can be offered again on the next connection.
+    private static let unfinishedKey = "unfinishedSave"
+
+    private func rememberUnfinished() {
+        let ids = transfers.filter(\.isRetryable).map(\.photo.id)
+        if ids.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.unfinishedKey)
+        } else {
+            UserDefaults.standard.set(ids, forKey: Self.unfinishedKey)
+        }
+    }
+
+    private func updateResumable() {
+        guard !isTransferring else { return }
+        let ids = Set(UserDefaults.standard.stringArray(forKey: Self.unfinishedKey) ?? [])
+        guard !ids.isEmpty else { resumable = []; return }
+        // Only what this card still has and the save folder doesn't: another camera's card,
+        // or photos saved some other way since, drop out.
+        resumable = photos.filter { ids.contains($0.id) && !saved.contains($0.name) }
+        if resumable.isEmpty { UserDefaults.standard.removeObject(forKey: Self.unfinishedKey) }
+    }
+
+    /// (time, bytes received so far in this save), for the speed over the last few seconds.
+    private var rateSamples: [(time: Date, bytes: Int64)] = []
+
+    private func noteReceived(_ received: Int64, expected: Int64, at i: Int) {
+        guard transfers.indices.contains(i) else { return }
+        transfers[i].received = received
+        if expected > 0 { transfers[i].bytes = expected }
+        let fraction = expected > 0 ? Double(received) / Double(expected) : 0
+        transfers[i].status = .running(min(1, fraction))
+        let now = Date()
+        let total = transfers.reduce(Int64(0)) { $0 + $1.received }
+        rateSamples.append((now, total))
+        rateSamples.removeAll { now.timeIntervalSince($0.time) > 5 }
+        #if os(iOS)
+        if BackgroundSave.shared.wantsUpdate { BackgroundSave.shared.update(transferSummary) }
+        #endif
+    }
+
+    /// A guess for files whose size isn't known yet: the average of this save's files of the
+    /// same kind, else a typical GR size.
+    private func estimatedBytes(_ kind: Photo.Kind) -> Int64 {
+        let known = transfers.filter { $0.photo.kind == kind }.compactMap(\.bytes)
+        if !known.isEmpty { return known.reduce(0, +) / Int64(known.count) }
+        switch kind {
+        case .jpeg: return 12_000_000
+        case .raw: return 35_000_000
+        case .video: return 150_000_000
+        case .other: return 5_000_000
+        }
+    }
+
+    var transferSummary: TransferSummary {
+        var s = TransferSummary()
+        s.count = transfers.count
+        for t in transfers {
+            switch t.status {
+            case .waiting: s.waiting += 1
+            case .running: s.current = t
+            case .done: s.done += 1
+            case .skipped: s.skipped += 1
+            case .failed: s.failed += 1
+            case .cancelled: s.cancelled += 1
+            }
+            if t.status == .skipped { continue }
+            s.receivedBytes += t.received
+            // Failed and cancelled ones count only what came in, so the bar can still fill.
+            switch t.status {
+            case .failed, .cancelled: s.totalBytes += t.received
+            default: s.totalBytes += t.bytes ?? estimatedBytes(t.photo.kind)
+            }
+        }
+        if let first = rateSamples.first, let last = rateSamples.last {
+            let seconds = last.time.timeIntervalSince(first.time)
+            if seconds >= 1 { s.bytesPerSecond = Double(last.bytes - first.bytes) / seconds }
+        }
+        return s
     }
 
     private func runTransfers() async {
         var savedAny = false
         defer {
             isTransferring = false
+            if Task.isCancelled {
+                for i in transfers.indices where transfers[i].status == .waiting { transfers[i].status = .cancelled }
+            }
+            rememberUnfinished()
             refreshSaved()
+            #if os(iOS)
+            BackgroundSave.shared.end(transferSummary, unsaved: transfers.filter(\.isRetryable).map(\.photo.name))
+            #endif
+            rateSamples = []
             #if os(macOS)
             if savedAny, revealAfterSave, !Task.isCancelled { NSWorkspace.shared.open(destination) }
             #endif
@@ -675,17 +826,22 @@ final class LibraryModel: ObservableObject {
             if Task.isCancelled { break }
             let photo = transfers[i].photo
             if skipsSaved, saved.contains(photo.name) {
-                transfers[i].status = .done
+                transfers[i].status = .skipped
                 selection.remove(photo.id)
+                rememberUnfinished()
                 continue
             }
             savedAny = true
             transfers[i].status = .running(0)
             do {
-                let file = try await download(photo) { [weak self] fraction in
-                    self?.transfers[i].status = .running(fraction)
+                let file = try await download(photo) { [weak self] received, expected in
+                    self?.noteReceived(received, expected: expected, at: i)
                 }
                 transfers[i].status = .done
+                if let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) {
+                    transfers[i].bytes = size
+                    transfers[i].received = size
+                }
                 #if os(iOS)
                 await addToPhotos(photo, file: file, index: i, later: transfers[(i + 1)...], waiting: &waiting)
                 #else
@@ -694,8 +850,13 @@ final class LibraryModel: ObservableObject {
                 refreshSaved()
                 selection.remove(photo.id)
             } catch {
-                transfers[i].status = .failed(Task.isCancelled ? "취소됨" : error.localizedDescription)
+                transfers[i].status = Task.isCancelled ? .cancelled : .failed(Self.describe(error))
+                DebugLog.write("save: \(photo.name) \(Task.isCancelled ? "cancelled" : "failed"): \(error)")
             }
+            rememberUnfinished()
+            #if os(iOS)
+            BackgroundSave.shared.update(transferSummary)
+            #endif
         }
         #if os(iOS)
         await flushPhotos(waiting)
@@ -714,16 +875,16 @@ final class LibraryModel: ObservableObject {
 
     /// Returns the saved file.
     @discardableResult
-    private func download(_ photo: Photo, progress: @escaping (Double) -> Void) async throws -> URL {
+    private func download(_ photo: Photo, progress: @escaping (Int64, Int64) -> Void) async throws -> URL {
         let folder = await folder(for: photo)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(photo.name)
-        let (file, response) = try await Downloader.fetch(CameraAPI.photoURL(photo)) { fraction in
-            Task { @MainActor in progress(fraction) }
-        }
+        let (file, response) = try await Downloader.fetch(CameraAPI.photoURL(photo), bytes: { received, expected in
+            Task { @MainActor in progress(received, expected) }
+        })
         defer { try? FileManager.default.removeItem(at: file) }
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw CameraAPI.APIError(message: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            throw CameraAPI.APIError(message: "카메라가 파일을 보내지 못했어요 (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))")
         }
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? 0
         if response.expectedContentLength > 0, size != response.expectedContentLength {
@@ -746,8 +907,20 @@ final class LibraryModel: ObservableObject {
             rest.flipped = false
             setAdjustments(rest, for: photo)
         }
-        progress(1)
         return target
+    }
+
+    /// A short reason for the transfer list, for the failures that come up with a camera.
+    private nonisolated static func describe(_ error: Error) -> String {
+        if let url = error as? URLError {
+            switch url.code {
+            case .timedOut: return "카메라가 응답하지 않아요"
+            case .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost:
+                return "카메라 연결이 끊겼어요"
+            default: break
+            }
+        }
+        return error.localizedDescription
     }
 
     #if os(iOS)
@@ -868,6 +1041,13 @@ enum Downloader {
     }
 
     static func fetch(_ url: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> (URL, URLResponse) {
+        try await fetch(url, bytes: { received, expected in
+            progress(expected > 0 ? Double(received) / Double(expected) : 0)
+        })
+    }
+
+    /// Progress as bytes received and expected (-1 until the camera sends a length).
+    static func fetch(_ url: URL, bytes progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> (URL, URLResponse) {
         let box = Box()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -886,7 +1066,11 @@ enum Downloader {
                         continuation.resume(throwing: error)
                     }
                 }
-                box.observation = task.progress.observe(\.fractionCompleted) { p, _ in progress(p.fractionCompleted) }
+                box.observation = task.progress.observe(\.fractionCompleted) { [weak task] _, _ in
+                    guard let task else { return }
+                    CameraAPI.lastTraffic = Date()
+                    progress(task.countOfBytesReceived, task.countOfBytesExpectedToReceive)
+                }
                 box.task = task
                 task.resume()
             }

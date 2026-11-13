@@ -1013,19 +1013,23 @@ struct InfoPanel: View {
 struct TransferPanel: View {
     @EnvironmentObject var library: LibraryModel
 
-    private var doneCount: Int {
-        library.transfers.filter { if case .done = $0.status { return true } else { return false } }.count
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(library.isTransferring ? "저장 중 \(doneCount)/\(library.transfers.count)" : "저장 완료 \(doneCount)/\(library.transfers.count)")
+                let summary = library.transferSummary
+                Text(library.isTransferring ? "저장 중 \(summary.finished)/\(summary.count)" : "저장 완료 \(summary.done)/\(summary.count)")
                     .font(.headline)
+                if library.isTransferring {
+                    ProgressView(value: summary.fraction).frame(width: 160)
+                }
                 Spacer()
                 if library.isTransferring {
                     Button("중지") { library.cancelTransfers() }
                 } else {
+                    if library.transfers.contains(where: \.isRetryable) {
+                        Button("못 한 것 다시") { library.retryFailed() }
+                    }
                     Button("Finder에서 보기") { NSWorkspace.shared.open(library.destination) }
                     Button("닫기") { library.dismissTransfers() }
                 }
@@ -1039,6 +1043,8 @@ struct TransferPanel: View {
                             case .waiting: Text("대기").font(.caption).foregroundStyle(.secondary)
                             case .running(let p): ProgressView(value: p).frame(width: 200)
                             case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            case .skipped: Text("이미 저장됨").font(.caption).foregroundStyle(.secondary)
+                            case .cancelled: Text("취소됨").font(.caption).foregroundStyle(.secondary)
                             case .failed(let msg): Text(msg).font(.caption).foregroundStyle(.red)
                             }
                             Spacer()

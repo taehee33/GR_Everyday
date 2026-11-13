@@ -31,7 +31,10 @@ struct RootView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active, connection.state == .disconnected || connection.state == .lost else { return }
             Task {
-                if let ssid = await WiFi.currentSSID(), ssid.hasPrefix("GR_"), !connection.isConnected, !connection.isBusy {
+                // GRLINK_CAMERA_URL (scripts/mock_camera.py, in the Simulator) has no camera Wi-Fi to notice.
+                let mock = ProcessInfo.processInfo.environment["GRLINK_CAMERA_URL"] != nil
+                let ssid = mock ? "GR_MOCK" : await WiFi.currentSSID()
+                if let ssid, ssid.hasPrefix("GR_"), !connection.isConnected, !connection.isBusy {
                     await connection.connectDirect()
                 }
             }

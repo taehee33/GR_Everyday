@@ -3,6 +3,9 @@
     python3 scripts/mock_camera.py            # serves http://127.0.0.1:8765
     GRLINK_CAMERA_URL=http://127.0.0.1:8765 "build/GR Everyday.app/Contents/MacOS/GR Everyday"
 
+MOCK_FAIL=R0001002.JPG,R0001005.JPG makes those files fail when saved: the first one listed
+drops the connection halfway, the rest answer 500 (to try the app's failure UI).
+
 Sample photos are rendered from macOS desktop pictures with `sips`.
 """
 
@@ -40,6 +43,8 @@ PROPS = {
     "meteringMode": "multi", "meteringModeList": ["multi", "center", "spot", "highlight"],
     "stillFormat": "jpeg", "stillFormatList": ["jpeg", "dng", "rawdng"],
 }
+
+FAIL = [n for n in os.environ.get("MOCK_FAIL", "").split(",") if n]
 
 work = Path(tempfile.mkdtemp(prefix="grmock-"))
 files = []  # (dir, name)
@@ -124,6 +129,19 @@ class Handler(BaseHTTPRequestHandler):
             if not path.exists():
                 return self.send_json({"errCode": 404, "errMsg": "not found"}, 404)
             data = path.read_bytes()
+            if size == "full" and parts[3] in FAIL:
+                if parts[3] != FAIL[0]:
+                    return self.send_json({"errCode": 500, "errMsg": "card busy"}, 500)
+                # Half the file, then the connection drops, as when the camera powers off.
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data[: len(data) // 2])
+                self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(2)
+                return
             movie = parts[3].upper().endswith(".MOV") and size == "full"
             rng = self.headers.get("Range")
             if movie and rng and rng.startswith("bytes="):
