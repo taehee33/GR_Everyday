@@ -15,7 +15,7 @@ struct MomentView: View {
 
         var english: String { self == .moments ? "Moments" : "My Gallery" }
         var line: String {
-            self == .moments ? "누군가의 GR에 담긴, 오늘의 순간" : "흘러가는 일상 속 특별한 순간"
+            self == .moments ? "누군가의 GR에 담긴, 오늘의 순간" : "흘러가는 일상 속, 특별한 순간"
         }
     }
 

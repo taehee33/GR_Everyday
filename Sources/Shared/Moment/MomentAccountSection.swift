@@ -5,6 +5,7 @@ import SwiftUI
 struct MomentAccountSection: View {
     @ObservedObject var account = MomentAccount.shared
     @State private var sheet: Sheet?
+    @State private var confirmSignOut = false
     @State private var confirmDelete = false
 
     enum Sheet: String, Identifiable {
@@ -42,15 +43,8 @@ struct MomentAccountSection: View {
             }
         } header: {
             Text("계정")
-        } footer: {
-            Text("순간들에 사진을 업로드하고 공유할 때 쓰는 계정이에요.")
                 .task { if account.state == .loading { await account.load() } }
                 .sheet(item: $sheet) { sheet in sheetContent(sheet) }
-                .confirmationDialog("탈퇴할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                    Button("탈퇴하고 모두 삭제", role: .destructive) { Task { await account.deleteAccount() } }
-                } message: {
-                    Text("계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요.")
-                }
         }
         .disabled(account.busy)
     }
@@ -81,8 +75,12 @@ struct MomentAccountSection: View {
     }
 
     @ViewBuilder private var signOutRows: some View {
-        Button("로그아웃") { Task { await account.signOut() } }
+        // Each alert hangs on its own row: in a settings list, one attached to the footer
+        // never shows.
+        Button("로그아웃") { confirmSignOut = true }
+            .momentSignOutAlert(account: account, isPresented: $confirmSignOut)
         Button("탈퇴", role: .destructive) { confirmDelete = true }
+            .momentDeleteAlert(account: account, isPresented: $confirmDelete)
     }
 
     private func row(_ title: String, value: String? = nil, icon: String? = nil,
@@ -152,6 +150,67 @@ struct MomentAccountSection: View {
     }
 
     private func close() { sheet = nil }
+}
+
+/// 로그아웃 asks once more before signing out.
+private struct MomentSignOutAlert: ViewModifier {
+    @ObservedObject var account: MomentAccount
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content.alert("로그아웃할까요?", isPresented: $isPresented) {
+            Button("취소", role: .cancel) {}
+            Button("로그아웃", role: .destructive) { Task { await account.signOut() } }
+        } message: {
+            Text("올린 사진은 그대로 남아 있고, 다시 로그인하면 볼 수 있어요.")
+        }
+    }
+}
+
+/// 탈퇴 goes through only after the person types their own 사용자명 (or "탈퇴" when no
+/// 사용자명 has been set yet).
+private struct MomentDeleteAlert: ViewModifier {
+    @ObservedObject var account: MomentAccount
+    @Binding var isPresented: Bool
+    @State private var typed = ""
+
+    private var expected: String { account.me?.handle ?? "탈퇴" }
+
+    private var matches: Bool {
+        var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if account.me?.handle != nil, text.hasPrefix("@") { text.removeFirst() }
+        return text.caseInsensitiveCompare(expected) == .orderedSame
+    }
+
+    func body(content: Content) -> some View {
+        content.alert("탈퇴할까요?", isPresented: $isPresented) {
+            TextField(expected, text: $typed)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+            Button("취소", role: .cancel) { typed = "" }
+            Button("탈퇴하고 모두 삭제", role: .destructive) {
+                typed = ""
+                Task { await account.deleteAccount() }
+            }
+            .disabled(!matches)
+        } message: {
+            Text(account.me?.handle != nil
+                 ? "계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요. 계속하려면 사용자명 ‘\(expected)’을 입력해 주세요."
+                 : "계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요. 계속하려면 ‘탈퇴’를 입력해 주세요.")
+        }
+    }
+}
+
+extension View {
+    func momentSignOutAlert(account: MomentAccount, isPresented: Binding<Bool>) -> some View {
+        modifier(MomentSignOutAlert(account: account, isPresented: isPresented))
+    }
+
+    func momentDeleteAlert(account: MomentAccount, isPresented: Binding<Bool>) -> some View {
+        modifier(MomentDeleteAlert(account: account, isPresented: isPresented))
+    }
 }
 
 /// A sheet with a title and a close button, scrolling when the content is long.

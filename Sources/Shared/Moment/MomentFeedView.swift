@@ -71,7 +71,7 @@ final class MomentFeed: ObservableObject {
                 liked = (try? await store.likes(among: photos.map(\.id))) ?? []
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -87,7 +87,7 @@ final class MomentFeed: ObservableObject {
             reachedEnd = page.count < Self.pageSize
             liked.formUnion((try? await store.likes(among: page.map(\.id))) ?? [])
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -107,7 +107,7 @@ final class MomentFeed: ObservableObject {
             try await store.like(id, on)
         } catch {
             apply(id, !on)
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -127,7 +127,7 @@ final class MomentFeed: ObservableObject {
             notice = "신고되었어요. 결과는 설정 › 계정 › 신고 내역에서 볼 수 있어요."
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
             return false
         }
     }
@@ -140,7 +140,7 @@ final class MomentFeed: ObservableObject {
             notice = "차단했어요. 이 사람의 사진은 더 이상 보이지 않아요."
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
             return false
         }
     }

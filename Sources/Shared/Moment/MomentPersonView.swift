@@ -274,7 +274,7 @@ final class MomentComments: ObservableObject {
             errorMessage = nil
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
             return false
         }
     }
@@ -284,7 +284,7 @@ final class MomentComments: ObservableObject {
             try await store.deleteComment(comment.id)
             list.removeAll { $0.id == comment.id }
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -294,7 +294,7 @@ final class MomentComments: ObservableObject {
             list.removeAll { $0.id == comment.id }
             notice = "댓글을 신고했어요. 내 화면에서는 바로 사라져요."
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -304,7 +304,7 @@ final class MomentComments: ObservableObject {
             list.removeAll { $0.author == author }
             notice = "차단했어요. 이 사람의 사진과 댓글이 더 이상 보이지 않아요."
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 }

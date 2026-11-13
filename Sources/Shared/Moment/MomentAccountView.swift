@@ -194,7 +194,7 @@ final class MomentAccount: ObservableObject {
             return true
         } catch {
             me = store.me
-            errorMessage = error.localizedDescription
+            show(error)
             return false
         }
     }
@@ -218,7 +218,7 @@ final class MomentAccount: ObservableObject {
             return true
         } catch {
             (me, wallItems) = before
-            errorMessage = error.localizedDescription
+            show(error)
             return false
         }
     }
@@ -227,7 +227,7 @@ final class MomentAccount: ObservableObject {
         do {
             reports = try await store.myReports()
         } catch {
-            errorMessage = error.localizedDescription
+            show(error)
         }
     }
 
@@ -259,7 +259,7 @@ final class MomentAccount: ObservableObject {
             if feed.loaded { await feed.reload() }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            show(error)
             return false
         }
     }
@@ -278,13 +278,20 @@ final class MomentAccount: ObservableObject {
         displayNameCheck = .empty
     }
 
+    /// Puts an error on screen, except a cancelled request: closing a sheet or leaving a screen
+    /// cancels its loading, and that is not something the person needs to hear about.
+    private func show(_ error: Error) {
+        if error.isCancellation || Task.isCancelled { return }
+        errorMessage = error.localizedDescription
+    }
+
     private func run(_ work: @escaping () async throws -> Void) async {
         busy = true
         errorMessage = nil
         do {
             try await work()
         } catch {
-            errorMessage = error.localizedDescription
+            show(error)
         }
         let previous = me?.id
         me = store.me
@@ -392,6 +399,7 @@ struct MomentSignInButtons: View {
 /// is not the account the person meant to use.
 struct MomentNamesSetup: View {
     @ObservedObject var account: MomentAccount
+    @State private var confirmSignOut = false
     @State private var confirmDelete = false
 
     var body: some View {
@@ -407,17 +415,14 @@ struct MomentNamesSetup: View {
             }
             SetupNamesForm(account: account)
             HStack(spacing: 12) {
-                Button("로그아웃") { Task { await account.signOut() } }
+                Button("로그아웃") { confirmSignOut = true }
                 Button("탈퇴", role: .destructive) { confirmDelete = true }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
-        .confirmationDialog("탈퇴할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("탈퇴하고 모두 삭제", role: .destructive) { Task { await account.deleteAccount() } }
-        } message: {
-            Text("계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요.")
-        }
+        .momentSignOutAlert(account: account, isPresented: $confirmSignOut)
+        .momentDeleteAlert(account: account, isPresented: $confirmDelete)
     }
 }
 
@@ -607,5 +612,14 @@ struct GoogleSignInButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Self.title)
+    }
+}
+
+extension Error {
+    /// A request that was called off (sheet closed, screen left), not one that failed.
+    var isCancellation: Bool {
+        if self is CancellationError { return true }
+        let ns = self as NSError
+        return ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
     }
 }
