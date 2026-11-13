@@ -281,10 +281,14 @@ final class BLEWaker: NSObject, ObservableObject {
             try await write(Data([1]), to: GRUUID.cameraPower, on: peripheral)
             try await Task.sleep(for: .seconds(2))
         }
-        if try await read(GRUUID.networkType, on: peripheral).first != 1 {
+        let networkType = try await read(GRUUID.networkType, on: peripheral).first
+        if networkType != 1 {
             try await write(Data([1]), to: GRUUID.networkType, on: peripheral)
-            try await Task.sleep(for: .seconds(3))
+            // The AP needs several seconds before a phone can join it; joining earlier fails
+            // (iOS: "다음 네트워크에 연결할 수 없음") although the API reports success.
+            try await Task.sleep(for: .seconds(6))
         }
+        DebugLog.write("wlan: networkType was \(networkType.map(String.init) ?? "-")\(networkType == 1 ? " (already on)" : ", switched on")")
         return WLANCredentials(
             ssid: Self.text(try await read(GRUUID.ssid, on: peripheral)),
             passphrase: Self.text(try await read(GRUUID.passphrase, on: peripheral))

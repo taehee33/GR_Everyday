@@ -87,7 +87,9 @@ final class ConnectionModel: ObservableObject {
     private var usbChanges: AnyCancellable?
     private var monitor: Task<Void, Never>?
     private var joinedByUs = false
-    private var phoneJoin: Task<Void, Never>?
+    /// The connect, pair or phone-join under way, so 취소 stops all of it (Bluetooth,
+    /// Wi-Fi join and the wait for the camera), not just the Bluetooth step.
+    private var connectTask: Task<Void, Never>?
 
     var isConnected: Bool { state == .connected }
     var isBusy: Bool {
@@ -174,6 +176,10 @@ final class ConnectionModel: ObservableObject {
     /// First-time pairing (camera menu → Bluetooth → Pairing; macOS asks for the code),
     /// which also reads the camera's Wi-Fi password and joins it.
     func pair(_ found: FoundCamera) async {
+        await cancellable { await self.runPair(found) }
+    }
+
+    private func runPair(_ found: FoundCamera) async {
         notice = nil
         needsBondRemoval = false
         state = .pairing("\(found.name)에 연결 중… \(Device.name)에 뜨는 창에 카메라 화면의 페어링 코드를 입력해 주세요.")
@@ -189,6 +195,7 @@ final class ConnectionModel: ObservableObject {
             selectedCameraID = found.id
             notice = "\(found.name)을(를) 등록했어요."
             try await joinCamera(credentials, camera: found.id)
+        } catch is CancellationError {
         } catch {
             needsBondRemoval = (error as? BLEWaker.BLEError) == .staleBond
             state = .failed("페어링 실패: \(error.localizedDescription)")
@@ -214,9 +221,26 @@ final class ConnectionModel: ObservableObject {
 
     func cancelBluetooth() {
         ble.cancel()
-        if let phoneJoin {
-            phoneJoin.cancel()
-            self.phoneJoin = nil
+        if let connectTask {
+            DebugLog.write("connect: cancelled by user")
+            connectTask.cancel()
+            self.connectTask = nil
+            if isBusy { state = .disconnected }
+        }
+    }
+
+    /// Run a connect flow as its own task that 취소 can stop. A new connect replaces one
+    /// still running, so two Wi-Fi joins never race.
+    private func cancellable(_ body: @escaping @MainActor () async -> Void) async {
+        connectTask?.cancel()
+        let task = Task { await body() }
+        connectTask = task
+        await task.value
+        if connectTask == task {
+            connectTask = nil
+        } else if connectTask == nil, task.isCancelled, !isConnected {
+            // Cancelled by the user (not replaced by a new connect): drop whatever the
+            // flow wrote after the cancel, such as "취소했어요" as a failure.
             state = .disconnected
         }
     }
@@ -232,25 +256,26 @@ final class ConnectionModel: ObservableObject {
         notice = nil
         needsBondRemoval = false
         needsRepair = false
-        let task = Task {
+        await cancellable {
             do {
-                try await joinCamera(credentials, camera: camera.id, waitFor: 180,
+                try await self.joinCamera(credentials, camera: camera.id, waitFor: 180,
                                      waiting: "휴대폰의 GR WORLD에서 카메라에 연결해 WLAN(Wi-Fi)을 켜 주세요. \(credentials.ssid)가 보이면 바로 접속해요. 연결된 뒤 휴대폰 제어 센터에서 Bluetooth를 끄면 휴대폰을 잠가도 카메라 WLAN이 유지돼요(Bluetooth를 켠 채 잠그면 카메라가 WLAN을 꺼요).")
             } catch is CancellationError {
             } catch {
-                state = .failed(error.localizedDescription)
+                self.state = .failed(error.localizedDescription)
             }
         }
-        phoneJoin = task
-        await task.value
-        if phoneJoin == task { phoneJoin = nil }
     }
 
     /// Join a registered camera's Wi-Fi with the password saved while pairing.
     /// The GR refuses both the key macOS keeps from pairing and unpaired links, so a Mac
     /// cannot switch the camera's Wi-Fi on over Bluetooth: the user turns it on (메뉴 → 무선 LAN).
     func connect(_ camera: SavedCamera) async {
-        guard let credentials = camera.credentials else {
+        await cancellable { await self.runConnect(camera) }
+    }
+
+    private func runConnect(_ camera: SavedCamera) async {
+        guard let saved = camera.credentials else {
             state = .failed("이 카메라의 Wi-Fi 정보가 없어요. 다시 등록해 주세요.")
             return
         }
@@ -268,6 +293,7 @@ final class ConnectionModel: ObservableObject {
             // Its Wi-Fi may be on already (turned on at the camera or by GR WORLD); try joining.
             DebugLog.write("wake failed: \(error.localizedDescription)")
         }
+        if Task.isCancelled { return }
         #else
         if ble.linkedCameraID == camera.id {
             state = .waking("Bluetooth로 카메라 Wi-Fi 켜는 중…")
@@ -276,8 +302,11 @@ final class ConnectionModel: ObservableObject {
             }
         }
         #endif
+        // Join with what the camera just reported; the saved copy may be older.
+        let credentials = cameras.first { $0.id == camera.id }?.credentials ?? saved
         do {
             try await joinCamera(credentials, camera: camera.id)
+        } catch is CancellationError {
         } catch let error as WiFi.WiFiError where error.notFound {
             if ble.linkedCameraID != camera.id {
                 needsRepair = true
@@ -294,6 +323,10 @@ final class ConnectionModel: ObservableObject {
     /// Pair again to get a Bluetooth link the camera accepts, which also switches its Wi-Fi
     /// on and joins it. The camera must show its pairing screen; macOS's old key must go first.
     func repair(_ camera: SavedCamera) async {
+        await cancellable { await self.runRepair(camera) }
+    }
+
+    private func runRepair(_ camera: SavedCamera) async {
         notice = nil
         needsRepair = false
         if await hasMacBond(camera) {
@@ -317,7 +350,9 @@ final class ConnectionModel: ObservableObject {
                 state = .failed("카메라를 찾지 못했어요. 카메라가 페어링 화면인지 확인하고 다시 눌러 주세요.")
                 return
             }
-            await pair(found)
+            await runPair(found)
+        } catch is CancellationError {
+            ble.stopScan()
         } catch {
             ble.stopScan()
             needsRepair = true
@@ -341,7 +376,7 @@ final class ConnectionModel: ObservableObject {
 
     /// `waiting` replaces the retry message while the camera's Wi-Fi is not up yet.
     private func joinCamera(_ credentials: WLANCredentials, camera: UUID?,
-                            waitFor seconds: TimeInterval = 25, waiting: String? = nil) async throws {
+                            waitFor seconds: TimeInterval = 45, waiting: String? = nil) async throws {
         if isConnected || viaUSB { await disconnect() }
         // A camera AP that was just switched on takes a few seconds to show up in the
         // Mac's scan, and one scan can miss it; keep looking for a while.
@@ -354,13 +389,29 @@ final class ConnectionModel: ObservableObject {
                                           : waiting ?? "\(credentials.ssid) Wi-Fi 찾는 중… (\(attempt)번째 시도)")
             do {
                 try await WiFi.join(credentials)
+                DebugLog.write("join: \(credentials.ssid) joined (attempt \(attempt))")
                 break
             } catch let error as WiFi.WiFiError where error.notFound && Date() < deadline {
+                DebugLog.write("join: attempt \(attempt): \(error.message)")
                 try await Task.sleep(for: .seconds(2))
+            } catch {
+                DebugLog.write("join: attempt \(attempt) failed: \(error.localizedDescription)")
+                throw error
             }
         }
         joinedByUs = true
-        try await waitReachable()
+        do {
+            try Task.checkCancellation()
+            state = .joining("카메라 응답 기다리는 중…")
+            try await waitReachable()
+            try Task.checkCancellation()
+        } catch {
+            DebugLog.write("join: camera not answering (\(error is CancellationError ? "cancelled" : error.localizedDescription))")
+            // Don't leave the phone on a camera network nothing uses.
+            await WiFi.restore()
+            joinedByUs = false
+            throw error
+        }
         connectedCameraID = camera
         await didConnect()
     }
