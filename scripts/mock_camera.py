@@ -5,6 +5,7 @@
 
 MOCK_FAIL=R0001002.JPG,R0001005.JPG makes those files fail when saved: the first one listed
 drops the connection halfway, the rest answer 500 (to try the app's failure UI).
+MOCK_RATE=2000000 sends full-size files at about that many bytes per second (progress UI).
 
 Sample photos are rendered from macOS desktop pictures with `sips`.
 """
@@ -44,6 +45,7 @@ PROPS = {
     "stillFormat": "jpeg", "stillFormatList": ["jpeg", "dng", "rawdng"],
 }
 
+RATE = int(os.environ.get("MOCK_RATE", "0"))
 FAIL = [n for n in os.environ.get("MOCK_FAIL", "").split(",") if n]
 
 work = Path(tempfile.mkdtemp(prefix="grmock-"))
@@ -161,6 +163,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             time.sleep(0.05)
             try:
+                if RATE and size == "full":
+                    step = 65536
+                    for i in range(0, len(chunk), step):
+                        self.wfile.write(chunk[i:i + step])
+                        time.sleep(step / RATE)
+                    return
                 return self.wfile.write(chunk)
             except (BrokenPipeError, ConnectionResetError):
                 return

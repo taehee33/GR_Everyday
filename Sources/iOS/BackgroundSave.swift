@@ -150,7 +150,7 @@ final class BackgroundSave {
         return parts.joined(separator: " · ")
     }
 
-    static func remaining(_ seconds: Double) -> String {
+    nonisolated static func remaining(_ seconds: Double) -> String {
         if seconds < 60 { return "1분 이내" }
         if seconds < 3600 { return "약 \(Int((seconds / 60).rounded()))분 남음" }
         return "약 \(Int(seconds / 3600))시간 \(Int(seconds.truncatingRemainder(dividingBy: 3600) / 60))분 남음"

@@ -287,6 +287,8 @@ struct Thumb: View {
     @EnvironmentObject var library: LibraryModel
     let photo: Photo
     var selecting = false
+    /// The grid shows this photo's part in a save; the transfer list has its own marks.
+    var showsTransfer = true
     @State private var image: PlatformImage?
 
     var body: some View {
@@ -306,6 +308,11 @@ struct Thumb: View {
                 }
                 .foregroundStyle(.white).shadow(radius: 2)
                 .padding(4)
+            }
+            .overlay(alignment: .topTrailing) {
+                if !selecting, showsTransfer, let transfer = library.transfer(photo) {
+                    TransferBadge(status: transfer.status).padding(4)
+                }
             }
             .overlay(alignment: .topTrailing) {
                 if selecting {
@@ -523,90 +530,6 @@ struct PhotoPage: View {
                 image = PlatformImage(cgImageValue: decoded)
                 original = true
             }
-        }
-    }
-}
-
-/// Saving progress above the tab bar.
-struct TransferBar: View {
-    @EnvironmentObject var library: LibraryModel
-
-    var body: some View {
-        let s = library.transferSummary
-        let left = s.failed + s.cancelled + s.waiting
-        HStack {
-            if library.isTransferring {
-                ProgressView(value: s.fraction)
-                Text("\(s.finished)/\(s.count)").font(.caption.monospacedDigit())
-                Button("취소") { library.cancelTransfers() }
-            } else {
-                if left > 0 {
-                    Button { showIssues = true } label: {
-                        Label("\(s.done)장 저장, \(left)장 못 함", systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                        Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.secondary)
-                    }
-                    .tint(.primary)
-                } else {
-                    Label {
-                        Text("\(s.done)장을 사진 앱에 저장했어요")
-                    } icon: {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    }
-                    .font(.callout)
-                }
-                Spacer()
-                if left > 0 { Button("다시") { library.retryFailed() } }
-                Button("닫기") { library.dismissTransfers() }
-            }
-        }
-        .padding(.horizontal).padding(.vertical, 8)
-        .background(.bar)
-        .sheet(isPresented: $showIssues) { TransferIssuesSheet() }
-    }
-
-    @State private var showIssues = false
-}
-
-/// The photos of the last save that weren't saved, each with why.
-struct TransferIssuesSheet: View {
-    @EnvironmentObject var library: LibraryModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        let issues = library.transfers.filter(\.isRetryable)
-        NavigationStack {
-            List(issues) { t in
-                HStack(spacing: 12) {
-                    Thumb(photo: t.photo).frame(width: 56, height: 56).clipShape(.rect(cornerRadius: 6))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t.photo.name).font(.body.monospaced())
-                        Text(Self.reason(t.status)).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("저장하지 못한 \(issues.count)장")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("다시 저장") {
-                        dismiss()
-                        library.retryFailed()
-                    }
-                    .disabled(library.isTransferring)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    static func reason(_ status: LibraryModel.Transfer.Status) -> String {
-        switch status {
-        case .failed(let message): return message
-        case .cancelled: return "취소됨"
-        case .waiting: return "시작하지 못함"
-        default: return ""
         }
     }
 }

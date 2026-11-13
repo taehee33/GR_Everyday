@@ -82,6 +82,8 @@ final class LibraryModel: ObservableObject {
         var fraction: Double { totalBytes > 0 ? min(1, Double(receivedBytes) / Double(totalBytes)) : 0 }
         /// Done, skipped, failed or cancelled.
         var finished: Int { done + skipped + failed + cancelled }
+        /// Not saved: failed, cancelled, or never started.
+        var unsaved: Int { failed + cancelled + waiting }
         var secondsLeft: Double? {
             guard let rate = bytesPerSecond, rate > 0 else { return nil }
             return Double(max(0, totalBytes - receivedBytes)) / rate
@@ -136,7 +138,20 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var saved: Set<String> = []
     @Published private(set) var isLoading = false
     @Published var error: String?
-    @Published private(set) var transfers: [Transfer] = []
+    @Published private(set) var transfers: [Transfer] = [] {
+        didSet {
+            if transfers.map(\.id) != oldValue.map(\.id) {
+                transferIndex = Dictionary(transfers.indices.map { (transfers[$0].id, $0) }, uniquingKeysWith: { a, _ in a })
+            }
+        }
+    }
+    /// Position in transfers by photo id, for the grid's per-photo status.
+    private var transferIndex: [String: Int] = [:]
+
+    /// This photo's part in the current (or just finished) save, for the grid.
+    func transfer(_ photo: Photo) -> Transfer? {
+        transferIndex[photo.id].flatMap { transfers.indices.contains($0) ? transfers[$0] : nil }
+    }
     @Published private(set) var isTransferring = false
     /// Photos left over from a save that didn't finish (app closed, camera off, 취소), still
     /// on the card and not saved. Filled in when the card's list loads; see resumeSave().
@@ -766,6 +781,15 @@ final class LibraryModel: ObservableObject {
     private func estimatedBytes(_ kind: Photo.Kind) -> Int64 {
         let known = transfers.filter { $0.photo.kind == kind }.compactMap(\.bytes)
         if !known.isEmpty { return known.reduce(0, +) / Int64(known.count) }
+        // No file of this kind yet: the typical size, scaled by how the files seen so far
+        // compare with their own typical sizes (a camera set to small JPEGs, say).
+        let seen = transfers.compactMap { t in t.bytes.map { ($0, Self.typicalBytes(t.photo.kind)) } }
+        guard !seen.isEmpty else { return Self.typicalBytes(kind) }
+        let scale = Double(seen.reduce(0) { $0 + $1.0 }) / Double(max(1, seen.reduce(0) { $0 + $1.1 }))
+        return Int64(Double(Self.typicalBytes(kind)) * scale)
+    }
+
+    private static func typicalBytes(_ kind: Photo.Kind) -> Int64 {
         switch kind {
         case .jpeg: return 12_000_000
         case .raw: return 35_000_000
