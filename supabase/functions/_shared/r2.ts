@@ -23,6 +23,11 @@ export function keys(photoId: string) {
   return { display: `p/${photoId}/display.jpg`, thumb: `p/${photoId}/thumb` };
 }
 
+/** A profile picture (profiles.avatar_version). The Worker serves the same path. */
+export function avatarKey(ownerId: string, version: number): string {
+  return `a/${ownerId.toLowerCase()}/${version}.jpg`;
+}
+
 export interface PresignedPut {
   url: string;
   /** Headers the app must send with the PUT, exactly as given (they are signed). */

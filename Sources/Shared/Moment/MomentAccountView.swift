@@ -31,6 +31,10 @@ final class MomentAccount: ObservableObject {
 
     @Published private(set) var state: State = .loading
     @Published private(set) var me: MomentProfile?
+    /// "Google · name@example.com": which sign-in this is, so a wrong account is easy to spot.
+    @Published private(set) var signInLabel: String?
+    /// Reports I filed (설정 › 계정 › 신고 내역).
+    @Published private(set) var reports: [MomentReport]?
     @Published private(set) var quota: MomentQuota?
     @Published var errorMessage: String?
     @Published private(set) var busy = false
@@ -38,17 +42,34 @@ final class MomentAccount: ObservableObject {
     @Published private(set) var displayNameCheck: NameCheck = .empty
     /// My uploaded photos, newest first.
     @Published private(set) var myPhotos: [MomentPhoto] = []
+    /// Where each of my photos hangs on my wall (both layouts).
+    @Published private(set) var wallItems: [UUID: WallItem] = [:]
     private var checkTasks: [NameKind: Task<Void, Never>] = [:]
 
     let store: MomentStore
     /// The shared photos everyone sees; kept here so the tab's screens use one copy.
     let feed: MomentFeed
+    /// Photos I liked (설정 › 계정 › 좋아요한 사진).
+    let likedFeed: MomentFeed
+
+    /// One account for the whole app: the 순간들 tab and 설정 › 계정 show the same sign-in.
+    static let shared: MomentAccount = {
+        #if DEBUG
+        // Launch with -momentMock to see the screens with a signed-in sample account and
+        // photos, without touching the server.
+        if ProcessInfo.processInfo.arguments.contains("-momentMock") {
+            return MomentAccount(store: MockMomentStore.sample())
+        }
+        #endif
+        return MomentAccount()
+    }()
     /// The raw nonce of the Sign in with Apple request in flight; Supabase checks its hash.
     private var nonce: String?
 
     init(store: MomentStore = SupabaseMomentStore()) {
         self.store = store
         self.feed = MomentFeed(store: store)
+        self.likedFeed = MomentFeed(store: store, source: .liked)
     }
 
     func load() async {
@@ -154,9 +175,60 @@ final class MomentAccount: ObservableObject {
 
     /// Reloads my photos and the wall/share counts (after an upload, for example).
     func reloadPhotos() async {
-        guard let me = store.me else { myPhotos = []; return }
-        if let wall = try? await store.wall(of: me.id) { myPhotos = wall.photos }
+        guard let me = store.me else { myPhotos = []; wallItems = [:]; return }
+        if let wall = try? await store.wall(of: me.id) {
+            myPhotos = wall.photos
+            wallItems = Dictionary(wall.items.map { ($0.photoID, $0) }, uniquingKeysWith: { a, _ in a })
+        }
         quota = try? await store.quota()
+    }
+
+    /// Saves 프로필 편집: the texts, then the picture (`avatar`: nil = unchanged, .some(nil) =
+    /// remove). False when something failed; errorMessage says what.
+    func saveProfile(_ edit: MomentProfileEdit, avatar: Data??) async -> Bool {
+        errorMessage = nil
+        do {
+            try await store.updateProfile(edit)
+            if let avatar { try await store.setAvatar(avatar) }
+            me = store.me
+            return true
+        } catch {
+            me = store.me
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Saves how my wall looks: the view (갤러리/그리드), the gallery's direction, and any moved
+    /// frames. Shows the change at once and puts it back if the server says no.
+    @discardableResult
+    func saveWall(style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection,
+                  items: [WallItem]) async -> Bool {
+        let before = (me, wallItems)
+        me?.wallStyle = style
+        me?.wallDirection = direction
+        for item in items { wallItems[item.photoID] = item }
+        do {
+            try await store.saveWall(style: style, direction: direction, items: items)
+            if let saved = store.me {
+                // The server may not keep the direction yet (column not there); keep what was chosen.
+                me = saved
+                me?.wallDirection = direction
+            }
+            return true
+        } catch {
+            (me, wallItems) = before
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func reloadReports() async {
+        do {
+            reports = try await store.myReports()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     // MARK: My photos
@@ -214,7 +286,15 @@ final class MomentAccount: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+        let previous = me?.id
         me = store.me
+        signInLabel = store.signInLabel
+        if previous != me?.id {
+            // Another account (or none): nothing of the last one may stay on screen.
+            myPhotos = []
+            reports = nil
+            likedFeed.clear()
+        }
         quota = me?.handle != nil ? try? await store.quota() : nil
         state = me == nil ? .signedOut : (me?.handle == nil ? .needsHandle : .ready)
         if state == .ready, myPhotos.isEmpty { await reloadPhotos() }
@@ -233,13 +313,11 @@ final class MomentAccount: ObservableObject {
     }
 }
 
-/// Sign in, pick names, and see the account: the part of the 순간들 tab that exists so far.
+/// 내 갤러리: sign in, pick names the first time, then upload and see my photos. Changing
+/// names, logging out and leaving live in 설정 › 계정 (MomentAccountSection).
 struct MomentAccountView: View {
     @ObservedObject var account: MomentAccount
     @EnvironmentObject private var library: LibraryModel
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var confirmDelete = false
-    @State private var editing: MomentAccount.NameKind?
     @State private var uploading = false
 
     var body: some View {
@@ -248,61 +326,15 @@ struct MomentAccountView: View {
             case .loading:
                 ProgressView()
             case .signedOut:
-                Text("사진을 올리고 공유하려면 로그인해 주세요.")
-                    .font(.callout).foregroundStyle(.secondary)
-                SignInWithAppleButton(.signIn) { request in
-                    account.prepare(request)
-                } onCompletion: { result in
-                    Task { await account.complete(result) }
-                }
-                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                .frame(maxWidth: Self.buttonWidth, minHeight: Self.buttonHeight, maxHeight: Self.buttonHeight)
-                .clipShape(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous))
-                GoogleSignInButton(height: Self.buttonHeight, radius: Self.buttonRadius) {
-                    Task { await account.signInWithGoogle() }
-                }
-                .frame(maxWidth: Self.buttonWidth)
-            case .needsHandle:
-                Text("사용자명과 표시 이름을 정해 주세요.")
+                Text("사진을 업로드하고 순간들에 공유하려면 로그인해 주세요.")
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                SetupNamesForm(account: account)
-                accountActions
+                MomentSignInButtons(account: account)
+            case .needsHandle:
+                MomentNamesSetup(account: account)
             case .ready:
-                profileHeader
-                if let q = account.quota {
-                    Text("벽 \(q.wallUsed)/\(q.wallLimit) · 이번 달 공유 \(q.sharesPerMonth - q.sharesLeft)/\(q.sharesPerMonth)")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let kind = editing {
-                    NameEditor(account: account, kind: kind, saveTitle: "저장",
-                               initial: (kind == .handle ? account.me?.handle : account.me?.displayName) ?? "") {
-                        editing = nil
-                    }
-                    if kind == .handle {
-                        Text("사용자명은 30일에 한 번 바꿀 수 있고, 이전 사용자명은 14일 동안 다른 사람이 쓸 수 없어요.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center).frame(maxWidth: 300)
-                    }
-                    Button("취소") { editing = nil }
-                        .buttonStyle(.borderless).controlSize(.small)
-                } else {
-                    nameButtons
-                }
-                Button {
-                    uploading = true
-                } label: {
-                    Label("사진 올리기", systemImage: "plus").frame(maxWidth: 240)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(account.quota?.wallFull == true)
-                if account.quota?.wallFull == true {
-                    Text("벽이 가득 찼어요. 사진을 내리면 새로 걸 수 있어요.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                MyMomentsGrid(account: account)
-                accountActions
+                MomentProfileHeader(account: account) { uploading = true }
+                MomentWallView(account: account) { uploading = true }
             }
             if let message = account.errorMessage {
                 Text(message).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
@@ -313,55 +345,6 @@ struct MomentAccountView: View {
         .sheet(isPresented: $uploading) {
             MomentUploadView(account: account, saveFolder: library.destination)
         }
-        .confirmationDialog("탈퇴할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("탈퇴하고 모두 삭제", role: .destructive) { Task { await account.deleteAccount() } }
-        } message: {
-            Text("계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요.")
-        }
-    }
-
-    /// 한태희 / @taehee, or just @taehee until a display name is set.
-    @ViewBuilder private var profileHeader: some View {
-        VStack(spacing: 2) {
-            if let name = account.me?.displayName {
-                Text(name).font(.title3.bold())
-            }
-            if let handle = account.me?.handle {
-                Text("@\(handle)")
-                    .font(account.me?.displayName == nil ? .headline : .subheadline)
-                    .foregroundStyle(account.me?.displayName == nil ? .primary : .secondary)
-            }
-        }
-    }
-
-    private var nameButtons: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                Button(account.me?.displayName == nil ? "표시 이름 정하기" : "표시 이름 변경") { editing = .displayName }
-                Button("사용자명 변경") { editing = .handle }
-                    .disabled(account.me?.nextHandleChange != nil)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            if let next = account.me?.nextHandleChange {
-                Text("사용자명은 \(next.formatted(date: .long, time: .omitted))부터 바꿀 수 있어요.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// Log out and leave; shown on every signed-in step.
-    private var accountActions: some View {
-        HStack(spacing: 12) {
-            Button("로그아웃") {
-                editing = nil
-                Task { await account.signOut() }
-            }
-            Button("탈퇴", role: .destructive) { confirmDelete = true }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .padding(.top, 4)
     }
 
     // The Apple and Google buttons share one size and shape so they read as a pair.
@@ -378,10 +361,70 @@ struct MomentAccountView: View {
     #endif
 }
 
+/// Sign in with Apple and Google, as a pair.
+struct MomentSignInButtons: View {
+    @ObservedObject var account: MomentAccount
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 10) {
+            SignInWithAppleButton(.signIn) { request in
+                account.prepare(request)
+            } onCompletion: { result in
+                Task { await account.complete(result) }
+            }
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .frame(maxWidth: MomentAccountView.buttonWidth, minHeight: MomentAccountView.buttonHeight,
+                   maxHeight: MomentAccountView.buttonHeight)
+            .clipShape(RoundedRectangle(cornerRadius: MomentAccountView.buttonRadius, style: .continuous))
+            GoogleSignInButton(height: MomentAccountView.buttonHeight, radius: MomentAccountView.buttonRadius) {
+                Task { await account.signInWithGoogle() }
+            }
+            .frame(maxWidth: MomentAccountView.buttonWidth)
+            Text("Apple과 Google은 서로 다른 계정이에요. 전에 쓰던 방법으로 로그인해 주세요.")
+                .font(.caption).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).frame(maxWidth: 300)
+        }
+    }
+}
+
+/// A new account's first step: both names, and which sign-in this is, with a way out when it
+/// is not the account the person meant to use.
+struct MomentNamesSetup: View {
+    @ObservedObject var account: MomentAccount
+    @State private var confirmDelete = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 4) {
+                Text("처음 로그인한 계정이에요").font(.headline)
+                if let label = account.signInLabel {
+                    Text(label).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                Text("사용자명과 표시 이름을 정하면 시작할 수 있어요. 전에 쓰던 계정이 따로 있다면 로그아웃한 뒤 그때 쓴 방법(Apple 또는 Google, 같은 메일)으로 로그인해 주세요.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 320)
+            }
+            SetupNamesForm(account: account)
+            HStack(spacing: 12) {
+                Button("로그아웃") { Task { await account.signOut() } }
+                Button("탈퇴", role: .destructive) { confirmDelete = true }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .confirmationDialog("탈퇴할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("탈퇴하고 모두 삭제", role: .destructive) { Task { await account.deleteAccount() } }
+        } message: {
+            Text("계정과 올린 사진, 벽, 공유 기록이 모두 지워지고 되돌릴 수 없어요.")
+        }
+    }
+}
+
 /// A name field that says right away whether the name can be used (green when the format is
 /// right, red when not or when someone else has it); saving works only once the server says it
 /// is free.
-private struct NameEditor: View {
+struct NameEditor: View {
     @ObservedObject var account: MomentAccount
     let kind: MomentAccount.NameKind
     let saveTitle: String
@@ -414,7 +457,7 @@ private struct NameEditor: View {
 }
 
 /// First sign-in: @handle and display name on one screen, saved together.
-private struct SetupNamesForm: View {
+struct SetupNamesForm: View {
     @ObservedObject var account: MomentAccount
     @State private var handle = ""
     @State private var displayName = ""
@@ -448,8 +491,8 @@ private struct SetupNamesForm: View {
     }
 }
 
-/// One text box. Handles carry a fixed "@" inside the box; empty fields show a translucent
-/// "@ID" / "username" hint.
+/// One text box; empty fields show a translucent hint. Usernames have no "@": it is not
+/// part of the name anywhere (database, links), and it read like an Instagram handle.
 private struct NameField: View {
     let kind: MomentAccount.NameKind
     @Binding var text: String
@@ -457,10 +500,7 @@ private struct NameField: View {
 
     var body: some View {
         HStack(spacing: 1) {
-            if kind == .handle {
-                Text("@").foregroundStyle(text.isEmpty ? .tertiary : .secondary)
-            }
-            TextField("", text: $text, prompt: Text(kind == .handle ? "ID" : "username").foregroundStyle(.tertiary))
+            TextField("", text: $text, prompt: Text(kind == .handle ? "사용자명 (영문)" : "표시 이름").foregroundStyle(.tertiary))
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 #if os(iOS)

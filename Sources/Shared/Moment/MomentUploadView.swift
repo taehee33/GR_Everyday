@@ -24,6 +24,10 @@ final class MomentUploadModel: ObservableObject {
 
     @Published private(set) var phase: Phase = .picking
     @Published private(set) var rendered: MomentImage.Rendered?
+    /// The original kept for framing (자르기·회전), and how it is framed now.
+    @Published private(set) var loaded: MomentImage.Loaded?
+    @Published private(set) var edit = MomentCropEdit()
+    @Published private(set) var reframing = false
     @Published private(set) var fullInfo = MomentShotInfo()
     @Published var options = MomentShareOptions.load()
     @Published var caption = ""
@@ -67,17 +71,36 @@ final class MomentUploadModel: ObservableObject {
             phase = .failed("GR로 찍은 JPG나 DNG 파일만 올릴 수 있어요.")
             return
         }
+        loaded = nil
+        edit = MomentCropEdit()
         do {
             let result = try await Task.detached(priority: .userInitiated) {
-                let image = try MomentImage.render(files)
-                return (image, MomentShotInfo.read(image.source))
+                let loaded = try MomentImage.load(files)
+                let image = try MomentImage.render(loaded, edit: MomentCropEdit())
+                return (loaded, image, MomentShotInfo.read(image.source))
             }.value
-            rendered = result.0
-            fullInfo = result.1
+            loaded = result.0
+            rendered = result.1
+            fullInfo = result.2
             locationChoice = options.location == .approximate && photoHasLocation ? .photo : .none
             mapLocation = nil
             mapPlace = nil
             phase = .ready
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Turns and crops the photo as framed, and builds the upload files again.
+    func reframe(_ new: MomentCropEdit) async {
+        guard let loaded, new != edit else { return }
+        reframing = true
+        defer { reframing = false }
+        do {
+            rendered = try await Task.detached(priority: .userInitiated) {
+                try MomentImage.render(loaded, edit: new)
+            }.value
+            edit = new
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -102,6 +125,8 @@ final class MomentUploadModel: ObservableObject {
     func reset() {
         phase = .picking
         rendered = nil
+        loaded = nil
+        edit = MomentCropEdit()
         fullInfo = MomentShotInfo()
         caption = ""
         shareNow = false
@@ -145,11 +170,12 @@ struct MomentUploadView: View {
     @State private var showFileImporter = false
     @State private var photoItem: PhotosPickerItem?
     @State private var pickingLocation = false
+    @State private var cropping = false
 
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("사진 올리기")
+                .navigationTitle("사진 업로드")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
@@ -211,7 +237,7 @@ struct MomentUploadView: View {
 
     private var pickButtons: some View {
         VStack(spacing: 14) {
-            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요.")
+            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.")
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let q = account.quota {
@@ -255,8 +281,22 @@ struct MomentUploadView: View {
                     PreviewImage(data: rendered.display)
                         .frame(maxWidth: .infinity)
                         .frame(height: 260)
-                    Text("\(rendered.source.lastPathComponent) · \(Int(rendered.displaySize.width))×\(Int(rendered.displaySize.height)) · \(rendered.display.count / 1024) KB")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .overlay {
+                            if model.reframing { ProgressView() }
+                        }
+                    HStack {
+                        Text("\(rendered.source.lastPathComponent) · \(Int(rendered.displaySize.width))×\(Int(rendered.displaySize.height)) · \(rendered.display.count / 1024) KB")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            cropping = true
+                        } label: {
+                            Label(model.edit.isEdited ? "다시 자르기" : "자르기·회전", systemImage: "crop.rotate")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.loaded == nil || model.reframing || model.phase == .uploading)
+                    }
                 }
             }
             Section {
@@ -323,7 +363,7 @@ struct MomentUploadView: View {
                 }
                 .disabled(account.quota?.sharesLeft == 0)
             } footer: {
-                Text("공유하지 않으면 내 Photowall에만 걸려요. 나중에 벽에서 공유할 수도 있어요.")
+                Text("공유하지 않으면 내 갤러리에만 올라가요. 나중에 갤러리에서 공유할 수도 있어요.")
             }
             Section {
                 Button {
@@ -344,12 +384,19 @@ struct MomentUploadView: View {
                         Spacer()
                     }
                 }
-                .disabled(model.phase == .uploading)
+                .disabled(model.phase == .uploading || model.reframing)
                 Button("다른 사진 고르기") { model.reset() }
                     .disabled(model.phase == .uploading)
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $cropping) {
+            if let loaded = model.loaded {
+                MomentPhotoCropper(original: loaded.image, start: model.edit) { edit in
+                    Task { await model.reframe(edit) }
+                }
+            }
+        }
         .sheet(isPresented: $pickingLocation, onDismiss: {
             if model.locationChoice == .map, model.mapLocation == nil { model.locationChoice = .none }
         }) {
@@ -367,7 +414,7 @@ struct MomentUploadView: View {
         VStack(spacing: 14) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48)).foregroundStyle(.green)
-            Text(model.uploaded?.isShared == true ? "벽에 걸고 피드에 공유했어요" : "내 Photowall에 걸었어요")
+            Text(model.uploaded?.isShared == true ? "갤러리에 올리고 순간들에 공유했어요" : "내 갤러리에 올렸어요")
                 .font(.headline)
             if model.shareNow, model.uploaded?.isShared == false {
                 Text("이번 달 공유 횟수를 다 써서 피드에는 공유되지 않았어요.")

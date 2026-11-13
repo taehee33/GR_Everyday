@@ -23,6 +23,18 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
     private let client: SupabaseClient
     private let session: URLSession
     private(set) var me: MomentProfile?
+
+    var signInLabel: String? {
+        guard let user = client.auth.currentUser else { return nil }
+        let provider: String? = switch user.appMetadata["provider"]?.stringValue {
+        case "google": "Google"
+        case "apple": "Apple"
+        case let other: other
+        }
+        let parts = [provider, user.email].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private var imageBase = MomentBackend.defaultImageBase
 
     init(client: SupabaseClient = MomentBackend.client, session: URLSession = .shared) {
@@ -117,6 +129,51 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         } catch {
             throw Self.map(error)
         }
+    }
+
+    func updateProfile(_ edit: MomentProfileEdit) async throws {
+        let me = try requireMe()
+        struct Row: Encodable {
+            let bio, instagram, website: String?
+            let cameras: [String]?
+            // Send nulls too, so clearing a field clears it on the server.
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(bio, forKey: .bio)
+                try c.encode(instagram, forKey: .instagram)
+                try c.encode(website, forKey: .website)
+                try c.encode(cameras, forKey: .cameras)
+            }
+            enum CodingKeys: String, CodingKey { case bio, instagram, website, cameras }
+        }
+        do {
+            try await client.from("profiles")
+                .update(Row(bio: edit.bio, instagram: edit.instagram, website: edit.website,
+                            cameras: edit.cameras.isEmpty ? nil : edit.cameras),
+                        returning: .minimal)
+                .eq("id", value: me.id).execute()
+        } catch {
+            throw Self.map(error)
+        }
+        try await refreshMe()
+    }
+
+    func setAvatar(_ jpeg: Data?) async throws {
+        _ = try requireMe()
+        struct Start: Decodable { let version: Int; let put: PresignedPut }
+        struct Done: Decodable {}
+        if let jpeg {
+            let started: Start = try await invoke("profile-avatar", body: AvatarRequest(action: "start", bytes: jpeg.count))
+            try await put(jpeg, to: started.put)
+            let _: Done = try await invoke("profile-avatar", body: AvatarRequest(action: "finish", version: started.version))
+        } else {
+            let _: Done = try await invoke("profile-avatar", body: AvatarRequest(action: "remove"))
+        }
+        try await refreshMe()
+    }
+
+    func avatarURL(owner: UUID, version: Int) -> URL {
+        imageBase.appending(path: "a/\(owner.uuidString.lowercased())/\(version).jpg")
     }
 
     func deleteAccount() async throws {
@@ -232,11 +289,19 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         }
     }
 
-    func saveWall(style: MomentProfile.WallStyle, items: [WallItem]) async throws {
+    func saveWall(style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection,
+                  items: [WallItem]) async throws {
         let me = try requireMe()
         do {
             try await client.from("profiles").update(["wall_style": style.rawValue], returning: .minimal)
                 .eq("id", value: me.id).execute()
+            if direction != me.wallDirection {
+                // profiles.wall_direction comes with migration 20261112010000; until it is on
+                // the server the direction is not kept (the layout itself still is).
+                _ = try? await client.from("profiles")
+                    .update(["wall_direction": direction.rawValue], returning: .minimal)
+                    .eq("id", value: me.id).execute()
+            }
             if !items.isEmpty {
                 try await client.from("wall_items")
                     .upsert(items.map { WallItemRow(item: $0, owner: me.id) }, onConflict: "photo_id",
@@ -277,6 +342,55 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         }
     }
 
+    func likedPhotos(limit: Int) async throws -> [MomentPhoto] {
+        let me = try requireMe()
+        struct Row: Decodable { let photo: PhotoRow? }
+        do {
+            let rows: [Row] = try await client.from("likes")
+                .select("created_at,photo:photos(\(PhotoRow.columns))")
+                .eq("user_id", value: me.id).order("created_at", ascending: false)
+                .limit(limit).execute().value
+            return rows.compactMap(\.photo).map(\.photo).filter { $0.status == .published }
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func myReports() async throws -> [MomentReport] {
+        let me = try requireMe()
+        struct Row: Decodable {
+            let id: Int
+            let photoID: UUID?
+            let reason: String
+            let createdAt: Date
+            /// Absent until migration 20261112000000 (reports.status) is on the server.
+            let status: String?
+            enum CodingKeys: String, CodingKey {
+                case id, reason, status, photoID = "photo_id", createdAt = "created_at"
+            }
+        }
+        func load(_ columns: String) async throws -> [Row] {
+            try await client.from("reports").select(columns)
+                .eq("reporter", value: me.id).order("created_at", ascending: false).execute().value
+        }
+        do {
+            let rows: [Row]
+            do {
+                rows = try await load("id,photo_id,reason,created_at,status")
+            } catch let error as PostgrestError where error.code == "42703" {
+                rows = try await load("id,photo_id,reason,created_at")
+            }
+            return rows.map {
+                MomentReport(id: $0.id, photoID: $0.photoID,
+                             reason: MomentReportReason(rawValue: $0.reason) ?? .other,
+                             createdAt: $0.createdAt,
+                             status: $0.status.flatMap(MomentReport.Status.init) ?? .received)
+            }
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
     func report(_ photo: UUID, reason: String, note: String?) async throws {
         let me = try requireMe()
         do {
@@ -301,14 +415,69 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         }
     }
 
+    // MARK: Comments
+
+    func comments(on photo: UUID) async throws -> [MomentComment] {
+        do {
+            let rows: [CommentRow] = try await client.from("comments").select(CommentRow.columns)
+                .eq("photo_id", value: photo).eq("hidden", value: false)
+                .order("created_at", ascending: true).limit(500).execute().value
+            return rows.map(\.comment)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func addComment(on photo: UUID, _ text: String) async throws -> MomentComment {
+        let me = try requireMe()
+        struct Insert: Encodable {
+            let photoID: UUID, author: UUID, body: String
+            enum CodingKeys: String, CodingKey { case author, body, photoID = "photo_id" }
+        }
+        do {
+            let row: CommentRow = try await client.from("comments")
+                .insert(Insert(photoID: photo, author: me.id, body: text), returning: .representation)
+                .select(CommentRow.columns).single().execute().value
+            return row.comment
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func deleteComment(_ id: Int) async throws {
+        do {
+            try await client.from("comments").delete(returning: .minimal).eq("id", value: id).execute()
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func reportComment(_ id: Int, reason: String) async throws {
+        let me = try requireMe()
+        struct Insert: Encodable {
+            let reporter: UUID, commentID: Int, reason: String
+            enum CodingKeys: String, CodingKey { case reporter, reason, commentID = "comment_id" }
+        }
+        do {
+            try await client.from("comment_reports")
+                .insert(Insert(reporter: me.id, commentID: id, reason: reason), returning: .minimal).execute()
+        } catch let error as PostgrestError where error.code == "23505" {
+            return  // already reported by me
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
     // MARK: Files
 
     func displayURL(_ photo: MomentPhoto) -> URL {
         imageBase.appending(path: "p/\(photo.id.uuidString.lowercased())/display.jpg")
     }
 
-    func thumbURL(_ photo: MomentPhoto) -> URL {
-        imageBase.appending(path: "p/\(photo.id.uuidString.lowercased())/thumb")
+    func thumbURL(_ photo: MomentPhoto) -> URL { thumbURL(photo.id) }
+
+    func thumbURL(_ id: UUID) -> URL {
+        imageBase.appending(path: "p/\(id.uuidString.lowercased())/thumb")
     }
 
     private func loadImageBase() async {
@@ -397,6 +566,12 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
 
 private struct Empty: Codable {}
 
+private struct AvatarRequest: Encodable {
+    let action: String
+    var bytes: Int? = nil
+    var version: Int? = nil
+}
+
 private struct FunctionErrorReply: Decodable {
     let error: String?
     let detail: String?
@@ -454,22 +629,31 @@ private struct ProfileRow: Decodable {
     let wallStyle: String
     let wallLimit: Int
     let handleChangedAt: Date?
+    let wallDirection: String?
+    let avatarVersion: Int?
+    let instagram: String?
+    let website: String?
+    let cameras: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case id, handle, bio
+        case id, handle, bio, instagram, website, cameras
         case displayName = "display_name", wallStyle = "wall_style", wallLimit = "wall_limit"
-        case handleChangedAt = "handle_changed_at"
+        case handleChangedAt = "handle_changed_at", wallDirection = "wall_direction"
+        case avatarVersion = "avatar_version"
     }
 
     var profile: MomentProfile {
         MomentProfile(id: id, handle: handle, displayName: displayName, bio: bio,
                       wallStyle: MomentProfile.WallStyle(rawValue: wallStyle) ?? .grid, wallLimit: wallLimit,
-                      handleChangedAt: handleChangedAt)
+                      handleChangedAt: handleChangedAt,
+                      wallDirection: wallDirection.flatMap(MomentProfile.WallDirection.init) ?? .vertical,
+                      avatarVersion: avatarVersion, instagram: instagram, website: website,
+                      cameras: cameras ?? [])
     }
 }
 
 private struct PhotoRow: Decodable {
-    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,exposure,image_control,taken_at,lat,lon,place,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name)"
+    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,exposure,image_control,taken_at,lat,lon,place,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
 
     let id: UUID
     let owner: UUID
@@ -490,7 +674,14 @@ private struct PhotoRow: Decodable {
     struct AuthorRow: Decodable {
         let handle: String?
         let displayName: String?
-        enum CodingKeys: String, CodingKey { case handle, displayName = "display_name" }
+        let avatarVersion: Int?
+        enum CodingKeys: String, CodingKey {
+            case handle, displayName = "display_name", avatarVersion = "avatar_version"
+        }
+
+        var author: MomentAuthor {
+            MomentAuthor(handle: handle, displayName: displayName, avatarVersion: avatarVersion)
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -506,7 +697,7 @@ private struct PhotoRow: Decodable {
                     info: MomentShotInfo(camera: camera, exposure: exposure, imageControl: imageControl,
                                          takenAt: takenAt, lat: lat, lon: lon, place: place),
                     likeCount: likeCount, createdAt: createdAt, sharedAt: sharedAt,
-                    author: author.map { MomentAuthor(handle: $0.handle, displayName: $0.displayName) })
+                    author: author?.author)
     }
 }
 
@@ -532,6 +723,26 @@ private struct WallItemRow: Codable {
     var item: WallItem {
         WallItem(photoID: photoID, x: x, y: y, width: width, z: z, rotation: rotation,
                  gridOrder: gridOrder, gridSpan: WallItem.GridSpan(rawValue: gridSpan) ?? .one)
+    }
+}
+
+private struct CommentRow: Decodable {
+    static let columns = "id,photo_id,author,body,created_at,writer:profiles!comments_author_fkey(handle,display_name,avatar_version)"
+
+    let id: Int
+    let photoID: UUID
+    let author: UUID
+    let body: String
+    let createdAt: Date
+    let writer: PhotoRow.AuthorRow?
+
+    enum CodingKeys: String, CodingKey {
+        case id, author, body, writer, photoID = "photo_id", createdAt = "created_at"
+    }
+
+    var comment: MomentComment {
+        MomentComment(id: id, photoID: photoID, author: author, authorInfo: writer?.author,
+                      body: body, createdAt: createdAt)
     }
 }
 

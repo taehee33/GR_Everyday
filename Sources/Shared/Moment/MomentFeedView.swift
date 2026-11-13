@@ -14,11 +14,33 @@ final class MomentFeed: ObservableObject {
     /// A short note after a report or block ("신고했어요" …).
     @Published var notice: String?
 
-    let store: MomentStore
-    static let pageSize = 30
+    /// The person whose gallery this is (source .owner), and how they hung it.
+    @Published private(set) var profile: MomentProfile?
+    @Published private(set) var items: [UUID: WallItem] = [:]
 
-    init(store: MomentStore) {
+    /// What the list holds: everyone's shared photos, the ones I liked, or one person's gallery.
+    enum Source: Equatable { case shared, liked, owner(UUID) }
+
+    let store: MomentStore
+    let source: Source
+    static let pageSize = 30
+    /// Photos I reported; kept off my feed even after a reload.
+    private var reported: Set<UUID> = []
+
+    init(store: MomentStore, source: Source = .shared) {
         self.store = store
+        self.source = source
+    }
+
+    /// Forgets everything (after signing out).
+    func clear() {
+        photos = []
+        liked = []
+        reported = []
+        loaded = false
+        reachedEnd = false
+        notice = nil
+        errorMessage = nil
     }
 
     /// First page again (pull to refresh, after sharing, after signing in).
@@ -27,10 +49,27 @@ final class MomentFeed: ObservableObject {
         errorMessage = nil
         defer { loading = false; loaded = true }
         do {
-            let page = try await store.feed(before: nil, limit: Self.pageSize)
-            photos = page
-            reachedEnd = page.count < Self.pageSize
-            liked = (try? await store.likes(among: page.map(\.id))) ?? []
+            switch source {
+            case .shared:
+                let page = try await store.feed(before: nil, limit: Self.pageSize)
+                if store.me != nil, let mine = try? await store.myReports() {
+                    reported = Set(mine.compactMap(\.photoID))
+                }
+                photos = page.filter { !reported.contains($0.id) }
+                reachedEnd = page.count < Self.pageSize
+                liked = (try? await store.likes(among: page.map(\.id))) ?? []
+            case .liked:
+                photos = try await store.likedPhotos(limit: 200)
+                reachedEnd = true
+                liked = Set(photos.map(\.id))
+            case .owner(let owner):
+                let wall = try await store.wall(of: owner)
+                profile = wall.profile
+                items = Dictionary(wall.items.map { ($0.photoID, $0) }, uniquingKeysWith: { a, _ in a })
+                photos = wall.photos.filter { $0.status == .published || owner == store.me?.id }
+                reachedEnd = true
+                liked = (try? await store.likes(among: photos.map(\.id))) ?? []
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -44,7 +83,7 @@ final class MomentFeed: ObservableObject {
         do {
             let page = try await store.feed(before: last, limit: Self.pageSize)
             let known = Set(photos.map(\.id))
-            photos += page.filter { !known.contains($0.id) }
+            photos += page.filter { !known.contains($0.id) && !reported.contains($0.id) }
             reachedEnd = page.count < Self.pageSize
             liked.formUnion((try? await store.likes(among: page.map(\.id))) ?? [])
         } catch {
@@ -83,8 +122,9 @@ final class MomentFeed: ObservableObject {
     func report(_ id: UUID, _ reason: MomentReportReason) async -> Bool {
         do {
             try await store.report(id, reason: reason.rawValue, note: nil)
+            reported.insert(id)
             photos.removeAll { $0.id == id }
-            notice = "신고했어요. 확인한 뒤 조치할게요."
+            notice = "신고되었어요. 결과는 설정 › 계정 › 신고 내역에서 볼 수 있어요."
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -106,25 +146,18 @@ final class MomentFeed: ObservableObject {
     }
 }
 
-/// The feed as a grid of thumbnails; a tap opens the photo.
-struct MomentFeedView: View {
+/// Photos as a gallery wall: each in its own proportions, one column on a phone and two or
+/// three on a wide window. Tap to open, double-tap to like.
+struct MomentPhotoList: View {
     @ObservedObject var account: MomentAccount
     @ObservedObject var feed: MomentFeed
+    var emptyText = "아직 공유된 순간이 없어요."
+    @State private var width: CGFloat = 0
     @State private var opened: MomentPhoto?
+    @State private var person: MomentPersonRef?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("공유된 순간들").font(.headline)
-                Spacer()
-                if feed.loading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button { Task { await feed.reload() } } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless)
-                        .help("새로고침")
-                }
-            }
+        VStack(alignment: .leading, spacing: 12) {
             if let notice = feed.notice {
                 Label(notice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
             }
@@ -132,71 +165,166 @@ struct MomentFeedView: View {
                 Text(message).font(.footnote).foregroundStyle(.red)
             }
             if feed.loaded, feed.photos.isEmpty, !feed.loading {
-                VStack(spacing: 6) {
-                    Image(systemName: "sparkles").font(.title2).foregroundStyle(.secondary)
-                    Text("아직 공유된 순간이 없어요.").font(.callout).foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    Image(systemName: "sparkles").font(.title2).foregroundStyle(.tertiary)
+                    Text(emptyText).font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 160)
+                .frame(maxWidth: .infinity, minHeight: 220)
+            } else if !feed.loaded {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 220)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.tileMin), spacing: 4)], spacing: 4) {
-                    ForEach(feed.photos) { photo in
-                        Button { opened = photo } label: {
-                            FeedTile(store: feed.store, photo: photo, liked: feed.liked.contains(photo.id))
+                let columns = Self.columns(feed.photos, count: min(max(Int(width / 320), 1), 3))
+                HStack(alignment: .top, spacing: 20) {
+                    ForEach(columns.indices, id: \.self) { index in
+                        LazyVStack(spacing: 30) {
+                            ForEach(columns[index]) { photo in
+                                MomentCard(store: feed.store, photo: photo,
+                                           liked: feed.liked.contains(photo.id),
+                                           canLike: account.me != nil,
+                                           onOpen: { opened = photo },
+                                           onOpenPerson: { person = MomentPersonRef(id: photo.owner) },
+                                           onLike: { Task { await feed.toggleLike(photo.id) } })
+                                    .onAppear {
+                                        if photo.id == feed.photos.last?.id { Task { await feed.loadMore() } }
+                                    }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .onAppear { if photo.id == feed.photos.last?.id { Task { await feed.loadMore() } } }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                if feed.loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 8) }
             }
         }
-        .task { if !feed.loaded { await feed.reload() } }
-        .task(id: account.me?.id) { if feed.loaded { await feed.refreshLikes() } }
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .sheet(item: $opened) { photo in
             MomentFeedDetail(account: account, feed: feed, photoID: photo.id)
         }
+        .sheet(item: $person) { ref in
+            MomentPersonGallery(account: account, owner: ref.id)
+        }
     }
 
-    #if os(macOS)
-    static let tileMin: CGFloat = 150
-    #else
-    static let tileMin: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 180 : 110
-    #endif
+    /// Deals the photos into `count` columns, each next photo going to the shortest column,
+    /// so the order still reads left to right, top to bottom.
+    static func columns(_ photos: [MomentPhoto], count: Int) -> [[MomentPhoto]] {
+        var columns = Array(repeating: [MomentPhoto](), count: count)
+        var heights = Array(repeating: 0.0, count: count)
+        for photo in photos {
+            let shortest = heights.indices.min { heights[$0] < heights[$1] } ?? 0
+            columns[shortest].append(photo)
+            heights[shortest] += Double(photo.height) / Double(max(photo.width, 1)) + 0.35
+        }
+        return columns
+    }
 }
 
-/// A square thumbnail with the author's name and likes along the bottom.
-private struct FeedTile: View {
+/// One photo on the wall with its label underneath, like a caption card in a gallery: who,
+/// what they wrote, and how it was shot.
+private struct MomentCard: View {
     let store: MomentStore
     let photo: MomentPhoto
     let liked: Bool
+    let canLike: Bool
+    let onOpen: () -> Void
+    let onOpenPerson: () -> Void
+    let onLike: () -> Void
+    @State private var burst = false
 
     var body: some View {
-        Rectangle()
-            .fill(.quaternary)
-            .aspectRatio(1, contentMode: .fit)
-            .overlay {
-                AsyncImage(url: store.thumbURL(photo)) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.clear
+        VStack(alignment: .leading, spacing: 10) {
+            // Who took it: picture and names; opens their gallery.
+            Button(action: onOpenPerson) {
+                HStack(spacing: 10) {
+                    MomentAvatarView(store: store, owner: photo.owner, author: photo.author, size: 34)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(photo.author?.title ?? "이름 없음").font(.subheadline.weight(.semibold))
+                        if photo.author?.displayName != nil, let handle = photo.author?.handle {
+                            Text(handle).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
                 }
+                .contentShape(Rectangle())
             }
-            .clipped()
-            .overlay(alignment: .bottom) {
-                HStack(spacing: 4) {
-                    Text(photo.author?.title ?? "").lineLimit(1)
-                    Spacer(minLength: 2)
-                    if photo.likeCount > 0 || liked {
-                        Image(systemName: liked ? "heart.fill" : "heart")
-                        Text("\(photo.likeCount)")
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(photo.author?.title ?? "이 사람") 님의 갤러리 보기")
+
+            Rectangle()
+                .fill(.quaternary)
+                .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
+                .overlay {
+                    AsyncImage(url: store.thumbURL(photo)) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.clear
                     }
                 }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6).padding(.vertical, 4)
-                .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .overlay {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 64))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 8)
+                        .scaleEffect(burst ? 1 : 0.4)
+                        .opacity(burst ? 0.95 : 0)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { doubleTapped() }
+                .onTapGesture { onOpen() }
+                .accessibilityElement()
+                .accessibilityLabel("\(photo.author?.title ?? "") 님의 사진")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { onOpen() }
+
+            HStack(alignment: .center, spacing: 8) {
+                Button(action: onLike) {
+                    HStack(spacing: 4) {
+                        Image(systemName: liked ? "heart.fill" : "heart")
+                            .foregroundStyle(liked ? Color.red : Color.primary)
+                            .contentTransition(.symbolEffect(.replace))
+                        if photo.likeCount > 0 {
+                            Text("\(photo.likeCount)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.body)
+                    .padding(.vertical, 4).padding(.trailing, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canLike)
+                .accessibilityLabel(liked ? "좋아요 취소" : "좋아요")
+                Spacer(minLength: 0)
             }
-            .contentShape(Rectangle())
-            .accessibilityLabel("\(photo.author?.title ?? "") 님의 사진")
+
+            if let caption = photo.caption {
+                Text(caption).font(.callout).lineLimit(3)
+            }
+            if let line = shotLine {
+                Text(line)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    /// "GR IV HDF · P · 1/30 · F2.8 · ISO 320 · 28mm · 스탠다드", whatever the owner shared.
+    private var shotLine: String? {
+        let parts = [photo.info.camera, photo.info.exposureSummary, photo.info.imageControl?.name]
+            .compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func doubleTapped() {
+        guard canLike else { return }
+        if !liked { onLike() }
+        withAnimation(.spring(duration: 0.3)) { burst = true }
+        Task {
+            try? await Task.sleep(for: .milliseconds(650))
+            withAnimation(.easeOut(duration: 0.25)) { burst = false }
+        }
     }
 }
 
@@ -205,9 +333,14 @@ struct MomentFeedDetail: View {
     @ObservedObject var account: MomentAccount
     @ObservedObject var feed: MomentFeed
     let photoID: UUID
+    /// The author's name opens their gallery (off when this is already their gallery).
+    var linksAuthor = true
+    /// Comments show in someone's gallery, not on 순간들.
+    var showsComments = false
     @Environment(\.dismiss) private var dismiss
     @State private var reporting = false
     @State private var confirmBlock = false
+    @State private var person: MomentPersonRef?
 
     private var photo: MomentPhoto? { feed.photo(photoID) }
     private var isMine: Bool { photo?.owner == account.me?.id }
@@ -261,14 +394,28 @@ struct MomentFeedDetail: View {
                 MomentInfoSection(info: photo.info)
 
                 if !signedIn {
-                    Text("좋아요·신고·차단은 로그인한 뒤에 할 수 있어요.")
+                    Text(showsComments ? "좋아요·댓글·신고·차단은 로그인한 뒤에 할 수 있어요."
+                                       : "좋아요·신고·차단은 로그인한 뒤에 할 수 있어요.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let message = feed.errorMessage {
                     Text(message).font(.footnote).foregroundStyle(.red)
                 }
+
+                if showsComments {
+                    Divider()
+                    MomentCommentsSection(account: account, photo: photo) { owner in
+                        if !linksAuthor, owner == photo.owner { return }
+                        person = MomentPersonRef(id: owner)
+                    }
+                }
             }
             .padding(16)
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity)
+        }
+        .sheet(item: $person) { ref in
+            MomentPersonGallery(account: account, owner: ref.id)
         }
         .confirmationDialog("신고하는 이유를 골라 주세요", isPresented: $reporting, titleVisibility: .visible) {
             ForEach(MomentReportReason.allCases) { reason in
@@ -291,9 +438,23 @@ struct MomentFeedDetail: View {
 
     /// 한태희 @taehee (or just @taehee), with "나" on my own photos.
     private func authorLine(_ photo: MomentPhoto) -> some View {
+        Button {
+            if linksAuthor { person = MomentPersonRef(id: photo.owner) }
+        } label: {
+            HStack(spacing: 10) {
+                MomentAvatarView(store: feed.store, owner: photo.owner, author: photo.author, size: 40)
+                authorNames(photo)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(linksAuthor)
+    }
+
+    private func authorNames(_ photo: MomentPhoto) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
-                Text(photo.author?.displayName ?? photo.author?.handle.map { "@\($0)" } ?? "이름 없음")
+                Text(photo.author?.displayName ?? photo.author?.handle ?? "이름 없음")
                     .font(.headline)
                 if isMine {
                     Text("나").font(.caption2.weight(.semibold))
@@ -302,7 +463,7 @@ struct MomentFeedDetail: View {
                 }
             }
             if photo.author?.displayName != nil, let handle = photo.author?.handle {
-                Text("@\(handle)").font(.subheadline).foregroundStyle(.secondary)
+                Text(handle).font(.subheadline).foregroundStyle(.secondary)
             }
         }
     }

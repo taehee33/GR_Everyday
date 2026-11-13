@@ -57,6 +57,8 @@ struct AppSettingsView: View {
 
     var body: some View {
         Form {
+            MomentAccountSection()
+
             Section {
                 LabeledContent("저장 폴더") {
                     HStack {

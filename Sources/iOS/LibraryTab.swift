@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 
 /// 라이브러리: the camera card, then the card's photos by day, by image control, or 촬영 통계.
 /// Tap to view; 선택 to pick several and save them to the Photos app.
@@ -444,13 +445,22 @@ struct PhotoPage: View {
     @Binding var zoomed: Bool
     let onTap: () -> Void
     @State private var image: PlatformImage?
+    /// The camera's original has replaced the preview (asked for on the first zoom in).
+    @State private var original = false
+    @State private var loadingOriginal = false
 
     var body: some View {
         ZStack {
             if let image {
                 // Fit to the whole screen, under the bars: full height in landscape.
-                ZoomablePhoto(image: image, zoomed: $zoomed, onTap: onTap)
+                ZoomablePhoto(image: image, zoomed: $zoomed, onTap: onTap, onZoomIn: loadOriginal)
                     .ignoresSafeArea()
+                if loadingOriginal {
+                    ProgressView().tint(.white).padding(10)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.top, 60).padding(.trailing, 16)
+                }
             } else {
                 ProgressView().tint(.white)
             }
@@ -467,8 +477,40 @@ struct PhotoPage: View {
             if let local = library.localURL(photo), photo.kind != .video,
                let data = try? Data(contentsOf: local), let full = PlatformImage(data: data) {
                 image = full
-            } else if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .view), orientation: orientation) {
-                image = preview
+                original = true
+            } else if photo.kind != .video {
+                // 720 px comes quickly; the 1920 px one is what the screen needs.
+                if let preview = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .view), orientation: orientation) {
+                    image = preview
+                }
+                if let sharp = await ImageCache.shared.image(for: CameraAPI.photoURL(photo, size: .xs), orientation: orientation),
+                   !Task.isCancelled, !original {
+                    image = sharp
+                }
+            }
+        }
+    }
+
+    /// Zooming into a JPEG still on the camera: pull its original (~10 MB) for this page only,
+    /// decoded at up to 4096 px and kept just while the page is shown.
+    private func loadOriginal() {
+        guard !original, !loadingOriginal, photo.kind == .jpeg, library.localURL(photo) == nil, CameraAPI.online else { return }
+        loadingOriginal = true
+        Task {
+            defer { loadingOriginal = false }
+            guard let (data, response) = try? await CameraAPI.session.data(from: CameraAPI.photoURL(photo)),
+                  (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+            let decoded = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+                guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+                return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 4096,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+            }.value
+            if let decoded {
+                image = PlatformImage(cgImageValue: decoded)
+                original = true
             }
         }
     }
@@ -505,6 +547,8 @@ struct ZoomablePhoto: UIViewRepresentable {
     let image: UIImage
     @Binding var zoomed: Bool
     let onTap: () -> Void
+    /// Called when a zoom in starts, to swap in a sharper image.
+    var onZoomIn: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -528,9 +572,13 @@ struct ZoomablePhoto: UIViewRepresentable {
 
     func updateUIView(_ scroll: PhotoScrollView, context: Context) {
         context.coordinator.parent = self
-        if scroll.imageView.image !== image {
+        if let shown = scroll.imageView.image, shown !== image {
+            // A sharper copy of the same photo keeps the zoom; a different shape resets it.
+            let same = abs(shown.size.width / max(shown.size.height, 1) - image.size.width / max(image.size.height, 1)) < 0.02
             scroll.imageView.image = image
-            scroll.setZoomScale(1, animated: false)
+            if !same { scroll.setZoomScale(1, animated: false) }
+        } else if scroll.imageView.image == nil {
+            scroll.imageView.image = image
         }
     }
 
@@ -542,7 +590,10 @@ struct ZoomablePhoto: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             let zoomed = scrollView.zoomScale > 1.01
-            if zoomed != parent.zoomed { DispatchQueue.main.async { self.parent.zoomed = zoomed } }
+            if zoomed != parent.zoomed {
+                DispatchQueue.main.async { self.parent.zoomed = zoomed }
+                if zoomed, let onZoomIn = parent.onZoomIn { DispatchQueue.main.async { onZoomIn() } }
+            }
         }
 
         @objc func doubleTap(_ tap: UITapGestureRecognizer) {

@@ -17,6 +17,8 @@ struct SettingsTab: View {
     var body: some View {
         NavigationStack {
             Form {
+                MomentAccountSection()
+
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     Section {
                         menuChoice("아래 탭", detail: "iPhone처럼 화면 아래에", icon: "dock.rectangle", value: IPadMenu.bottom)

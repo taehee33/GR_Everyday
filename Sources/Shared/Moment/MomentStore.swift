@@ -14,8 +14,50 @@ struct MomentProfile: Codable, Equatable, Identifiable {
     var wallLimit: Int
     /// When the handle was last changed (nil until the first change after setting it).
     var handleChangedAt: Date? = nil
+    /// Which way the gallery wall runs: down the screen or across it.
+    var wallDirection: WallDirection = .vertical
+    /// Profile picture: R2 a/{id}/{version}.jpg; nil = none (initial shown instead).
+    var avatarVersion: Int? = nil
+    /// Instagram username without "@".
+    var instagram: String? = nil
+    /// One http(s) link.
+    var website: String? = nil
+    /// The cameras shown on the profile (up to 5); empty = not shown.
+    var cameras: [String] = []
 
+    static let bioLimit = 150
+    static let camerasLimit = 5
+    /// Cameras offered on the profile; anything else can be typed.
+    static let cameraChoices = ["GR IV", "GR IV HDF", "GR IIIx", "GR IIIx HDF", "GR III", "GR III HDF", "GR II", "GR"]
+
+    /// "@name", "instagram.com/name/" or a full link → "name"; nil when it is not a username.
+    static func normalizeInstagram(_ text: String) -> String? {
+        var name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = name.range(of: "instagram.com/", options: .caseInsensitive) {
+            name = String(name[range.upperBound...])
+        }
+        name = name.trimmingCharacters(in: CharacterSet(charactersIn: "@/"))
+        if let end = name.firstIndex(where: { $0 == "/" || $0 == "?" }) { name = String(name[..<end]) }
+        return name.range(of: "^[A-Za-z0-9._]{1,30}$", options: .regularExpression) != nil ? name : nil
+    }
+
+    /// "example.com" → "https://example.com"; nil when it is not a web link.
+    static func normalizeWebsite(_ text: String) -> String? {
+        var link = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if link.isEmpty || link.contains(where: \.isWhitespace) || link.count > 200 { return nil }
+        if !link.lowercased().hasPrefix("http://") && !link.lowercased().hasPrefix("https://") {
+            link = "https://" + link
+        }
+        guard let url = URL(string: link), let host = url.host, host.contains("."), url.user == nil else { return nil }
+        return link
+    }
+
+    var instagramURL: URL? { instagram.flatMap { URL(string: "https://instagram.com/\($0)") } }
+    var websiteURL: URL? { website.flatMap(URL.init(string:)) }
+
+    /// grid = 그리드 (Instagram-style profile), free = 갤러리 (frames hung on a wall).
     enum WallStyle: String, Codable { case grid, free }
+    enum WallDirection: String, Codable { case vertical, horizontal }
 
     static let handleChangeInterval: TimeInterval = 30 * 24 * 3600
     static let handleHoldInterval: TimeInterval = 14 * 24 * 3600
@@ -49,7 +91,9 @@ struct MomentProfile: Codable, Equatable, Identifiable {
 
     /// What the user typed, as it will be saved: trimmed and lowercased.
     static func normalizeHandle(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // "@" is never part of a username; drop one typed out of habit.
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@")).lowercased()
     }
 
     /// Why a (normalized) handle cannot be used, in words for the user; nil when it is fine.
@@ -85,15 +129,29 @@ struct MomentPhoto: Codable, Equatable, Identifiable {
     var isShared: Bool { sharedAt != nil }
 }
 
-/// Who took a photo, as shown on the feed: display name and @handle.
+/// Who took a photo (or wrote a comment), as shown on the feed: display name, username and
+/// profile picture.
 struct MomentAuthor: Codable, Equatable {
     var handle: String?
     var displayName: String?
+    var avatarVersion: Int? = nil
 
-    /// The display name, or @handle when there is none.
+    /// The display name, or the username when there is none.
     var title: String {
-        displayName ?? handle.map { "@\($0)" } ?? "이름 없음"
+        displayName ?? handle ?? "이름 없음"
     }
+}
+
+/// A comment under a photo.
+struct MomentComment: Identifiable, Equatable {
+    let id: Int
+    let photoID: UUID
+    let author: UUID
+    var authorInfo: MomentAuthor?
+    let body: String
+    let createdAt: Date
+
+    static let limit = 300
 }
 
 /// Why a photo is reported; the raw values are the database's reports.reason check.
@@ -112,10 +170,51 @@ enum MomentReportReason: String, CaseIterable, Identifiable {
     }
 }
 
+/// A report I filed, and what became of it (reports.status).
+struct MomentReport: Identifiable, Equatable {
+    let id: Int
+    /// nil once the photo has been deleted.
+    let photoID: UUID?
+    let reason: MomentReportReason
+    let createdAt: Date
+    let status: Status
+
+    enum Status: String {
+        /// Filed; nothing decided yet.
+        case received
+        /// Enough reports came in: hidden from everyone until reviewed.
+        case hidden
+        /// The photo is gone (taken down after review, or deleted by its owner).
+        case removed
+        /// Reviewed and found to be fine.
+        case dismissed
+
+        var title: String {
+            switch self {
+            case .received: return "접수됨 · 확인하고 있어요"
+            case .hidden: return "신고가 쌓여 모두에게서 숨겨졌어요"
+            case .removed: return "사진이 삭제되었어요"
+            case .dismissed: return "확인 결과 문제가 없다고 판단했어요"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .received: return "clock"
+            case .hidden: return "eye.slash"
+            case .removed: return "trash"
+            case .dismissed: return "checkmark.circle"
+            }
+        }
+    }
+}
+
 /// One photo's place on a Photowall. Both layouts are kept so switching style loses nothing.
 struct WallItem: Codable, Equatable {
     let photoID: UUID
-    // Free layout, in fractions of the wall's width.
+    // Free layout (갤러리), in units of the wall's short side (its width when the wall runs
+    // down, its height when it runs across): x is across the wall, y along it, width is the
+    // frame's width. The same numbers draw either direction, turned a quarter.
     var x: Double = 0
     var y: Double = 0
     var width: Double = 0.3
@@ -128,6 +227,15 @@ struct WallItem: Codable, Equatable {
     enum GridSpan: String, Codable, CaseIterable {
         case one = "1x1", wide = "2x1", tall = "1x2", big = "2x2"
     }
+}
+
+/// What 프로필 편집 saves (the picture goes separately, through setAvatar).
+struct MomentProfileEdit: Equatable {
+    var bio: String?
+    var instagram: String?
+    var website: String?
+    /// Empty = none shown.
+    var cameras: [String]
 }
 
 /// What the upload sheet hands to the store.
@@ -185,8 +293,21 @@ enum MomentError: LocalizedError, Equatable {
     }
 }
 
+extension MomentStore {
+    /// Where a profile picture is downloaded from; nil when there is none.
+    func avatarURL(_ profile: MomentProfile) -> URL? {
+        profile.avatarVersion.map { avatarURL(owner: profile.id, version: $0) }
+    }
+
+    func avatarURL(owner: UUID, author: MomentAuthor?) -> URL? {
+        author?.avatarVersion.map { avatarURL(owner: owner, version: $0) }
+    }
+}
+
 protocol MomentStore: AnyObject {
     var me: MomentProfile? { get }
+    /// How I signed in, for the account screen: "Google · name@example.com".
+    var signInLabel: String? { get }
 
     /// Sign in with the identity token from Sign in with Apple and the raw nonce it was asked
     /// with. Loads `me` afterwards.
@@ -207,6 +328,12 @@ protocol MomentStore: AnyObject {
     func isDisplayNameAvailable(_ name: String) async throws -> Bool
     /// Deletes the account and every photo in it (App Store 5.1.1(v)).
     func deleteAccount() async throws
+    /// Bio, links and camera. Reloads `me`.
+    func updateProfile(_ edit: MomentProfileEdit) async throws
+    /// A square JPEG (MomentAvatar.render) as the profile picture, or nil to remove it.
+    func setAvatar(_ jpeg: Data?) async throws
+    /// Where a profile picture is downloaded from.
+    func avatarURL(owner: UUID, version: Int) -> URL
 
     /// Photos shared to the feed, newest first. Pass the last photo's `sharedAt` to page.
     func feed(before: Date?, limit: Int) async throws -> [MomentPhoto]
@@ -221,17 +348,31 @@ protocol MomentStore: AnyObject {
     func unshare(_ photo: UUID) async throws
     /// Turning shot info off (or back on from the original) without re-uploading.
     func updateInfo(_ photo: UUID, info: MomentShotInfo, caption: String?) async throws
-    func saveWall(style: MomentProfile.WallStyle, items: [WallItem]) async throws
+    func saveWall(style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection,
+                  items: [WallItem]) async throws
 
     func like(_ photo: UUID, _ on: Bool) async throws
     /// Which of `photos` I have liked (empty when signed out).
     func likes(among photos: [UUID]) async throws -> Set<UUID>
+    /// Photos I liked that can still be seen, most recently liked first.
+    func likedPhotos(limit: Int) async throws -> [MomentPhoto]
+    /// Reports I filed, newest first.
+    func myReports() async throws -> [MomentReport]
     func report(_ photo: UUID, reason: String, note: String?) async throws
     func block(_ owner: UUID) async throws
+
+    /// A photo's comments, oldest first (hidden ones and those of people I blocked left out).
+    func comments(on photo: UUID) async throws -> [MomentComment]
+    func addComment(on photo: UUID, _ text: String) async throws -> MomentComment
+    /// Mine, or anyone's under my photo.
+    func deleteComment(_ id: Int) async throws
+    func reportComment(_ id: Int, reason: String) async throws
 
     /// Where the app downloads a photo's files from (the Worker today, a domain later).
     func displayURL(_ photo: MomentPhoto) -> URL
     func thumbURL(_ photo: MomentPhoto) -> URL
+    /// The thumbnail of a photo known only by id (a report's).
+    func thumbURL(_ id: UUID) -> URL
 }
 
 /// In-memory store with the server's rules (wall limit, monthly shares, report hiding), for
@@ -246,13 +387,15 @@ final class MockMomentStore: MomentStore {
     }
 
     var limits = Limits()
-    private(set) var me: MomentProfile?
-    private var profiles: [UUID: MomentProfile] = [:]
-    private var photos: [UUID: MomentPhoto] = [:]
-    private var items: [UUID: WallItem] = [:]
+    fileprivate(set) var me: MomentProfile?
+    var signInLabel: String? { me == nil ? nil : "Mock" }
+    fileprivate var profiles: [UUID: MomentProfile] = [:]
+    fileprivate var photos: [UUID: MomentPhoto] = [:]
+    fileprivate var items: [UUID: WallItem] = [:]
     /// Every share ever made (owner, time); kept after unshare/delete like the server.
     private var shares: [(owner: UUID, at: Date)] = []
     private var reports: [UUID: Set<UUID>] = [:]
+    private var filed: [MomentReport] = []
     private var blocked: Set<UUID> = []
     private var liked: Set<UUID> = []
     var now: () -> Date = Date.init
@@ -326,6 +469,36 @@ final class MockMomentStore: MomentStore {
         }
     }
 
+    func updateProfile(_ edit: MomentProfileEdit) async throws {
+        var me = try requireMe()
+        me.bio = edit.bio
+        me.instagram = edit.instagram
+        me.website = edit.website
+        me.cameras = edit.cameras
+        self.me = me
+        profiles[me.id] = me
+    }
+
+    /// Pictures live in a temporary folder so AsyncImage can load them like the real ones.
+    func setAvatar(_ jpeg: Data?) async throws {
+        var me = try requireMe()
+        if let jpeg {
+            let version = (me.avatarVersion ?? 0) + 1
+            try jpeg.write(to: avatarFile(me.id, version))
+            me.avatarVersion = version
+        } else {
+            me.avatarVersion = nil
+        }
+        self.me = me
+        profiles[me.id] = me
+    }
+
+    func avatarURL(owner: UUID, version: Int) -> URL { avatarFile(owner, version) }
+
+    private func avatarFile(_ id: UUID, _ version: Int) -> URL {
+        FileManager.default.temporaryDirectory.appending(path: "mock-avatar-\(id.uuidString)-\(version).jpg")
+    }
+
     func deleteAccount() async throws {
         let me = try requireMe()
         photos = photos.filter { $0.value.owner != me.id }
@@ -356,9 +529,13 @@ final class MockMomentStore: MomentStore {
             .prefix(limit).map { photo in
                 var photo = photo
                 let owner = profiles[photo.owner]
-                photo.author = MomentAuthor(handle: owner?.handle, displayName: owner?.displayName)
+                photo.author = author(photo.owner)
                 return photo
             }
+    }
+
+    private func author(_ id: UUID) -> MomentAuthor? {
+        profiles[id].map { MomentAuthor(handle: $0.handle, displayName: $0.displayName, avatarVersion: $0.avatarVersion) }
     }
 
     func wall(of owner: UUID) async throws -> (profile: MomentProfile, photos: [MomentPhoto], items: [WallItem]) {
@@ -367,6 +544,11 @@ final class MockMomentStore: MomentStore {
         let list = photos.values
             .filter { $0.owner == owner && (mine || $0.status == .published) }
             .sorted { $0.createdAt > $1.createdAt }
+            .map { photo in
+                var photo = photo
+                photo.author = author(owner)
+                return photo
+            }
         return (profile, list, list.compactMap { items[$0.id] })
     }
 
@@ -433,9 +615,11 @@ final class MockMomentStore: MomentStore {
         photos[id]?.caption = caption
     }
 
-    func saveWall(style: MomentProfile.WallStyle, items newItems: [WallItem]) async throws {
+    func saveWall(style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection,
+                  items newItems: [WallItem]) async throws {
         var me = try requireMe()
         me.wallStyle = style
+        me.wallDirection = direction
         self.me = me
         profiles[me.id] = me
         for item in newItems where photos[item.photoID]?.owner == me.id { items[item.photoID] = item }
@@ -455,18 +639,105 @@ final class MockMomentStore: MomentStore {
     func report(_ id: UUID, reason: String, note: String?) async throws {
         let me = try requireMe()
         guard photos[id] != nil else { throw MomentError.notFound }
-        reports[id, default: []].insert(me.id)
+        if reports[id, default: []].insert(me.id).inserted {
+            filed.insert(MomentReport(id: filed.count + 1, photoID: id,
+                                      reason: MomentReportReason(rawValue: reason) ?? .other,
+                                      createdAt: now(), status: .received), at: 0)
+        }
         if (reports[id]?.count ?? 0) >= limits.reportsToHide, photos[id]?.status == .published {
             photos[id]?.status = .hidden
         }
     }
+
+    func likedPhotos(limit: Int) async throws -> [MomentPhoto] {
+        photos.values.filter { liked.contains($0.id) && $0.status == .published }.prefix(limit).map { $0 }
+    }
+
+    func myReports() async throws -> [MomentReport] { filed }
 
     func block(_ owner: UUID) async throws {
         _ = try requireMe()
         blocked.insert(owner)
     }
 
+    fileprivate var commentList: [MomentComment] = []
+
+    func comments(on photo: UUID) async throws -> [MomentComment] {
+        commentList.filter { $0.photoID == photo && !blocked.contains($0.author) }
+            .map { var c = $0; c.authorInfo = author($0.author); return c }
+    }
+
+    func addComment(on photo: UUID, _ text: String) async throws -> MomentComment {
+        let me = try requireMe()
+        guard photos[photo]?.status == .published else { throw MomentError.notFound }
+        let comment = MomentComment(id: (commentList.map(\.id).max() ?? 0) + 1, photoID: photo, author: me.id,
+                                    authorInfo: author(me.id), body: text, createdAt: now())
+        commentList.append(comment)
+        return comment
+    }
+
+    func deleteComment(_ id: Int) async throws {
+        let me = try requireMe()
+        guard let comment = commentList.first(where: { $0.id == id }),
+              comment.author == me.id || photos[comment.photoID]?.owner == me.id else { throw MomentError.notFound }
+        commentList.removeAll { $0.id == id }
+    }
+
+    func reportComment(_ id: Int, reason: String) async throws {
+        _ = try requireMe()
+    }
+
     let imageBase = URL(string: "https://moment-img.example.workers.dev")!
     func displayURL(_ photo: MomentPhoto) -> URL { imageBase.appending(path: "p/\(photo.id.uuidString.lowercased())/display.jpg") }
-    func thumbURL(_ photo: MomentPhoto) -> URL { imageBase.appending(path: "p/\(photo.id.uuidString.lowercased())/thumb") }
+    func thumbURL(_ photo: MomentPhoto) -> URL { thumbURL(photo.id) }
+    func thumbURL(_ id: UUID) -> URL { imageBase.appending(path: "p/\(id.uuidString.lowercased())/thumb") }
 }
+
+#if DEBUG
+extension MockMomentStore {
+    /// A signed-in sample account with photos of different shapes, hung where the server
+    /// puts new uploads (so the gallery lays them out itself).
+    static func sample() -> MockMomentStore {
+        let store = MockMomentStore(signedInAs: "sample")
+        guard var me = store.me else { return store }
+        me.displayName = "샘플"
+        me.wallStyle = .free
+        me.bio = "흘러가는 일상 속 특별한 순간을 모아요."
+        me.instagram = "sample.gr"
+        me.cameras = ["GR IV HDF", "GR IIIx"]
+        store.me = me
+        store.profiles[me.id] = me
+        let shapes: [(Int, Int, String?)] = [
+            (3072, 2048, "비 온 뒤 골목"), (2048, 3072, "창가"), (3072, 2048, nil), (2048, 2048, "퇴근길"),
+            (2048, 3072, nil), (3072, 2048, "성수동 오후"), (3072, 1728, nil),
+        ]
+        for (n, shape) in shapes.enumerated() {
+            let photo = MomentPhoto(
+                id: UUID(), owner: me.id, status: .published, caption: shape.2,
+                width: shape.0, height: shape.1, thumbWidth: 600, thumbHeight: 600 * shape.1 / shape.0,
+                info: MomentShotInfo(camera: "GR IV"), likeCount: n,
+                createdAt: Date().addingTimeInterval(Double(-n) * 3600), sharedAt: n % 3 == 0 ? Date() : nil)
+            store.photos[photo.id] = photo
+            store.items[photo.id] = WallItem(photoID: photo.id, x: Double(n % 3) * 0.34,
+                                             y: Double(n / 3) * 0.3, width: 0.3, gridOrder: -n)
+        }
+        // Someone else, so 순간들 has a stranger's photo to open.
+        let other = MomentProfile(id: UUID(), handle: "neighbor", displayName: "이웃", bio: "골목을 걷는 사람.",
+                                  wallStyle: .grid, wallLimit: 15, cameras: ["GR IIIx"])
+        store.profiles[other.id] = other
+        for n in 0..<4 {
+            let photo = MomentPhoto(
+                id: UUID(), owner: other.id, status: .published, caption: n == 0 ? "아침 산책" : nil,
+                width: 3072, height: n % 2 == 0 ? 2048 : 3072, thumbWidth: 600, thumbHeight: n % 2 == 0 ? 400 : 600,
+                info: MomentShotInfo(camera: "GR IIIx"), likeCount: 2,
+                createdAt: Date().addingTimeInterval(Double(-n) * 7200), sharedAt: n < 2 ? Date().addingTimeInterval(-60) : nil)
+            store.photos[photo.id] = photo
+            if n == 0 {
+                store.commentList.append(MomentComment(id: 1, photoID: photo.id, author: me.id, authorInfo: nil,
+                                                       body: "빛이 정말 좋네요!", createdAt: Date()))
+            }
+        }
+        return store
+    }
+}
+#endif

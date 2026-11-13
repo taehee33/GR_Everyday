@@ -70,27 +70,71 @@ enum MomentImage {
         return model.uppercased().contains("GR")
     }
 
-    /// Builds both upload files from the shot's original files (JPG and/or DNG).
-    static func render(_ files: [URL], thumbEncoder: ThumbEncoder = .default) throws -> Rendered {
+    /// Loaded at up to this size so a crop still fills the 3072 px full view.
+    static let workingEdge = 4608
+
+    /// The original, upright and in sRGB, kept while the owner frames it.
+    struct Loaded {
+        let image: CGImage
+        let source: URL
+    }
+
+    /// Reads the shot's original (JPG, or the DNG's embedded camera JPEG) for framing.
+    static func load(_ files: [URL]) throws -> Loaded {
         guard let source = pickSource(files) else { throw Failure.noSource }
         guard isGROriginal(source) else { throw Failure.notGROriginal }
         guard let src = CGImageSourceCreateWithURL(source as CFURL, nil) else { throw Failure.unreadable }
-
-        let display = try upright(src, maxEdge: displayEdge, embeddedOnly: isDNG(source))
-        let edge = max(display.width, display.height)
+        let image = try upright(src, maxEdge: workingEdge, embeddedOnly: isDNG(source))
+        let edge = max(image.width, image.height)
         guard edge >= minimumEdge else { throw Failure.tooSmall(edge) }
-        guard let displaySRGB = toSRGB(display),
-              let displayData = encode(displaySRGB, type: .jpeg, quality: displayQuality),
-              let thumbImage = scaled(displaySRGB, maxEdge: thumbEdge),
+        guard let srgb = toSRGB(image) else { throw Failure.encodeFailed }
+        return Loaded(image: srgb, source: source)
+    }
+
+    /// Builds both upload files from the shot's original files (JPG and/or DNG), uncropped.
+    static func render(_ files: [URL], thumbEncoder: ThumbEncoder = .default) throws -> Rendered {
+        try render(load(files), edit: MomentCropEdit(), thumbEncoder: thumbEncoder)
+    }
+
+    /// Both upload files from a loaded original, turned and cropped as framed.
+    static func render(_ loaded: Loaded, edit: MomentCropEdit,
+                       thumbEncoder: ThumbEncoder = .default) throws -> Rendered {
+        guard let turned = rotated(loaded.image, quarterTurns: edit.quarterTurns) else { throw Failure.encodeFailed }
+        let w = CGFloat(turned.width), h = CGFloat(turned.height)
+        let crop = CGRect(x: edit.crop.minX * w, y: edit.crop.minY * h,
+                          width: edit.crop.width * w, height: edit.crop.height * h)
+            .integral.intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        guard let cropped = edit.isCropped ? turned.cropping(to: crop) : turned else { throw Failure.encodeFailed }
+        let edge = max(cropped.width, cropped.height)
+        guard edge >= minimumEdge else { throw Failure.tooSmall(edge) }
+        guard let display = scaled(cropped, maxEdge: displayEdge),
+              let displayData = encode(display, type: .jpeg, quality: displayQuality),
+              let thumbImage = scaled(display, maxEdge: thumbEdge),
               let thumb = thumbEncoder.encode(thumbImage)
         else { throw Failure.encodeFailed }
 
         return Rendered(display: displayData,
-                        displaySize: CGSize(width: displaySRGB.width, height: displaySRGB.height),
+                        displaySize: CGSize(width: display.width, height: display.height),
                         thumb: thumb.data,
                         thumbSize: CGSize(width: thumbImage.width, height: thumbImage.height),
                         thumbType: thumb.mimeType,
-                        source: source)
+                        source: loaded.source)
+    }
+
+    /// The image turned clockwise by `quarterTurns` × 90°.
+    static func rotated(_ image: CGImage, quarterTurns: Int) -> CGImage? {
+        let turns = ((quarterTurns % 4) + 4) % 4
+        if turns == 0 { return image }
+        let w = image.width, h = image.height
+        let (outW, outH) = turns % 2 == 0 ? (w, h) : (h, w)
+        guard let ctx = CGContext(data: nil, width: outW, height: outH, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        // Core Graphics has y up, so a clockwise turn on screen is a negative angle here.
+        ctx.translateBy(x: CGFloat(outW) / 2, y: CGFloat(outH) / 2)
+        ctx.rotate(by: -CGFloat(turns) * .pi / 2)
+        ctx.draw(image, in: CGRect(x: -CGFloat(w) / 2, y: -CGFloat(h) / 2, width: CGFloat(w), height: CGFloat(h)))
+        return ctx.makeImage()
     }
 
     /// The image upright and no larger than `maxEdge`. For a DNG, only the embedded camera
@@ -139,6 +183,50 @@ enum MomentImage {
         let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
         CGImageDestinationAddImage(dest, image, options as CFDictionary)
         return CGImageDestinationFinalize(dest) ? data as Data : nil
+    }
+}
+
+/// How the owner framed a photo before uploading: turned in quarter turns, then cropped.
+/// Only framing; colour and tone stay the camera's.
+struct MomentCropEdit: Equatable {
+    /// Clockwise quarter turns (0–3).
+    var quarterTurns = 0
+    /// The part kept, as fractions of the turned image (0–1, origin top left).
+    var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    /// The shape picked on the crop screen, to open it the same way again.
+    var aspect: MomentCropAspect = .original
+    var portrait: Bool? = nil
+
+    var isCropped: Bool {
+        abs(crop.minX) > 0.0005 || abs(crop.minY) > 0.0005 || abs(crop.width - 1) > 0.0005 || abs(crop.height - 1) > 0.0005
+    }
+    var isEdited: Bool { quarterTurns % 4 != 0 || isCropped }
+}
+
+enum MomentCropAspect: String, CaseIterable, Identifiable {
+    case original, free, square, fourFive, threeTwo, sixteenNine
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .original: return "원본"
+        case .free: return "자유"
+        case .square: return "1:1"
+        case .fourFive: return "4:5"
+        case .threeTwo: return "3:2"
+        case .sixteenNine: return "16:9"
+        }
+    }
+
+    /// Long side over short side; nil = the photo's own (원본) or any (자유).
+    var ratio: CGFloat? {
+        switch self {
+        case .original, .free: return nil
+        case .square: return 1
+        case .fourFive: return 5.0 / 4.0
+        case .threeTwo: return 1.5
+        case .sixteenNine: return 16.0 / 9.0
+        }
     }
 }
 

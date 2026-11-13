@@ -8,6 +8,7 @@ struct MomentPhotoDetail: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmUnshare = false
     @State private var confirmDelete = false
+    @State private var person: MomentPersonRef?
 
     private var photo: MomentPhoto? { account.myPhotos.first { $0.id == photoID } }
 
@@ -52,8 +53,16 @@ struct MomentPhotoDetail: View {
                 if let message = account.errorMessage {
                     Text(message).font(.footnote).foregroundStyle(.red)
                 }
+
+                Divider()
+                MomentCommentsSection(account: account, photo: photo) { person = MomentPersonRef(id: $0) }
             }
             .padding(16)
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity)
+        }
+        .sheet(item: $person) { ref in
+            MomentPersonGallery(account: account, owner: ref.id)
         }
         .confirmationDialog("순간들 피드에서 내릴까요?", isPresented: $confirmUnshare, titleVisibility: .visible) {
             Button("피드에서 내리기", role: .destructive) { Task { await account.unshare(photo) } }
@@ -77,7 +86,7 @@ struct MomentPhotoDetail: View {
                 Label("순간들에 공유됨 · \(shared.formatted(date: .abbreviated, time: .omitted))", systemImage: "sparkles")
                     .foregroundStyle(.tint)
             } else {
-                Label("내 벽에만 걸려 있어요", systemImage: "square.grid.2x2").foregroundStyle(.secondary)
+                Label("내 갤러리에만 있어요", systemImage: "square.grid.2x2").foregroundStyle(.secondary)
             }
             Spacer()
             Text("\(photo.likeCount) 좋아요").foregroundStyle(.secondary)

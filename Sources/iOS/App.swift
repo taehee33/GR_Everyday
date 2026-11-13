@@ -200,7 +200,8 @@ struct CameraTab: View {
 }
 
 /// iPhone stays in portrait; the shooting screen's 가로 모드 button turns it to landscape
-/// (and back). iPad keeps every orientation.
+/// (and back), and the full-screen gallery (내 사진전) follows the phone either way. iPad
+/// keeps every orientation.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Orientation.allowed
@@ -210,9 +211,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 @MainActor
 enum Orientation {
     static var allowed: UIInterfaceOrientationMask {
-        UIDevice.current.userInterfaceIdiom == .pad ? .all : (landscape ? .landscape : .portrait)
+        if UIDevice.current.userInterfaceIdiom == .pad { return .all }
+        if free { return .allButUpsideDown }
+        return landscape ? .landscape : .portrait
     }
     private(set) static var landscape = false
+    private(set) static var free = false
+
+    /// Lets the phone turn any way (true) or puts it back upright (false).
+    static func setFree(_ free: Bool) {
+        self.free = free
+        guard UIDevice.current.userInterfaceIdiom != .pad,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        if !free { scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait)) }
+    }
 
     static func set(landscape: Bool) {
         self.landscape = landscape

@@ -1,5 +1,6 @@
 // moment-img: serves Moment photo files from R2, read-only, on the free workers.dev address
-// (no domain needed). Paths: /p/{photo id}/display.jpg and /p/{photo id}/thumb.
+// (no domain needed). Paths: /p/{photo id}/display.jpg, /p/{photo id}/thumb, and profile
+// pictures at /a/{user id}/{version}.jpg.
 // Files never change, so they are sent as immutable; the app keeps its own disk cache because
 // the Cache API does not work on workers.dev. See PLAN-moment.md section 5.
 
@@ -7,7 +8,8 @@ export interface Env {
   BUCKET: R2Bucket;
 }
 
-const PATH = /^\/p\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(display\.jpg|thumb)$/;
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const PATH = new RegExp(`^/(?:p/${UUID}/(?:display\\.jpg|thumb)|a/${UUID}/[0-9]{1,9}\\.jpg)$`);
 
 function headersFor(object: R2Object): Headers {
   const headers = new Headers();
@@ -24,9 +26,9 @@ export default {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
     }
-    const match = PATH.exec(new URL(request.url).pathname);
-    if (!match) return new Response("Not found", { status: 404 });
-    const key = `p/${match[1]}/${match[2]}`;
+    const path = new URL(request.url).pathname;
+    if (!PATH.test(path)) return new Response("Not found", { status: 404 });
+    const key = path.slice(1);
 
     if (request.method === "HEAD") {
       const object = await env.BUCKET.head(key);

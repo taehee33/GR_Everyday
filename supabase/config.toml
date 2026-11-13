@@ -11,6 +11,9 @@ verify_jwt = true
 [functions.moment-delete]
 verify_jwt = true
 
+[functions.profile-avatar]
+verify_jwt = true
+
 [functions.account-delete]
 verify_jwt = true
 
