@@ -32,15 +32,19 @@ struct SettingsTab: View {
                 Section {
                     Toggle("연결하면 새 사진 자동 저장", isOn: $autoSave)
                     if autoSave {
-                        Toggle("JPG", isOn: $autoJPEG)
-                        Toggle("RAW (DNG)", isOn: $autoRAW)
-                        Toggle("동영상", isOn: $autoVideo)
+                        // Indented: these only say what 자동 저장 saves.
+                        Group {
+                            Toggle("JPG", isOn: $autoJPEG)
+                            Toggle("RAW (DNG)", isOn: $autoRAW)
+                            Toggle("동영상", isOn: $autoVideo)
+                        }
+                        .padding(.leading, 24)
                     }
-                    Toggle("RAW+JPG를 한 장으로 저장", isOn: $pairRAW)
+                    Toggle("RAW+JPG를 사진 앱에 한 항목으로", isOn: $pairRAW)
                 } header: {
                     Text("사진 저장")
                 } footer: {
-                    Text("사진 앱과 파일 앱의 ‘GR Everyday’ 폴더에 저장돼요. ‘한 장으로’를 켜면 같은 사진의 JPG와 RAW가 사진 앱에 한 항목으로 들어가요.")
+                    Text("사진 앱과 파일 앱의 ‘GR Everyday’ 폴더에 저장돼요. ‘한 항목으로’를 켜면 같은 사진의 JPG와 RAW가 사진 앱에서 한 장으로 보여요(파일 앱에는 둘 다 따로 남아요).")
                 }
 
                 Section {
