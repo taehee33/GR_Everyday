@@ -43,6 +43,18 @@
 - 서버: `20261114070000_moment_explore_area.sql` — `district`, `explore_photos`에 `p_district`와
   범위(`p_min_lat`…`p_max_lon`), `explore_map()`, facets에 `districts`.
 
+## 갤러리 사진까지 · 사람 검색 (2026-11-14 사용자 요청)
+
+- 탐색에는 순간들에 공유한 사진뿐 아니라 **갤러리에 올린(published) 사진이 모두** 나옴.
+  - 시간: 순간들에 올린 시각, 없으면 갤러리에 올린 시각. 기간 필터와 최신·추천 정렬이 이 시간을 씀.
+  - 좋아요: 순간들에 있으면 순간들 좋아요, 아니면 갤러리 좋아요(누를 때도 그쪽으로 들어감,
+    `MomentFeed.place(of:)`). 순간들 좋아요는 공유된 사진에만 줄 수 있어서.
+  - 탐색은 offset으로 다음 페이지를 읽음(갤러리 사진은 `sharedAt`이 없음).
+- 검색칸(필터 줄 위): 사용자명·표시 이름에 들어 있는 글자로 사람 찾기(`search_people`).
+  사용자명이 같은 사람 → 사용자명이 그 글자로 시작 → 표시 이름이 같은 사람 → 나머지(사진 많은 순).
+  차단한 사람은 빠짐. 누르면 그 사람 갤러리. 검색어가 있는 동안은 사진 대신 사람 목록.
+- 서버: `20261114090000_moment_explore_all.sql`.
+
 ## 서버 (`supabase/migrations/20261114030000_moment_explore.sql`)
 
 - `photos.region` (1–20자, 위치가 있을 때만), 소유자가 바꿀 수 있음(`grant update (region)`).

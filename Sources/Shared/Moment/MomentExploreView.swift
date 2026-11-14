@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 탐색: what is on 순간들 as a close grid. One row of chips: the order (추천, 좋아요, 최신,
+/// 탐색: every published photo (순간들 and 갤러리) as a close grid, with a search for people on
+/// top (사용자명 or 표시 이름). One row of chips: the order (추천, 좋아요, 최신,
 /// or 이전 당선작), then camera (digital or film GR), look (image control for digital, film for
 /// film) and region. Tap a photo for the same detail as 순간들.
 struct MomentExploreView: View {
@@ -11,6 +12,14 @@ struct MomentExploreView: View {
     @State private var opened: MomentPhoto?
     @State private var openedWinner: MomentPhoto?
     @State private var choosingRegion = false
+    /// 검색: what is typed, the people found for it, and the one opened.
+    @State private var searchText = ""
+    @State private var people: [MomentPersonResult] = []
+    @State private var searchedFor: String?
+    @State private var searchError: String?
+    @State private var person: MomentPersonRef?
+
+    private var searchQuery: String { searchText.trimmingCharacters(in: .whitespaces) }
 
     init(account: MomentAccount, feed: MomentFeed) {
         self.account = account
@@ -22,6 +31,104 @@ struct MomentExploreView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            searchField
+            if !searchQuery.isEmpty {
+                peopleList
+            } else {
+                photos
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: searchQuery) { await search(searchQuery) }
+        .sheet(item: $person) { ref in
+            MomentPersonGallery(account: account, owner: ref.id)
+        }
+    }
+
+    // MARK: Search
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("사용자명이나 이름으로 검색", text: $searchText)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+                #endif
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("검색어 지우기")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Waits a moment after the last key, then asks the server.
+    private func search(_ text: String) async {
+        guard !text.isEmpty else { people = []; searchedFor = nil; searchError = nil; return }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        do {
+            let found = try await account.store.searchPeople(text)
+            guard !Task.isCancelled else { return }
+            people = found
+            searchedFor = text
+            searchError = nil
+        } catch {
+            if !error.isCancellation { searchError = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder private var peopleList: some View {
+        if let searchError {
+            Text(searchError).font(.footnote).foregroundStyle(.red)
+        }
+        if searchedFor != searchQuery, people.isEmpty {
+            ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+        } else if people.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.questionmark").font(.title2).foregroundStyle(.tertiary)
+                Text("‘\(searchQuery)’에 맞는 사람이 없어요.").font(.callout).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 160)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(people) { found in
+                    Button { person = MomentPersonRef(id: found.id) } label: {
+                        HStack(spacing: 12) {
+                            MomentAvatarView(store: account.store, owner: found.id, author: found.author, size: 44)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(found.author.displayName ?? found.author.handle ?? "이름 없음")
+                                    .font(.body.weight(.semibold)).lineLimit(1)
+                                if let handle = found.author.handle {
+                                    Text("@\(handle)").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Text("사진 \(found.photoCount)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(found.author.title), 사진 \(found.photoCount)장")
+                    Divider()
+                }
+            }
+        }
+    }
+
+    // MARK: Photos
+
+    private var photos: some View {
+        VStack(alignment: .leading, spacing: 14) {
             filterRow
             if let notice = feed.notice {
                 Label(notice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary)
@@ -31,7 +138,6 @@ struct MomentExploreView: View {
             }
             if showsWinners { winnersGrid } else { grid }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: feed.query) { _, new in
             if new.sort == .winners {
                 // The winners come with 이달의 사진관, not from 탐색's server query.
@@ -238,7 +344,7 @@ struct MomentExploreView: View {
             Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
         }
         .font(.subheadline.weight(picked ? .semibold : .regular))
-        .foregroundStyle(picked ? Color(white: 0.08) : Color.primary)
+        .foregroundStyle(picked ? MomentLikePlace.moment.onTint : Color.primary)
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background {
             Capsule().fill(picked ? AnyShapeStyle(MomentLikePlace.moment.tint) : AnyShapeStyle(.quaternary))
@@ -246,15 +352,13 @@ struct MomentExploreView: View {
         .contentShape(Capsule())
     }
 
-    // MARK: Photos
-
     @ViewBuilder private var grid: some View {
         if !feed.loaded {
             ProgressView().frame(maxWidth: .infinity, minHeight: 220)
         } else if feed.photos.isEmpty, !feed.loading {
             VStack(spacing: 8) {
                 Image(systemName: "square.grid.3x3").font(.title2).foregroundStyle(.tertiary)
-                Text(feed.query.hasFilter ? "조건에 맞는 사진이 없어요." : "아직 공유된 순간이 없어요.")
+                Text(feed.query.hasFilter ? "조건에 맞는 사진이 없어요." : "아직 올라온 사진이 없어요.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 220)
@@ -311,8 +415,8 @@ struct MomentExploreView: View {
                 .overlay { MomentRemoteImage(url: feed.store.thumbURL(photo), contentMode: .fill) }
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    if feed.query.sort == .likes, photo.momentLikeCount > 0 {
-                        Label("\(photo.momentLikeCount)", systemImage: "heart.fill")
+                    if feed.query.sort == .likes, photo.likes(in: feed.place(of: photo)) > 0 {
+                        Label("\(photo.likes(in: feed.place(of: photo)))", systemImage: "heart.fill")
                             .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.5), radius: 3)

@@ -344,6 +344,7 @@ private struct AdminContestsPage: View {
             } footer: {
                 Text("달마다 한 줄이에요. 줄이 있어야 순간들 위에 그 달의 사진관이 보여요.")
             }
+            AdminHeartColorSection()
         }
         .formStyle(.grouped)
         .navigationTitle("당선작")
@@ -369,6 +370,62 @@ private struct AdminContestsPage: View {
 
     private func reload() async {
         await task.run { contests = try await MomentAdmin.shared.contests() }
+    }
+}
+
+/// 순간들 heart color, to match the month's winner: a few presets, or any color.
+private struct AdminHeartColorSection: View {
+    @StateObject private var task = AdminTask()
+    @State private var picked = MomentHeartColor.shared.color
+
+    private static let presets: [(String, String)] = [
+        ("#FFFFFF", "하양 (기본)"), ("#FFC200", "노랑"), ("#FF8A00", "주황"), ("#FF4D6D", "분홍"), ("#E53935", "빨강"),
+        ("#7C4DFF", "보라"), ("#2F80ED", "파랑"), ("#00B894", "초록"),
+    ]
+
+    private var saved: String { MomentHeartColor.shared.hex }
+    private var pickedHex: String { picked.hexString }
+
+    var body: some View {
+        Section {
+            HStack(spacing: 10) {
+                Image(systemName: "heart.fill").font(.title2)
+                    .foregroundStyle(MomentHeartColor.luminance(pickedHex) > 0.9
+                                     ? Color.adaptive(light: .black, dark: picked) : picked)
+                Text(pickedHex).font(.body.monospaced()).foregroundStyle(.secondary)
+                Spacer()
+                ColorPicker("색 고르기", selection: $picked, supportsOpacity: false).labelsHidden()
+            }
+            ScrollView(.horizontal) {
+                HStack(spacing: 12) {
+                    ForEach(Self.presets, id: \.0) { hex, name in
+                        let color = Color(hex: hex)!
+                        Button { picked = color } label: {
+                            Circle().fill(color).frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
+                                .overlay(Circle().strokeBorder(.primary, lineWidth: pickedHex == hex ? 2 : 0).padding(-3))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(name)
+                    }
+                }
+                .padding(.vertical, 4).padding(.horizontal, 3)
+            }
+            .scrollIndicators(.hidden)
+            Button("저장") {
+                Task {
+                    let hex = pickedHex
+                    await task.run { try await MomentAdmin.shared.setHeartColor(hex) }
+                }
+            }
+            .disabled(task.busy || pickedHex == saved)
+            ErrorRow(message: task.error)
+        } header: {
+            Text("순간들 하트 색")
+        } footer: {
+            Text("당선작에 맞춰 바꿔 보세요. 하양처럼 아주 밝은 색은 라이트 모드에서 검정으로 보여요. 이 기기는 바로 바뀌고, 다른 사람은 앱을 열거나 다시 앱으로 돌아올 때 바뀌어요.")
+        }
+        .task { await MomentHeartColor.shared.refresh(); picked = MomentHeartColor.shared.color }
     }
 }
 

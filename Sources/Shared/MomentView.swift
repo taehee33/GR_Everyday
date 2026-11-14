@@ -6,6 +6,7 @@ import SwiftUI
 /// account itself (names, log out, liked photos, reports) is in 설정 › 계정.
 struct MomentView: View {
     @ObservedObject private var account = MomentAccount.shared
+    @Environment(\.scenePhase) private var scenePhase
     /// The room on screen. On iPhone and iPad the rooms are pages side by side: drag
     /// sideways and the whole page follows the finger, settling on one room or the other.
     @State private var shownID: Room.ID? = Room.moments.id
@@ -75,6 +76,12 @@ struct MomentView: View {
             #endif
         }
         .task { if account.state == .loading { await account.load() } }
+        // An admin may have changed the 순간들 heart color (어드민 › 당선작) since we last looked.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, account.store is SupabaseMomentStore {
+                Task { await MomentHeartColor.shared.refresh() }
+            }
+        }
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #else

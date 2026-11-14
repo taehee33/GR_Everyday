@@ -205,6 +205,15 @@ final class MomentAdmin: ObservableObject {
         }
     }
 
+    /// 순간들 heart color, "#RRGGBB". Everyone sees it the next time their app reads it.
+    func setHeartColor(_ hex: String) async throws {
+        struct Params: Encodable { let p_color: String }
+        try await run {
+            try await self.client.rpc("admin_set_heart_color", params: Params(p_color: hex)).execute()
+        }
+        MomentHeartColor.shared.set(hex)
+    }
+
     func ranking(month: String) async throws -> [Candidate] {
         struct Params: Encodable { let p_month: String; let p_limit: Int }
         return try await call {

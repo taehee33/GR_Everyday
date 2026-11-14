@@ -200,7 +200,7 @@ struct MomentExploreRegionSheet: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(MomentLikePlace.moment.tint, in: Capsule())
-                    .foregroundStyle(Color(white: 0.08))
+                    .foregroundStyle(MomentLikePlace.moment.onTint)
             }
             .buttonStyle(.plain)
             .disabled(visible == nil || inside == 0)
@@ -290,7 +290,7 @@ private struct MomentMapThumb: View {
                 if count > 1 {
                     Text("\(count)")
                         .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color(white: 0.08))
+                        .foregroundStyle(MomentLikePlace.moment.onTint)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(MomentLikePlace.moment.tint, in: Capsule())
                         .offset(x: 6, y: -6)

@@ -73,6 +73,7 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
 
     func refreshMe() async throws {
         await loadImageBase()
+        await MomentHeartColor.shared.refresh(client: client)
         guard let user = client.auth.currentUser else { me = nil; return }
         do {
             let row: ProfileRow = try await client.from("profiles").select()
@@ -267,6 +268,30 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
             return try await client.rpc("explore_map", params: Params(
                 p_camera: query.camera, p_look: query.look,
                 p_kind: query.camera == nil ? query.kind?.rawValue : nil)).execute().value
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func searchPeople(_ text: String) async throws -> [MomentPersonResult] {
+        let q = text.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return [] }
+        struct Row: Decodable {
+            let id: UUID
+            let handle: String?
+            let display_name: String?
+            let avatar_version: Int?
+            let photo_count: Int
+        }
+        struct Params: Encodable { let p_query: String; let p_limit: Int }
+        do {
+            let rows: [Row] = try await client.rpc("search_people", params: Params(p_query: String(q.prefix(40)), p_limit: 30))
+                .execute().value
+            return rows.map { r in
+                MomentPersonResult(id: r.id, author: MomentAuthor(handle: r.handle, displayName: r.display_name,
+                                                                  avatarVersion: r.avatar_version),
+                                   photoCount: r.photo_count)
+            }
         } catch {
             throw Self.map(error)
         }

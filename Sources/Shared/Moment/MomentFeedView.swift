@@ -40,6 +40,26 @@ final class MomentFeed: ObservableObject {
         if case .owner = source { return .gallery }
         return .moment
     }
+
+    /// Where this photo's heart counts. 탐색 also shows gallery photos that are not on 순간들:
+    /// their hearts are gallery likes (a 순간들 like needs the photo on 순간들).
+    func place(of photo: MomentPhoto) -> MomentLikePlace {
+        source == .explore && photo.sharedAt == nil ? .gallery : place
+    }
+
+    func place(of id: UUID) -> MomentLikePlace {
+        photo(id).map { place(of: $0) } ?? place
+    }
+
+    /// Which of these I liked, each in its own place.
+    private func likes(among photos: [MomentPhoto]) async -> Set<UUID> {
+        let byPlace = Dictionary(grouping: photos) { place(of: $0) }
+        var liked = Set<UUID>()
+        for (place, photos) in byPlace {
+            liked.formUnion((try? await store.likes(among: photos.map(\.id), in: place)) ?? [])
+        }
+        return liked
+    }
     static let pageSize = 30
     /// Photos I reported; kept off my feed even after a reload.
     private var reported: Set<UUID> = []
@@ -89,7 +109,7 @@ final class MomentFeed: ObservableObject {
                 served = page.count
                 photos = page.filter { !reported.contains($0.id) }
                 reachedEnd = page.count < Self.pageSize
-                liked = (try? await store.likes(among: page.map(\.id), in: place)) ?? []
+                liked = await likes(among: page)
             case .winners:
                 contests = try await store.contests(limit: 36)
                 photos = contests.compactMap(\.winner)
@@ -123,7 +143,10 @@ final class MomentFeed: ObservableObject {
 
     /// The next page, when the last loaded photo scrolls into view.
     func loadMore() async {
-        guard !loading, !reachedEnd, let last = photos.last?.sharedAt else { return }
+        // 탐색 pages by offset (its gallery photos have no sharedAt); 순간들 by the last shared time.
+        guard !loading, !reachedEnd, let lastPhoto = photos.last else { return }
+        let last = lastPhoto.sharedAt
+        guard source == .explore || last != nil else { return }
         loading = true
         defer { loading = false }
         do {
@@ -139,7 +162,7 @@ final class MomentFeed: ObservableObject {
             let known = Set(photos.map(\.id))
             photos += page.filter { !known.contains($0.id) && !reported.contains($0.id) }
             reachedEnd = page.count < Self.pageSize
-            liked.formUnion((try? await store.likes(among: page.map(\.id), in: place)) ?? [])
+            liked.formUnion(await likes(among: page))
         } catch {
             if !error.isCancellation { errorMessage = error.localizedDescription }
         }
@@ -147,7 +170,7 @@ final class MomentFeed: ObservableObject {
 
     /// Re-reads which photos I liked (after signing in or out).
     func refreshLikes() async {
-        liked = (try? await store.likes(among: photos.map(\.id), in: place)) ?? []
+        liked = await likes(among: photos)
     }
 
     func photo(_ id: UUID) -> MomentPhoto? { photos.first { $0.id == id } }
@@ -158,7 +181,7 @@ final class MomentFeed: ObservableObject {
         let on = !liked.contains(id)
         apply(id, on)
         do {
-            try await store.like(id, on, in: place)
+            try await store.like(id, on, in: place(of: id))
         } catch {
             apply(id, !on)
             if !error.isCancellation { errorMessage = error.localizedDescription }
@@ -168,7 +191,7 @@ final class MomentFeed: ObservableObject {
     private func apply(_ id: UUID, _ on: Bool) {
         if on { liked.insert(id) } else { liked.remove(id) }
         if let i = photos.firstIndex(where: { $0.id == id }) {
-            photos[i].addLike(on ? 1 : -1, in: place)
+            photos[i].addLike(on ? 1 : -1, in: place(of: photos[i]))
         }
     }
 
@@ -505,8 +528,8 @@ struct MomentFeedDetail: View {
     }
 
     private func likeButton(_ photo: MomentPhoto) -> some View {
-        MomentHeartButton(liked: feed.liked.contains(photo.id), count: photo.likes(in: feed.place),
-                          place: feed.place, enabled: signedIn) {
+        MomentHeartButton(liked: feed.liked.contains(photo.id), count: photo.likes(in: feed.place(of: photo)),
+                          place: feed.place(of: photo), enabled: signedIn) {
             Task { await feed.toggleLike(photo.id) }
         }
     }

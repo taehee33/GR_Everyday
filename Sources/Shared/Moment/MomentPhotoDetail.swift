@@ -294,9 +294,14 @@ struct MomentShotTag: View {
 
 /// The heart under a photo in a detail screen, with the count.
 extension MomentLikePlace {
-    /// Red in a gallery, yellow on 순간들.
-    var tint: Color {
-        self == .moment ? Color(red: 1.0, green: 0.76, blue: 0.0) : .red
+    /// Red in a gallery; on 순간들 the color an admin chose (white unless changed — black in light mode — MomentHeartColor).
+    @MainActor var tint: Color {
+        self == .moment ? MomentHeartColor.shared.color : .red
+    }
+
+    /// Text and icons drawn on top of `tint`.
+    @MainActor var onTint: Color {
+        self == .moment ? MomentHeartColor.shared.onColor : .white
     }
 }
 

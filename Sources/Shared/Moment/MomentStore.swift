@@ -108,7 +108,7 @@ struct MomentProfile: Codable, Equatable, Identifiable {
 }
 
 /// Where a like is given: on the photo in a gallery, or on 순간들. Each keeps its own count,
-/// and 순간들 hearts are yellow so the two never look alike.
+/// and 순간들 hearts are white (or the color an admin set) so the two never look alike.
 enum MomentLikePlace: String, Codable {
     case gallery, moment
 }
@@ -162,6 +162,14 @@ struct MomentAuthor: Codable, Equatable {
     var title: String {
         displayName ?? handle ?? "이름 없음"
     }
+}
+
+/// Someone found by 탐색's search.
+struct MomentPersonResult: Identifiable, Equatable {
+    let id: UUID
+    let author: MomentAuthor
+    /// Published photos in their 갤러리.
+    let photoCount: Int
 }
 
 /// A comment under a photo.
@@ -537,12 +545,14 @@ protocol MomentStore: AnyObject {
 
     /// Photos shared to the feed, newest first. Pass the last photo's `sharedAt` to page.
     func feed(before: Date?, limit: Int) async throws -> [MomentPhoto]
-    /// One page of 탐색: 순간들 sorted and filtered.
+    /// One page of 탐색: every published photo (갤러리 too), sorted and filtered.
     func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto]
     /// The cameras, looks and regions on 순간들 now, for 탐색's filters.
     func exploreFacets() async throws -> MomentExploreFacets
     /// Where 순간들's photos are, for 탐색's map: about 1 km cells, never an exact spot.
     func exploreMap(_ query: MomentExploreQuery) async throws -> [MomentMapCell]
+    /// 탐색's search: people whose 사용자명 or 표시 이름 contains the text.
+    func searchPeople(_ text: String) async throws -> [MomentPersonResult]
     /// 이달의 사진관, newest month first, each with its winner once announced.
     func contests(limit: Int) async throws -> [MomentContest]
     /// A wall: the owner's published photos and their layout.
@@ -744,13 +754,16 @@ final class MockMomentStore: MomentStore {
 
     func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto] {
         let since = query.effectivePeriod.days.map { now().addingTimeInterval(-Double($0) * 86_400) }
+        // As on the server: on 순간들 → its 순간들 time and likes, else its 갤러리 ones.
+        func time(_ p: MomentPhoto) -> Date { p.sharedAt ?? p.createdAt }
+        func likes(_ p: MomentPhoto) -> Int { p.sharedAt != nil ? p.momentLikeCount : p.likeCount }
         func score(_ p: MomentPhoto) -> Double {
-            let hours = max(now().timeIntervalSince(p.sharedAt!), 0) / 3600
-            return Double(p.momentLikeCount + 1) / pow(hours + 2, 1.5)
+            let hours = max(now().timeIntervalSince(time(p)), 0) / 3600
+            return Double(likes(p) + 1) / pow(hours + 2, 1.5)
         }
         let list = photos.values
-            .filter { $0.status == .published && $0.sharedAt != nil && !blocked.contains($0.owner) }
-            .filter { since == nil || $0.sharedAt! >= since! }
+            .filter { $0.status == .published && !blocked.contains($0.owner) }
+            .filter { since == nil || time($0) >= since! }
             .filter { query.camera == nil || $0.info.camera == query.camera }
             .filter { p in
                 guard let kind = query.effectiveKind else { return true }
@@ -766,9 +779,9 @@ final class MockMomentStore: MomentStore {
             }
             .sorted { a, b in
                 switch query.sort {
-                case .likes where a.momentLikeCount != b.momentLikeCount: return a.momentLikeCount > b.momentLikeCount
+                case .likes where likes(a) != likes(b): return likes(a) > likes(b)
                 case .recommended where score(a) != score(b): return score(a) > score(b)
-                default: return a.sharedAt! > b.sharedAt!
+                default: return time(a) > time(b)
                 }
             }
         return list.dropFirst(offset).prefix(limit).map { photo in
@@ -779,7 +792,7 @@ final class MockMomentStore: MomentStore {
     }
 
     func exploreFacets() async throws -> MomentExploreFacets {
-        let shared = photos.values.filter { $0.status == .published && $0.sharedAt != nil && !blocked.contains($0.owner) }
+        let shared = photos.values.filter { $0.status == .published && !blocked.contains($0.owner) }
         func facets(_ value: (MomentPhoto) -> String?) -> [MomentExploreFacets.Facet] {
             Dictionary(grouping: shared.compactMap(value), by: { $0 })
                 .map { MomentExploreFacets.Facet(value: $0.key, count: $0.value.count) }
@@ -807,6 +820,25 @@ final class MockMomentStore: MomentStore {
             MomentMapCell(lat: (group[0].info.lat! * 100).rounded() / 100, lon: (group[0].info.lon! * 100).rounded() / 100,
                           count: group.count, photo: group[0].id)
         }
+    }
+
+    func searchPeople(_ text: String) async throws -> [MomentPersonResult] {
+        let q = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return [] }
+        return profiles.values
+            .filter { p in
+                guard let handle = p.handle, !blocked.contains(p.id) else { return false }
+                return handle.contains(q) || (p.displayName?.lowercased().contains(q) ?? false)
+            }
+            .map { p in
+                MomentPersonResult(id: p.id, author: author(p.id) ?? MomentAuthor(handle: p.handle, displayName: p.displayName),
+                                   photoCount: photos.values.filter { $0.owner == p.id && $0.status == .published }.count)
+            }
+            .sorted { a, b in
+                let ea = a.author.handle == q, eb = b.author.handle == q
+                if ea != eb { return ea }
+                return a.photoCount != b.photoCount ? a.photoCount > b.photoCount : (a.author.handle ?? "") < (b.author.handle ?? "")
+            }
     }
 
     /// Months of 이달의 사진관 (set by `sample()`); winners are read from `photos`.
