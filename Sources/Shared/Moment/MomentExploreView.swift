@@ -222,7 +222,7 @@ struct MomentExploreView: View {
         } label: {
             chipLabel(label, icon: "arrow.up.arrow.down", picked: false)
         }
-        .chipMenu()
+        .chipMenu(id: label)
         .accessibilityLabel("정렬: \(label)")
     }
 
@@ -248,7 +248,7 @@ struct MomentExploreView: View {
         } label: {
             chipLabel(label ?? "기종", picked: label != nil)
         }
-        .chipMenu()
+        .chipMenu(id: label ?? "기종")
         .accessibilityLabel(label.map { "기종: \($0)" } ?? "기종 필터")
     }
 
@@ -269,7 +269,7 @@ struct MomentExploreView: View {
         } label: {
             chipLabel(query.look ?? title, picked: query.look != nil)
         }
-        .chipMenu()
+        .chipMenu(id: query.look ?? title)
         .accessibilityLabel(query.look.map { "\(title): \($0)" } ?? "\(title) 필터")
     }
 
@@ -429,7 +429,9 @@ struct MomentExploreView: View {
 }
 
 private extension View {
-    func chipMenu() -> some View {
-        menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+    /// `id` is the chip's text. A new text makes a new chip: otherwise the menu, closing,
+    /// shrank back into the old chip's size and only snapped to the new one a moment later.
+    func chipMenu(id: String) -> some View {
+        menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().id(id)
     }
 }

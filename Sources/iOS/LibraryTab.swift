@@ -13,8 +13,12 @@ struct LibraryTab: View {
     @State private var viewing: Photo?
     @State private var showFilter = false
     @State private var page: Page = .photos
-    /// The live swipe. Held in @State without observing it, so only the page bar redraws
-    /// while the finger moves, not the whole library (that made swiping stutter).
+    /// The page the pager rests on; `page` follows it once a swipe settles.
+    @State private var shownPage: Page? = .photos
+    /// The picker's height (with its banners), for the pages to start below it.
+    @State private var barHeight: CGFloat = 52
+    /// Where the pager is. Held in @State without observing it, so only the page bar redraws
+    /// while the pages move, not the whole library (that made swiping stutter).
     @State private var swipe = PageSwipe()
     @AppStorage("iosThumbSize") private var thumbSize = 100.0
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -39,28 +43,13 @@ struct LibraryTab: View {
         online || library.visible.filter { library.selection.contains($0.id) }.allSatisfy { library.localURL($0) != nil }
     }
 
-    /// Any sideways swipe may start; one past the first or last page just springs back.
-    private func allowSwipe(start: CGPoint, towardNext: Bool) -> Bool { true }
-
-    /// `commit` is set when the swipe went far or fast enough to change the page.
-    private func endSwipe(towardNext: Bool, commit: Bool) {
-        let pages = Page.allCases
-        let i = pages.firstIndex(of: page) ?? 0
-        let next = towardNext ? i + 1 : i - 1
-        // The page itself switches at once (no cross-fade: drawing both pages at the same
-        // time was the hitch); the bar's highlight animates into place on its own.
-        if commit, pages.indices.contains(next) { page = pages[next] }
-        swipe.dragging = false
-        swipe.progress = 0
-    }
-
     /// The 사진 · 촬영 통계 · 다운로드 기록 picker, with the photo banners under it.
     private var pageBar: some View {
         VStack(spacing: 0) {
             PageBar(pages: Page.allCases.map(\.rawValue),
                     selected: Page.allCases.firstIndex(of: page) ?? 0,
                     swipe: swipe) { i in
-                page = Page.allCases[i]
+                withAnimation(.snappy(duration: 0.32)) { shownPage = Page.allCases[i] }
             }
             .padding(.horizontal).padding(.bottom, 8)
             if page == .photos {
@@ -74,36 +63,43 @@ struct LibraryTab: View {
 
     var body: some View {
         NavigationStack {
-            // A VStack, not a Group: modifiers on a Group go to each page, which gave every
-            // page its own swipe recognizer (one swipe then moved two pages).
-            VStack(spacing: 0) {
-                switch page {
-                case .photos: photosPage
-                case .stats:
-                    if library.photos.isEmpty {
-                        emptyState
-                    } else {
-                        // Below the bar rather than under it: as an inset, the stats scroll view
-                        // came back short of the top after scrolling, hiding its title.
-                        VStack(spacing: 0) {
-                            pageBar
-                            StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
+            // The picker stays put; the pages slide under it side by side, following the
+            // finger as in 순간들. Swiping is off while selecting, where a sideways drag
+            // selects photos.
+            ZStack(alignment: .top) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 0) {
+                        ForEach(Page.allCases, id: \.self) { item in
+                            pageView(item)
+                                // Each page starts below the picker but scrolls on under
+                                // it, showing through its bar background as before.
+                                .safeAreaPadding(.top, barHeight)
+                                .refreshable { if online { await Task { await library.reload() }.value } }
+                                // Short pages (empty states) sit under the picker.
+                                .frame(maxHeight: .infinity, alignment: .top)
+                                .containerRelativeFrame(.horizontal)
+                                .onGeometryChange(for: CGRect.self) {
+                                    $0.frame(in: .scrollView(axis: .horizontal))
+                                } action: { [swipe] frame in
+                                    // The first page's position says where the pager is.
+                                    guard item == .photos, frame.width > 0 else { return }
+                                    swipe.position = min(max(-frame.minX / frame.width, 0), CGFloat(Page.allCases.count - 1))
+                                }
                         }
                     }
-                case .history:
-                    DownloadHistoryView(selecting: $historySelecting, selected: $historySelected) { page = .photos }
+                    .scrollTargetLayout()
                 }
+                .scrollTargetBehavior(.paging)
+                .scrollIndicators(.hidden)
+                .scrollPosition(id: $shownPage)
+                .scrollDisabled(selecting || historySelecting)
+                pageBar
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
             }
-            // Short pages (empty states) sit under the picker instead of floating mid-screen.
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Swipe sideways to move between 사진 · 촬영 통계 · 다운로드 기록. Off while selecting,
-            // where a sideways drag selects photos.
-            .background(PageSwipeRecognizer(enabled: !selecting, allow: allowSwipe,
-                                            moved: { [swipe] in
-                                                swipe.dragging = true
-                                                swipe.progress = $0
-                                            },
-                                            ended: endSwipe))
+            .onChange(of: shownPage) { _, shown in if let shown, shown != page { page = shown } }
+            .onChange(of: page) { _, page in
+                if shownPage != page { withAnimation(.snappy(duration: 0.32)) { shownPage = page } }
+            }
             .sensoryFeedback(.selection, trigger: page)
             .navigationTitle("라이브러리")
             .navigationBarTitleDisplayMode(.inline)
@@ -112,15 +108,6 @@ struct LibraryTab: View {
                 if page == .history { historyToolbar }
             }
             .onChange(of: page) { historySelecting = false }
-            // spacing 0: the default gap let a strip of photos show between the banner and
-            // the pinned day header.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if !(page == .stats && !library.photos.isEmpty) { pageBar }
-            }
-            .safeAreaInset(edge: .bottom) { if page == .photos { bottomBar } }
-            // Run outside the refresh task: iOS cancels that one when the list redraws
-            // mid-refresh, which cancelled the request to the camera.
-            .refreshable { if online { await Task { await library.reload() }.value } }
             // 카메라 → 이미지 컨트롤 picked one: show those photos.
             .onChange(of: library.refine.tone) { _, tone in if tone != nil { page = .photos } }
             .sheet(isPresented: $showFilter) { FilterSheet() }
@@ -132,6 +119,23 @@ struct LibraryTab: View {
             } message: {
                 Text(library.error ?? "")
             }
+        }
+    }
+
+    /// One page of the pager. The refresh runs outside the refresh task: iOS cancels that
+    /// one when the list redraws mid-refresh, which cancelled the request to the camera.
+    @ViewBuilder private func pageView(_ item: Page) -> some View {
+        switch item {
+        case .photos:
+            photosPage.safeAreaInset(edge: .bottom) { bottomBar }
+        case .stats:
+            if library.photos.isEmpty {
+                emptyState
+            } else {
+                StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
+            }
+        case .history:
+            DownloadHistoryView(selecting: $historySelecting, selected: $historySelected) { page = .photos }
         }
     }
 
@@ -1013,127 +1017,10 @@ struct DragSelectRecognizer: UIViewRepresentable {
     }
 }
 
-/// A sideways swipe anywhere in the library moves between its pages. It sits on the
-/// navigation view and runs alongside the scroll views (a SwiftUI drag lost to them), so
-/// up-and-down scrolling is untouched. Points are in window coordinates.
-struct PageSwipeRecognizer: UIViewRepresentable {
-    var enabled: Bool
-    var allow: (_ start: CGPoint, _ towardNext: Bool) -> Bool
-    /// The swipe so far, as a fraction of the view's width (negative: leftward).
-    var moved: (CGFloat) -> Void
-    var ended: (_ towardNext: Bool, _ commit: Bool) -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    func makeUIView(context: Context) -> Finder {
-        let view = Finder()
-        view.isUserInteractionEnabled = false
-        view.coordinator = context.coordinator
-        return view
-    }
-
-    func updateUIView(_ view: Finder, context: Context) {
-        context.coordinator.parent = self
-    }
-
-    static func dismantleUIView(_ view: Finder, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    final class Finder: UIView {
-        weak var coordinator: Coordinator?
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            if window == nil { coordinator?.detach() } else { coordinator?.attach(from: self) }
-        }
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            coordinator?.attach(from: self)
-        }
-    }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var parent: PageSwipeRecognizer
-        private weak var host: UIView?
-        /// This page's own view: a swipe counts only where it is on screen.
-        private weak var finder: UIView?
-        private let pan = UIPanGestureRecognizer()
-        /// Where the finger went down; the pan only counts movement after it begins.
-        private var start: CGPoint = .zero
-
-        init(_ parent: PageSwipeRecognizer) {
-            self.parent = parent
-            super.init()
-            pan.addTarget(self, action: #selector(handle(_:)))
-            pan.delegate = self
-            pan.maximumNumberOfTouches = 1
-            pan.cancelsTouchesInView = false
-        }
-
-        /// The library's navigation view: everything on the page, but not sheets or the
-        /// full-screen photo viewer, which are presented apart from it.
-        func attach(from view: UIView) {
-            finder = view
-            var responder: UIResponder? = view
-            while let r = responder, !(r is UINavigationController) { responder = r.next }
-            guard let found = (responder as? UINavigationController)?.view, found !== host else { return }
-            host?.removeGestureRecognizer(pan)
-            host = found
-            found.addGestureRecognizer(pan)
-        }
-
-        func detach() {
-            host?.removeGestureRecognizer(pan)
-            host = nil
-        }
-
-        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-            guard parent.enabled else { return false }
-            let v = pan.velocity(in: nil)
-            guard abs(v.x) > abs(v.y) * 1.5 else { return false }
-            start = CGPoint(x: pan.location(in: nil).x - pan.translation(in: nil).x,
-                            y: pan.location(in: nil).y - pan.translation(in: nil).y)
-            // Other tabs stay in the window while hidden; only the library on screen counts.
-            guard let finder, isShowing(finder), finder.convert(finder.bounds, to: nil).contains(start) else { return false }
-            return parent.allow(start, v.x < 0)
-        }
-
-        private func isShowing(_ view: UIView) -> Bool {
-            guard view.window != nil else { return false }
-            var next: UIView? = view
-            while let v = next {
-                if v.isHidden || v.alpha < 0.01 { return false }
-                next = v.superview
-            }
-            return true
-        }
-
-        func gestureRecognizer(_ gesture: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
-
-        @objc private func handle(_ gesture: UIPanGestureRecognizer) {
-            let here = gesture.location(in: nil), v = gesture.velocity(in: nil)
-            let dx = here.x - start.x, dy = here.y - start.y
-            let width = max(finder?.bounds.width ?? 1, 1)
-            switch gesture.state {
-            case .began, .changed:
-                parent.moved(dx / width)
-            case .ended:
-                let sideways = abs(dx) > abs(dy) * 1.5
-                let far = abs(dx) > width * 0.3 || (abs(dx) > 30 && abs(v.x) > 400 && (v.x < 0) == (dx < 0))
-                parent.ended(dx < 0, sideways && far)
-            default:
-                parent.ended(dx < 0, false)
-            }
-        }
-    }
-}
-
-/// How far the finger has swiped between library pages, as a fraction of the screen width
-/// (negative: toward the next page).
+/// Where the library's pager is: 0 = 사진, 1 = 촬영 통계, 2 = 다운로드 기록, in between
+/// while sliding.
 final class PageSwipe: ObservableObject {
-    @Published var progress: CGFloat = 0
-    @Published var dragging = false
+    @Published var position: CGFloat = 0
 }
 
 /// The 사진 · 촬영 통계 · 다운로드 기록 switch. Looks like a segmented control, but its
@@ -1141,7 +1028,7 @@ final class PageSwipe: ObservableObject {
 struct PageBar: View {
     let pages: [String]
     let selected: Int
-    /// The live swipe; the highlight follows it while dragging and animates otherwise.
+    /// Where the pager is; the highlight follows it.
     @ObservedObject var swipe: PageSwipe
     var select: (Int) -> Void
 
@@ -1150,9 +1037,8 @@ struct PageBar: View {
             let count = CGFloat(max(pages.count, 1))
             let inset: CGFloat = 3
             let segment = (proxy.size.width - inset * 2) / count
-            // A finger across the whole screen moves the highlight one segment; it stretches
-            // only a little past the first and last.
-            let raw = CGFloat(selected) - swipe.progress
+            // The highlight moves with the pages: one page across, one segment along.
+            let raw = swipe.position
             let position = min(max(raw, -0.12), count - 1 + 0.12)
             let nearest = Int(min(max(raw.rounded(), 0), count - 1))
             ZStack(alignment: .leading) {
@@ -1162,7 +1048,6 @@ struct PageBar: View {
                     .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
                     .frame(width: segment, height: proxy.size.height - inset * 2)
                     .offset(x: inset + position * segment)
-                    .animation(swipe.dragging ? nil : .snappy(duration: 0.28), value: position)
                 HStack(spacing: 0) {
                     ForEach(pages.indices, id: \.self) { i in
                         Button { select(i) } label: {
