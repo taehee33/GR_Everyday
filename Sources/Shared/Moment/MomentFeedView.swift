@@ -18,8 +18,15 @@ final class MomentFeed: ObservableObject {
     @Published private(set) var profile: MomentProfile?
     @Published private(set) var items: [UUID: WallItem] = [:]
 
-    /// What the list holds: everyone's shared photos, the ones I liked, or one person's gallery.
-    enum Source: Equatable { case shared, liked, owner(UUID) }
+    /// 탐색 only: the order and filters, and what the filters can offer.
+    @Published var query = MomentExploreQuery()
+    @Published private(set) var facets = MomentExploreFacets()
+    /// 탐색 only: rows the server has given so far (some may be kept off screen), for the next offset.
+    private var served = 0
+
+    /// What the list holds: everyone's shared photos, 탐색 (sorted and filtered), the ones I
+    /// liked, or one person's gallery.
+    enum Source: Equatable { case shared, explore, liked, owner(UUID) }
 
     let store: MomentStore
     let source: Source
@@ -42,6 +49,7 @@ final class MomentFeed: ObservableObject {
         photos = []
         liked = []
         reported = []
+        served = 0
         loaded = false
         reachedEnd = false
         notice = nil
@@ -60,6 +68,20 @@ final class MomentFeed: ObservableObject {
                 if store.me != nil, let mine = try? await store.myReports() {
                     reported = Set(mine.compactMap(\.photoID))
                 }
+                photos = page.filter { !reported.contains($0.id) }
+                reachedEnd = page.count < Self.pageSize
+                liked = (try? await store.likes(among: page.map(\.id), in: place)) ?? []
+            case .explore:
+                let asked = query
+                async let facetsRead = try? store.exploreFacets()
+                let page = try await store.explore(asked, offset: 0, limit: Self.pageSize)
+                if store.me != nil, let mine = try? await store.myReports() {
+                    reported = Set(mine.compactMap(\.photoID))
+                }
+                if let read = await facetsRead { facets = read }
+                // The filters changed while this page was on its way: that reload wins.
+                guard asked == query else { return }
+                served = page.count
                 photos = page.filter { !reported.contains($0.id) }
                 reachedEnd = page.count < Self.pageSize
                 liked = (try? await store.likes(among: page.map(\.id), in: place)) ?? []
@@ -86,7 +108,15 @@ final class MomentFeed: ObservableObject {
         loading = true
         defer { loading = false }
         do {
-            let page = try await store.feed(before: last, limit: Self.pageSize)
+            let page: [MomentPhoto]
+            if source == .explore {
+                let asked = query
+                page = try await store.explore(asked, offset: served, limit: Self.pageSize)
+                guard asked == query else { return }
+                served += page.count
+            } else {
+                page = try await store.feed(before: last, limit: Self.pageSize)
+            }
             let known = Set(photos.map(\.id))
             photos += page.filter { !known.contains($0.id) && !reported.contains($0.id) }
             reachedEnd = page.count < Self.pageSize

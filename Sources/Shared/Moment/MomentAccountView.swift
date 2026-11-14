@@ -77,6 +77,8 @@ final class MomentAccount: ObservableObject {
     let store: MomentStore
     /// The shared photos everyone sees; kept here so the tab's screens use one copy.
     let feed: MomentFeed
+    /// 탐색: 순간들 sorted and filtered.
+    let explore: MomentFeed
     /// Photos I liked (설정 › 계정 › 좋아요한 사진).
     let likedFeed: MomentFeed
 
@@ -97,6 +99,7 @@ final class MomentAccount: ObservableObject {
     init(store: MomentStore = SupabaseMomentStore()) {
         self.store = store
         self.feed = MomentFeed(store: store)
+        self.explore = MomentFeed(store: store, source: .explore)
         self.likedFeed = MomentFeed(store: store, source: .liked)
     }
 
@@ -285,6 +288,7 @@ final class MomentAccount: ObservableObject {
             await reloadPhotos()
             // Sharing, unsharing and deleting change what the feed shows.
             if feed.loaded { await feed.reload() }
+            if explore.loaded { await explore.reload() }
             return true
         } catch {
             show(error)

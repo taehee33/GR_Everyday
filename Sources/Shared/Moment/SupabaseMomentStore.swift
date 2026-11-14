@@ -199,6 +199,39 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         }
     }
 
+    func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto] {
+        struct Params: Encodable {
+            let p_sort: String
+            let p_period: String
+            let p_camera: String?
+            let p_look: String?
+            let p_region: String?
+            let p_offset: Int
+            let p_limit: Int
+            /// Left out when nil (servers before migration 20261114040000 do not know it).
+            let p_kind: String?
+        }
+        do {
+            let params = Params(p_sort: query.sort.rawValue, p_period: query.effectivePeriod.rawValue,
+                                p_camera: query.camera, p_look: query.look, p_region: query.region,
+                                p_offset: offset, p_limit: limit,
+                                p_kind: query.camera == nil ? query.kind?.rawValue : nil)
+            let rows: [PhotoRow] = try await client.rpc("explore_photos", params: params)
+                .select(PhotoRow.columns).execute().value
+            return rows.map(\.photo)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func exploreFacets() async throws -> MomentExploreFacets {
+        do {
+            return try await client.rpc("explore_facets").execute().value
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
     func wall(of owner: UUID) async throws -> (profile: MomentProfile, photos: [MomentPhoto], items: [WallItem]) {
         do {
             async let profile: ProfileRow = client.from("profiles").select()
@@ -244,7 +277,33 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
 
         let published: PublishResult = try await invoke(
             "moment-publish", body: PublishRequest(id: started.id, shareNow: upload.shareNow))
-        return published.photo.photo
+        var photo = published.photo.photo
+        photo.region = await saveRegion(started.id, info: upload.info)
+        return photo
+    }
+
+    /// Writes `photos.region` from the shared location (none without one), for 탐색's filter.
+    /// Best effort: a photo without it only stays out of the region filter.
+    @discardableResult
+    private func saveRegion(_ photo: UUID, info: MomentShotInfo) async -> String? {
+        var region: String?
+        if let lat = info.lat, let lon = info.lon { region = await MomentRegion.name(lat: lat, lon: lon) }
+        struct Update: Encodable {
+            let region: String?
+            enum CodingKeys: String, CodingKey { case region }
+            // A null clears it when the location is taken off.
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(region, forKey: .region)
+            }
+        }
+        do {
+            try await client.from("photos").update(Update(region: region), returning: .minimal)
+                .eq("id", value: photo).execute()
+        } catch {
+            return nil
+        }
+        return region
     }
 
     private func put(_ data: Data, to target: PresignedPut) async throws {
@@ -284,6 +343,7 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         do {
             try await client.from("photos").update(InfoUpdate(info: info, caption: caption), returning: .minimal)
                 .eq("id", value: photo).execute()
+            await saveRegion(photo, info: info)
         } catch {
             throw Self.map(error)
         }
@@ -674,6 +734,9 @@ private struct PhotoRow: Decodable {
     let lat, lon: Double?
     let place: String?
     let film: String?
+    /// Not in `columns` (탐색 filters on the server), so the app reads photos before migration
+    /// 20261114030000 too.
+    let region: String?
     let createdAt: Date
     let sharedAt: Date?
     /// Embedded from profiles (absent in Edge Function replies).
@@ -693,7 +756,7 @@ private struct PhotoRow: Decodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, film, author
+        case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, film, region, author
         case thumbWidth = "thumb_width", thumbHeight = "thumb_height", likeCount = "like_count"
         case momentLikeCount = "moment_like_count"
         case imageControl = "image_control", takenAt = "taken_at", cameraSource = "camera_source"
@@ -706,7 +769,7 @@ private struct PhotoRow: Decodable {
                     info: MomentShotInfo(camera: camera, cameraSource: cameraSource, exposure: exposure, imageControl: imageControl,
                                          takenAt: takenAt, lat: lat, lon: lon, place: place, film: film),
                     likeCount: likeCount, momentLikeCount: momentLikeCount ?? 0, createdAt: createdAt, sharedAt: sharedAt,
-                    author: author?.author)
+                    author: author?.author, region: region)
     }
 }
 

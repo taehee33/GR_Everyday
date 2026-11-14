@@ -141,6 +141,8 @@ struct MomentPhoto: Codable, Equatable, Identifiable {
     var sharedAt: Date?
     /// The owner's names, when the store read them with the photo (the feed does).
     var author: MomentAuthor? = nil
+    /// Where it was taken, short ("서울", "일본"): from the shared location, for 탐색's filter.
+    var region: String? = nil
 
     enum Status: String, Codable { case uploading, published, hidden }
 
@@ -326,6 +328,115 @@ extension MomentStore {
     }
 }
 
+/// What 탐색 shows: one order and any of the filters (all must match).
+struct MomentExploreQuery: Equatable {
+    var sort: Sort = .recommended
+    /// How far back photos were shared; only for `.likes`.
+    var period: Period = .month
+    var camera: String?
+    /// Film GRs or digital GRs, when no one camera is picked.
+    var kind: Kind?
+    /// The image control's name, or the film in a film GR (`photos.look`).
+    var look: String?
+    var region: String?
+
+    enum Kind: String, CaseIterable, Identifiable {
+        case digital, film
+        var id: String { rawValue }
+        var title: String { self == .film ? "필름 GR" : "디지털 GR" }
+
+        init(camera: String) {
+            self = MomentShotInfo.filmCameras.contains(camera) ? .film : .digital
+        }
+    }
+
+    /// The kind the photos must be: the picked camera's, or the picked kind.
+    var effectiveKind: Kind? { camera.map(Kind.init(camera:)) ?? kind }
+
+    enum Sort: String, CaseIterable, Identifiable {
+        case recommended, likes, latest
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .recommended: "추천"
+            case .likes: "좋아요"
+            case .latest: "최신"
+            }
+        }
+    }
+
+    enum Period: String, CaseIterable, Identifiable {
+        case week, month, year, all
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .week: "이번 주"
+            case .month: "이번 달"
+            case .year: "올해"
+            case .all: "전체"
+            }
+        }
+        /// How far back, nil for all.
+        var days: Int? {
+            switch self {
+            case .week: 7
+            case .month: 30
+            case .year: 365
+            case .all: nil
+            }
+        }
+    }
+
+    var hasFilter: Bool { camera != nil || kind != nil || look != nil || region != nil }
+    /// The period the server is asked for: only likes are counted over a period.
+    var effectivePeriod: Period { sort == .likes ? period : .all }
+}
+
+/// The values 탐색's filters can offer, each with how many photos on 순간들 have it.
+struct MomentExploreFacets: Decodable, Equatable {
+    var cameras: [Facet] = []
+    var looks: [Facet] = []
+    /// Films loaded in film GRs.
+    var films: [Facet] = []
+    /// Image control names (digital GRs).
+    var controls: [Facet] = []
+    var regions: [Facet] = []
+
+    init(cameras: [Facet] = [], looks: [Facet] = [], films: [Facet] = [], controls: [Facet] = [], regions: [Facet] = []) {
+        self.cameras = cameras
+        self.looks = looks
+        self.films = films
+        self.controls = controls
+        self.regions = regions
+    }
+
+    enum CodingKeys: String, CodingKey { case cameras, looks, films, controls, regions }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cameras = try c.decodeIfPresent([Facet].self, forKey: .cameras) ?? []
+        looks = try c.decodeIfPresent([Facet].self, forKey: .looks) ?? []
+        films = try c.decodeIfPresent([Facet].self, forKey: .films) ?? []
+        controls = try c.decodeIfPresent([Facet].self, forKey: .controls) ?? []
+        regions = try c.decodeIfPresent([Facet].self, forKey: .regions) ?? []
+    }
+
+    /// The 화상 values that fit `kind` (both lists when nil).
+    func looks(for kind: MomentExploreQuery.Kind?) -> [Facet] {
+        switch kind {
+        case .film: films
+        case .digital: controls
+        case nil: controls + films
+        }
+    }
+
+    struct Facet: Decodable, Hashable, Identifiable {
+        let value: String
+        let count: Int
+        var id: String { value }
+    }
+}
+
 protocol MomentStore: AnyObject {
     var me: MomentProfile? { get }
     /// How I signed in, for the account screen: "Google · name@example.com".
@@ -359,6 +470,10 @@ protocol MomentStore: AnyObject {
 
     /// Photos shared to the feed, newest first. Pass the last photo's `sharedAt` to page.
     func feed(before: Date?, limit: Int) async throws -> [MomentPhoto]
+    /// One page of 탐색: 순간들 sorted and filtered.
+    func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto]
+    /// The cameras, looks and regions on 순간들 now, for 탐색's filters.
+    func exploreFacets() async throws -> MomentExploreFacets
     /// A wall: the owner's published photos and their layout.
     func wall(of owner: UUID) async throws -> (profile: MomentProfile, photos: [MomentPhoto], items: [WallItem])
     func quota() async throws -> MomentQuota
@@ -556,6 +671,54 @@ final class MockMomentStore: MomentStore {
             }
     }
 
+    func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto] {
+        let since = query.effectivePeriod.days.map { now().addingTimeInterval(-Double($0) * 86_400) }
+        func score(_ p: MomentPhoto) -> Double {
+            let hours = max(now().timeIntervalSince(p.sharedAt!), 0) / 3600
+            return Double(p.momentLikeCount + 1) / pow(hours + 2, 1.5)
+        }
+        let list = photos.values
+            .filter { $0.status == .published && $0.sharedAt != nil && !blocked.contains($0.owner) }
+            .filter { since == nil || $0.sharedAt! >= since! }
+            .filter { query.camera == nil || $0.info.camera == query.camera }
+            .filter { p in
+                guard let kind = query.effectiveKind else { return true }
+                return p.info.camera.map(MomentExploreQuery.Kind.init(camera:)) == kind
+            }
+            .filter { query.look == nil || Self.look($0) == query.look }
+            .filter { query.region == nil || $0.region == query.region }
+            .sorted { a, b in
+                switch query.sort {
+                case .likes where a.momentLikeCount != b.momentLikeCount: return a.momentLikeCount > b.momentLikeCount
+                case .recommended where score(a) != score(b): return score(a) > score(b)
+                default: return a.sharedAt! > b.sharedAt!
+                }
+            }
+        return list.dropFirst(offset).prefix(limit).map { photo in
+            var photo = photo
+            photo.author = author(photo.owner)
+            return photo
+        }
+    }
+
+    func exploreFacets() async throws -> MomentExploreFacets {
+        let shared = photos.values.filter { $0.status == .published && $0.sharedAt != nil && !blocked.contains($0.owner) }
+        func facets(_ value: (MomentPhoto) -> String?) -> [MomentExploreFacets.Facet] {
+            Dictionary(grouping: shared.compactMap(value), by: { $0 })
+                .map { MomentExploreFacets.Facet(value: $0.key, count: $0.value.count) }
+                .sorted { $0.count != $1.count ? $0.count > $1.count : $0.value < $1.value }
+        }
+        return MomentExploreFacets(cameras: facets { $0.info.camera }, looks: facets(Self.look),
+                                   films: facets { $0.info.film },
+                                   controls: facets { $0.info.film == nil ? $0.info.imageControl?.name : nil },
+                                   regions: facets { $0.region })
+    }
+
+    /// Same as `photos.look` on the server.
+    private static func look(_ photo: MomentPhoto) -> String? {
+        photo.info.film ?? photo.info.imageControl?.name
+    }
+
     private func author(_ id: UUID) -> MomentAuthor? {
         profiles[id].map { MomentAuthor(handle: $0.handle, displayName: $0.displayName, avatarVersion: $0.avatarVersion) }
     }
@@ -745,9 +908,13 @@ extension MockMomentStore {
             let photo = MomentPhoto(
                 id: UUID(), owner: me.id, status: .published, caption: shape.2,
                 width: shape.0, height: shape.1, thumbWidth: 600, thumbHeight: 600 * shape.1 / shape.0,
-                info: MomentShotInfo(camera: "GR IV", cameraSource: .exif), likeCount: n,
+                info: MomentShotInfo(camera: "GR IV", cameraSource: .exif,
+                                     imageControl: .init(code: n % 2, name: n % 2 == 0 ? "포지티브 필름" : "모노톤", settings: [])),
+                likeCount: n, momentLikeCount: n,
                 createdAt: Date().addingTimeInterval(Double(-n) * 3600), sharedAt: n % 3 == 0 ? Date() : nil)
-            store.photos[photo.id] = photo
+            var placed = photo
+            placed.region = n % 2 == 0 ? "서울" : "부산"
+            store.photos[photo.id] = placed
             store.items[photo.id] = WallItem(photoID: photo.id, x: Double(n % 3) * 0.34,
                                              y: Double(n / 3) * 0.3, width: 0.3, gridOrder: -n)
         }
@@ -761,7 +928,9 @@ extension MockMomentStore {
                 width: 3072, height: n % 2 == 0 ? 2048 : 3072, thumbWidth: 600, thumbHeight: n % 2 == 0 ? 400 : 600,
                 info: MomentShotInfo(camera: "GR1v", cameraSource: .declared, film: "Kodak Portra 400"), likeCount: 2,
                 createdAt: Date().addingTimeInterval(Double(-n) * 7200), sharedAt: n < 2 ? Date().addingTimeInterval(-60) : nil)
-            store.photos[photo.id] = photo
+            var placed = photo
+            placed.region = "일본"
+            store.photos[photo.id] = placed
             if n == 0 {
                 store.commentList.append(MomentComment(id: 1, photoID: photo.id, author: me.id, authorInfo: nil,
                                                        body: "빛이 정말 좋네요!", createdAt: Date()))
