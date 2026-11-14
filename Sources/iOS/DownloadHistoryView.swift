@@ -167,6 +167,8 @@ struct DownloadHistoryView: View {
             .labelStyle(ChipLabelStyle())
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal)
+        // Room above too: flush against the page picker, the chips' top edge was cut off.
+        .padding(.top, 8)
         .padding(.bottom, 8)
         .background(.bar)
     }
