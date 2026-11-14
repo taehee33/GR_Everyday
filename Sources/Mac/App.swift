@@ -58,6 +58,7 @@ struct AppSettingsView: View {
     var body: some View {
         Form {
             MomentAccountSection()
+            MomentGalleryPagingSection()
 
             Section {
                 LabeledContent("저장 폴더") {

@@ -321,6 +321,10 @@ struct MomentFeedDetail: View {
     var linksAuthor = true
     /// Comments show in someone's gallery, not on 순간들.
     var showsComments = false
+    /// A page of MomentGalleryPager (someone's gallery): no navigation bar of its own, fitted to one screen.
+    var paged = false
+    /// The page on screen (only it puts its buttons in the pager's toolbar).
+    var isCurrent = true
     @Environment(\.dismiss) private var dismiss
     @State private var reporting = false
     @State private var confirmBlock = false
@@ -331,12 +335,15 @@ struct MomentFeedDetail: View {
     @State private var showComments = false
     @StateObject private var comments: MomentComments
 
-    init(account: MomentAccount, feed: MomentFeed, photoID: UUID, linksAuthor: Bool = true, showsComments: Bool = false) {
+    init(account: MomentAccount, feed: MomentFeed, photoID: UUID, linksAuthor: Bool = true, showsComments: Bool = false,
+         paged: Bool = false, isCurrent: Bool = true) {
         self.account = account
         self.feed = feed
         self.photoID = photoID
         self.linksAuthor = linksAuthor
         self.showsComments = showsComments
+        self.paged = paged
+        self.isCurrent = isCurrent
         _comments = StateObject(wrappedValue: MomentComments(store: account.store, photoID: photoID))
     }
 
@@ -345,42 +352,54 @@ struct MomentFeedDetail: View {
     private var signedIn: Bool { account.me != nil }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let photo {
-                    content(photo)
-                } else {
-                    Text("사진을 찾을 수 없어요.").foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if paged {
+            page
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        if isCurrent {
+                            if photo != nil { MomentInfoButton { showInfo = true } }
+                            if let photo, !isMine, signedIn { moreMenu(photo) }
+                        }
+                    }
                 }
+        } else {
+            NavigationStack {
+                page
+                    .navigationTitle("순간")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
+                        ToolbarItemGroup(placement: .primaryAction) {
+                            if photo != nil { MomentInfoButton { showInfo = true } }
+                            if let photo, !isMine, signedIn { moreMenu(photo) }
+                        }
+                    }
             }
-            .navigationTitle("순간")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
+            #if os(macOS)
+            .frame(minWidth: 520, minHeight: 640)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                ToolbarItemGroup(placement: .primaryAction) {
-                    if photo != nil { MomentInfoButton { showInfo = true } }
-                    if let photo, !isMine, signedIn { moreMenu(photo) }
-                }
-            }
         }
-        #if os(macOS)
-        .frame(minWidth: 520, minHeight: 640)
-        #endif
+    }
+
+    @ViewBuilder private var page: some View {
+        if let photo {
+            content(photo)
+        } else {
+            Text("사진을 찾을 수 없어요.").foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private func content(_ photo: MomentPhoto) -> some View {
-        ScrollView {
+        MomentDetailLayout(paged: paged, viewHeight: viewHeight) {
+            authorLine(photo)
+        } image: {
+            MomentFullImage(store: feed.store, photo: photo)
+                .momentOpensFullScreen { viewing = photo }
+        } footer: {
             VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 10) {
-                    authorLine(photo)
-                    MomentFullImage(store: feed.store, photo: photo)
-                        .momentOpensFullScreen { viewing = photo }
-                }
-                .momentDetailBand(viewHeight: viewHeight)
-
                 HStack(spacing: 4) {
                     likeButton(photo)
                     if showsComments {
@@ -401,11 +420,7 @@ struct MomentFeedDetail: View {
                 if let message = feed.errorMessage {
                     Text(message).font(.footnote).foregroundStyle(.red)
                 }
-
             }
-            .padding(16)
-            .frame(maxWidth: 820)
-            .frame(maxWidth: .infinity)
         }
         .sheet(item: $person) { ref in
             MomentPersonGallery(account: account, owner: ref.id)

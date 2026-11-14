@@ -42,9 +42,7 @@ struct MomentWallView: View {
         // While frames are being moved, sideways drags on the wall belong to them.
         .momentNoRoomSwipe(editing)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .sheet(item: $opened) { photo in
-            MomentPhotoDetail(account: account, photoID: photo.id)
-        }
+        .momentGalleryCover(item: $opened) { photo in pager(photo) }
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { fullScreenWall }
         #else
@@ -59,7 +57,17 @@ struct MomentWallView: View {
         MomentWallFullScreen(store: account.store, photos: account.myPhotos, items: account.wallItems,
                              direction: account.me?.wallDirection ?? .vertical,
                              title: [account.me?.displayName, account.me?.handle].compactMap { $0 }.joined(separator: "  ")) { photo in
-            MomentPhotoDetail(account: account, photoID: photo.id)
+            pager(photo)
+        }
+    }
+
+    /// The photo full screen, with my other photos above and below it in the gallery's order.
+    private func pager(_ photo: MomentPhoto) -> some View {
+        MomentGalleryPager(title: "내 사진",
+                           ids: MomentGalleryOrder.ids(account.myPhotos, items: account.wallItems,
+                                                       style: style, direction: account.me?.wallDirection ?? .vertical),
+                           start: photo.id) { id, isCurrent in
+            MomentPhotoDetail(account: account, photoID: id, paged: true, isCurrent: isCurrent)
         }
     }
 
@@ -463,7 +471,9 @@ struct MomentProfileGrid: View {
     var onUpload: () -> Void = {}
     var onOpen: (MomentPhoto) -> Void
 
-    private var ordered: [MomentPhoto] {
+    private var ordered: [MomentPhoto] { Self.ordered(photos, items: items) }
+
+    static func ordered(_ photos: [MomentPhoto], items: [UUID: WallItem]) -> [MomentPhoto] {
         photos.sorted { a, b in
             let oa = items[a.id]?.gridOrder ?? 0
             let ob = items[b.id]?.gridOrder ?? 0
@@ -654,7 +664,7 @@ struct MomentWallFullScreen<Detail: View>: View {
         .onAppear { Orientation.setFree(true) }
         .onDisappear { Orientation.setFree(false) }
         #endif
-        .sheet(item: $opened) { photo in detail(photo) }
+        .momentGalleryCover(item: $opened) { photo in detail(photo) }
     }
 
     private func photo(_ id: UUID) -> MomentPhoto? { photos.first { $0.id == id } }

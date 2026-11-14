@@ -70,9 +70,7 @@ struct MomentPersonGallery: View {
             }
         }
         .task { await feed.reload() }
-        .sheet(item: $opened) { photo in
-            MomentFeedDetail(account: account, feed: feed, photoID: photo.id, linksAuthor: false, showsComments: true)
-        }
+        .momentGalleryCover(item: $opened) { photo in pager(photo) }
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { fullScreenWall }
         #else
@@ -100,7 +98,19 @@ struct MomentPersonGallery: View {
         MomentWallFullScreen(store: account.store, photos: feed.photos, items: feed.items,
                              direction: feed.profile?.wallDirection ?? .vertical,
                              title: [feed.profile?.displayName, feed.profile?.handle].compactMap { $0 }.joined(separator: "  ")) { photo in
-            MomentFeedDetail(account: account, feed: feed, photoID: photo.id, linksAuthor: false, showsComments: true)
+            pager(photo)
+        }
+    }
+
+    /// The photo full screen, with this person's other photos above and below it in their gallery's order.
+    private func pager(_ photo: MomentPhoto) -> some View {
+        MomentGalleryPager(title: "사진",
+                           ids: MomentGalleryOrder.ids(feed.photos, items: feed.items,
+                                                       style: feed.profile?.wallStyle ?? .grid,
+                                                       direction: feed.profile?.wallDirection ?? .vertical),
+                           start: photo.id) { id, isCurrent in
+            MomentFeedDetail(account: account, feed: feed, photoID: id, linksAuthor: false, showsComments: true,
+                             paged: true, isCurrent: isCurrent)
         }
     }
 }

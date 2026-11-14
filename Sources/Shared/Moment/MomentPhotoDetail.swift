@@ -8,6 +8,10 @@ import SwiftUI
 struct MomentPhotoDetail: View {
     @ObservedObject var account: MomentAccount
     let photoID: UUID
+    /// A page of MomentGalleryPager: no navigation bar of its own, fitted to one screen.
+    var paged = false
+    /// The page on screen (only it puts its buttons in the pager's toolbar).
+    var isCurrent = true
     @Environment(\.dismiss) private var dismiss
     @State private var confirmUnshare = false
     @State private var confirmDelete = false
@@ -18,57 +22,73 @@ struct MomentPhotoDetail: View {
     @State private var showComments = false
     @StateObject private var comments: MomentComments
 
-    init(account: MomentAccount, photoID: UUID) {
+    init(account: MomentAccount, photoID: UUID, paged: Bool = false, isCurrent: Bool = true) {
         self.account = account
         self.photoID = photoID
+        self.paged = paged
+        self.isCurrent = isCurrent
         _comments = StateObject(wrappedValue: MomentComments(store: account.store, photoID: photoID))
     }
 
     private var photo: MomentPhoto? { account.myPhotos.first { $0.id == photoID } }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let photo {
-                    content(photo)
-                } else {
-                    Text("사진을 찾을 수 없어요.").foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .navigationTitle("내 사진")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                if let photo {
+        if paged {
+            page
+                .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        MomentInfoButton { showInfo = true }
-                        moreMenu(photo)
+                        if isCurrent, let photo {
+                            MomentInfoButton { showInfo = true }
+                            moreMenu(photo)
+                        }
                     }
                 }
+        } else {
+            NavigationStack {
+                page
+                    .navigationTitle("내 사진")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
+                        if let photo {
+                            ToolbarItemGroup(placement: .primaryAction) {
+                                MomentInfoButton { showInfo = true }
+                                moreMenu(photo)
+                            }
+                        }
+                    }
             }
+            #if os(macOS)
+            .frame(minWidth: 520, minHeight: 640)
+            #endif
         }
-        #if os(macOS)
-        .frame(minWidth: 520, minHeight: 640)
-        #endif
+    }
+
+    @ViewBuilder private var page: some View {
+        if let photo {
+            content(photo)
+        } else {
+            Text("사진을 찾을 수 없어요.").foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private func content(_ photo: MomentPhoto) -> some View {
-        ScrollView {
+        MomentDetailLayout(paged: paged, viewHeight: viewHeight) {
             VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 10) {
-                    statusLine(photo)
-                    HStack(spacing: 10) {
-                        MomentAvatarView(store: account.store, profile: account.me, size: 34)
-                        Text(account.me?.handle ?? account.me?.displayName ?? "나").font(.subheadline.weight(.semibold))
-                    }
-                    MomentFullImage(store: account.store, photo: photo)
-                        .momentOpensFullScreen { viewing = photo }
+                statusLine(photo)
+                HStack(spacing: 10) {
+                    MomentAvatarView(store: account.store, profile: account.me, size: 34)
+                    Text(account.me?.handle ?? account.me?.displayName ?? "나").font(.subheadline.weight(.semibold))
                 }
-                .momentDetailBand(viewHeight: viewHeight)
-
+            }
+        } image: {
+            MomentFullImage(store: account.store, photo: photo)
+                .momentOpensFullScreen { viewing = photo }
+        } footer: {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 4) {
                     MomentHeartButton(liked: account.likedMine.contains(photo.id), count: photo.likeCount,
                                       enabled: account.me != nil && photo.status == .published) {
@@ -86,16 +106,16 @@ struct MomentPhotoDetail: View {
                     Text(message).font(.footnote).foregroundStyle(.red)
                 }
             }
-            .padding(16)
-            .frame(maxWidth: 820)
-            .frame(maxWidth: .infinity)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewHeight = $0 }
         .momentPhotoViewer($viewing, store: account.store)
         .task(id: photo.id) {
             await account.loadLike(photo.id)
             await comments.reload()
-            await account.reloadPhotos()
+        }
+        .task(id: isCurrent) {
+            // Paging through the gallery: refresh the list once per photo looked at.
+            if isCurrent { await account.reloadPhotos() }
         }
         .sheet(isPresented: $showComments) {
             MomentCommentsSheet(account: account, model: comments, photo: photo) { person = MomentPersonRef(id: $0) }
@@ -113,7 +133,7 @@ struct MomentPhotoDetail: View {
         }
         .confirmationDialog("이 사진을 삭제할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("삭제", role: .destructive) {
-                Task { if await account.delete(photo) { dismiss() } }
+                Task { if await account.delete(photo), !paged { dismiss() } }
             }
         } message: {
             Text("내 갤러리와 피드에서 사라지고 되돌릴 수 없어요. 이번 달 공유 횟수는 돌아오지 않아요.")
@@ -172,6 +192,47 @@ struct MomentFullImage: View {
             .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
             .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// A detail screen's post: the header (who, and the line above), the photo, then buttons and
+/// caption. On its own it scrolls, with the top lowered toward the middle (momentDetailBand); as a
+/// pager page it fills one screen without scrolling, the photo shrinking to leave room for the
+/// rest, and the whole post centered.
+struct MomentDetailLayout<Header: View, Photo: View, Footer: View>: View {
+    let paged: Bool
+    let viewHeight: CGFloat
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let image: () -> Photo
+    @ViewBuilder let footer: () -> Footer
+
+    var body: some View {
+        if paged {
+            VStack(alignment: .leading, spacing: 10) {
+                Spacer(minLength: 0)
+                header()
+                image().layoutPriority(1)
+                footer()
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        header()
+                        image()
+                    }
+                    .momentDetailBand(viewHeight: viewHeight)
+                    footer()
+                }
+                .padding(16)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
+            }
+        }
     }
 }
 
