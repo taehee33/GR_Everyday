@@ -11,6 +11,7 @@ struct StatsView: View {
     @State private var month = Calendar.current.startOfMonth(.now)
     @AppStorage("statsIncludeDeleted") private var includeDeleted = true
     @State private var confirmClear = false
+    @AppStorage("statsShowAbout") private var showAbout = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     /// iPhone (and iPad in a narrow split): calendar above the counts, one table per row.
@@ -52,11 +53,11 @@ struct StatsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 if compact {
-                    CalendarMonth(month: $month, day: $day, counts: perDay)
+                    CalendarMonth(month: $month, day: $day, counts: perDay, open: openDay)
                     summary(day: onDay, all: all)
                 } else {
                     HStack(alignment: .top, spacing: 20) {
-                        CalendarMonth(month: $month, day: $day, counts: perDay)
+                        CalendarMonth(month: $month, day: $day, counts: perDay, open: openDay)
                             .frame(width: 380)
                         summary(day: onDay, all: all)
                     }
@@ -98,25 +99,53 @@ struct StatsView: View {
         }
     }
 
+    /// Opens the library on the day picked in the calendar.
+    private var openDay: (() -> Void)? {
+        guard let day else { return nil }
+        return { open(ShotFilter(day: day)) }
+    }
+
     @ViewBuilder private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("촬영 통계").font(.largeTitle.bold())
-                Text(includeDeleted
-                     ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 세어요. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있어요."
-                     : "카드에 남아 있는 사진만 세어요.")
-                    .font(.callout).foregroundStyle(.secondary)
+            Text("촬영 통계").font(.largeTitle.bold())
+            Spacer()
+            if !compact { scanStatus }
+        }
+        if compact { HStack { scanStatus } }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
                 Picker("", selection: $includeDeleted) {
                     Text("지운 사진 포함").tag(true)
                     Text("카드에 있는 사진만").tag(false)
                 }
                 .pickerStyle(.segmented).fixedSize().labelsHidden()
-                .padding(.top, 4)
+                Spacer()
+                Button {
+                    withAnimation(.snappy) { showAbout.toggle() }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(showAbout ? 180 : 0))
+                        .font(.body.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel(showAbout ? "설명 접기" : "설명 펼치기")
             }
-            Spacer()
-            if !compact { scanStatus }
+            if showAbout {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(includeDeleted
+                         ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 세어요. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있어요."
+                         : "카드에 남아 있는 사진만 세어요.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if !stats.history.isEmpty {
+                        Button("지운 사진 기록 지우기…") { confirmClear = true }
+                            .buttonStyle(.plain).font(.callout).foregroundStyle(.red)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        if compact { HStack { scanStatus } }
     }
 
     @ViewBuilder private var scanStatus: some View {
@@ -151,24 +180,13 @@ struct StatsView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            if includeDeleted, !stats.history.isEmpty {
-                let gone = deleted.count
-                HStack {
-                    if gone > 0 { Text("카드에서 지운 사진 \(gone)장 포함 · 흐린 숫자가 지운 사진입니다") }
-                    Spacer()
-                    Button("지운 사진 기록 지우기…") { confirmClear = true }.linkButtonStyle()
-                }
-                .font(.caption).foregroundStyle(.secondary)
-                .padding([.horizontal, .bottom], 12)
+            if includeDeleted, !stats.history.isEmpty, case let gone = deleted.count, gone > 0 {
+                Text("카드에서 지운 사진 \(gone)장 포함 · 흐린 숫자가 지운 사진입니다")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding([.horizontal, .bottom], 12)
             }
         } label: {
-            HStack {
-                Text("촬영 횟수").font(.headline)
-                Spacer()
-                if let day = self.day {
-                    Button("이 날 사진 보기") { open(ShotFilter(day: day)) }.controlSize(.small)
-                }
-            }
+            Text("촬영 횟수").font(.headline)
         }
     }
 
@@ -176,7 +194,7 @@ struct StatsView: View {
         table(.mode, day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"])
         table(.tone, day: onDay, all: all)
         table(.aspect, day: onDay, all: all, fixed: ["3:2", "4:3", "1:1", "16:9"])
-        table(.crop, day: onDay, all: all, fixed: ["꺼짐", "35mm", "50mm"])
+        table(.crop, day: onDay, all: all, fixed: ["28mm(기본)", "35mm", "50mm"])
         if all.contains(where: { $0.record?.hdf != nil }) {
             table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
         }
@@ -269,12 +287,22 @@ private struct CalendarMonth: View {
     @Binding var month: Date
     @Binding var day: Date?
     let counts: [Date: Int]
+    /// Opens the library on `day`; nil when no day is picked.
+    var open: (() -> Void)?
 
     private var calendar: Calendar { .current }
 
     var body: some View {
         let busiest = max(counts.values.max() ?? 1, 1)
         GroupBox {
+            if let open, let day {
+                HStack {
+                    Spacer()
+                    Button(calendar.isDateInToday(day) ? "오늘 사진 보기" : "선택 날짜 사진 보기", action: open)
+                        .buttonStyle(.borderless).font(.callout.weight(.semibold))
+                }
+                .padding(.horizontal, 6).padding(.top, 2)
+            }
             VStack(spacing: 10) {
                 HStack {
                     Button { shift(-1) } label: { Image(systemName: "chevron.left") }

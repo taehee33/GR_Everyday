@@ -58,7 +58,7 @@ struct ShotRecord: Codable, Equatable {
         case .mode: return mode
         case .tone: return imageTone.map(String.init)
         case .aspect: return aspect
-        case .crop: return focal35.map { $0 <= 28 ? "꺼짐" : "\($0)mm" }
+        case .crop: return focal35.map { $0 <= 28 ? "28mm(기본)" : "\($0)mm" }
         case .hdf: return hdf.map { ["꺼짐", "켜짐", "레드 필터"].indices.contains($0) ? ["꺼짐", "켜짐", "레드 필터"][$0] : "코드 \($0)" }
         }
     }
@@ -218,7 +218,7 @@ final class ShotStats: ObservableObject {
 /// one shooting day, or both.
 struct ShotFilter: Equatable {
     enum Field: String, CaseIterable, Identifiable {
-        case mode = "노출 모드", tone = "이미지 컨트롤", aspect = "화상비율", crop = "크롭", hdf = "HDF"
+        case mode = "촬영 모드", tone = "이미지 컨트롤", aspect = "화상비율", crop = "크롭", hdf = "HDF"
         var id: String { rawValue }
 
         /// How a key reads on screen: image controls are stored by maker-note code.

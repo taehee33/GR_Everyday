@@ -82,7 +82,7 @@ struct LibraryView: View {
             }
         }
         .fixedSize()
-        .help("노출 모드·이미지 컨트롤·비율·크롭·HDF로 거르기")
+        .help("촬영 모드·이미지 컨트롤·비율·크롭·HDF로 거르기")
         if library.shotFilter != nil {
             Button { library.shotFilter = nil } label: { Image(systemName: "xmark.circle.fill") }
                 .buttonStyle(.borderless)
