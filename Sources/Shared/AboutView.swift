@@ -12,7 +12,7 @@ enum AppInfo {
     static let name = "GR Everyday"
     /// Operator shown in the privacy policy and terms.
     static let operatorName = "GR Everyday 개발자"
-    static let supportEmail = "hth3381@naver.com"
+    static let supportEmail = "hth33.dev@gmail.com"
     /// Effective date of the privacy policy and terms.
     static let effectiveDate = "2026-11-09"
 
