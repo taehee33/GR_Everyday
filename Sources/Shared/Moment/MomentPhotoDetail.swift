@@ -360,7 +360,7 @@ struct MomentInfoSheet: View {
                     } header: {
                         Text("기본 정보")
                     } footer: {
-                        Text("이 사진 파일에는 GR 촬영 정보(EXIF)가 없어서, 올린 사람이 카메라를 직접 골랐어요. 필름 GR 스캔본이나 GR DIGITAL 사진이 이렇게 올라와요.")
+                        Text("이 사진 파일에는 GR 촬영 정보(EXIF)가 없어서, 올린 사람이 카메라를 직접 골랐어요. 필름 GR 스캔본이나 촬영 정보가 빠진 GR 사진이 이렇게 올라와요.")
                     }
                 } else {
                     section("기본 정보", basic)

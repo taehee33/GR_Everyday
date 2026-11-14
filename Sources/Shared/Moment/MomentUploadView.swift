@@ -341,7 +341,7 @@ struct MomentUploadView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    Text("필름 GR 스캔본이나 GR DIGITAL 사진은 여기서 고르면 카메라를 직접 지정해 올릴 수 있어요.")
+                    Text("필름 GR 스캔본이나 촬영 정보가 빠진 GR 사진은 여기서 고르면 카메라를 직접 지정해 올릴 수 있어요.")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -353,7 +353,7 @@ struct MomentUploadView: View {
     #else
     private var pickButtons: some View {
         VStack(spacing: 14) {
-            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.\n필름 GR 스캔본이나 GR DIGITAL 사진은 카메라를 직접 골라 올릴 수 있어요.")
+            Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.\n필름 GR 스캔본이나 촬영 정보가 빠진 GR 사진은 카메라를 직접 골라 올릴 수 있어요.")
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let q = account.quota {
@@ -397,27 +397,25 @@ struct MomentUploadView: View {
             Section {
                 Label("이 사진에는 GR 촬영 정보가 없어요", systemImage: "questionmark.circle")
                     .font(.headline)
-                Text("필름 GR 스캔본이나 GR DIGITAL로 찍은 사진이라면 카메라를 골라 올릴 수 있어요. 직접 고른 카메라는 사진 정보(i)에 \u{201C}직접 선택\u{201D}으로 표시되고, 노출·촬영 일시·위치 같은 파일 속 정보는 쓰지 않아요.")
+                Text("필름 GR 스캔본이나 촬영 정보가 빠진 GR 사진이라면 카메라를 골라 올릴 수 있어요. 직접 고른 카메라는 사진 정보(i)에 \u{201C}직접 선택\u{201D}으로 표시되고, 노출·촬영 일시·위치 같은 파일 속 정보는 쓰지 않아요.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("필름") {
                 ForEach(MomentShotInfo.filmCameras, id: \.self) { cameraButton($0) }
             }
-            Section("GR DIGITAL") {
-                ForEach(MomentShotInfo.digitalCameras, id: \.self) {
-                    cameraButton($0, label: MomentShotInfo.digitalListLabel($0))
-                }
+            Section("디지털") {
+                ForEach(MomentShotInfo.digitalCameras, id: \.self) { cameraButton($0) }
             }
             Section {
                 Button("다른 사진 고르기") { model.reset() }
             } footer: {
-                Text("GR II·III·IIIx·IV로 찍은 사진은 편집하지 않은 카메라 원본(JPG·DNG)으로 올려 주세요. 원본에는 촬영 정보가 늘 들어 있어요. GR로 찍지 않은 사진은 신고될 수 있어요.")
+                Text("GR II 이후 모델은 편집하지 않은 카메라 원본(JPG·DNG)을 올리면 노출·이미지 컨트롤까지 자동으로 들어가요. GR로 찍지 않은 사진은 신고될 수 있어요.")
             }
         }
         .formStyle(.grouped)
     }
 
-    private func cameraButton(_ camera: String, label: String? = nil) -> some View {
+    private func cameraButton(_ camera: String) -> some View {
         Button {
             if MomentShotInfo.filmCameras.contains(camera) {
                 filmCamera = camera
@@ -426,7 +424,7 @@ struct MomentUploadView: View {
             }
         } label: {
             HStack {
-                Text(label ?? camera).foregroundStyle(.primary)
+                Text(camera).foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
             }

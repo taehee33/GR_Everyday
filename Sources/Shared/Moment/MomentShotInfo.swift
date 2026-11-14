@@ -56,19 +56,15 @@ struct MomentShotInfo: Codable, Equatable {
         case declared
     }
 
-    /// The cameras an owner may pick for a photo without GR shot info: GRs whose files the app
-    /// cannot recognise. GR II and later always write it, so a file of theirs without it has
-    /// been edited or exported and is still turned away. Keep in sync with DECLARED_CAMERAS in
-    /// supabase/functions/moment-upload.
-    static let filmCameras = ["GR1", "GR1s", "GR1v", "GR21", "GR10"]
-    static let digitalCameras = ["GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV"]
+    /// The cameras an owner may pick for a photo without GR shot info: the film GRs, and every
+    /// digital GR in release order (a scan, an export or a phone copy can lose the shot info).
+    /// Keep in sync with DECLARED_CAMERAS in supabase/functions/moment-upload.
+    static let filmCameras = ["GR1", "GR10", "GR1s", "GR21", "GR1v"]
+    static let digitalCameras = [
+        "GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV",
+        "GR", "GR II", "GR III", "GR III HDF", "GR IIIx", "GR IIIx HDF", "GR IV", "GR IV HDF",
+    ]
     static var declarableCameras: [String] { filmCameras + digitalCameras }
-    /// The name under the "GR DIGITAL" heading: "GR DIGITAL II" → "GR II". Display only; the
-    /// stored camera keeps the full name.
-    static func digitalListLabel(_ camera: String) -> String {
-        camera.replacingOccurrences(of: " DIGITAL", with: "")
-    }
-
     /// Films offered for a film GR; anything else can be typed (up to `filmLimit` characters).
     static let filmChoices = [
         "Kodak Portra 160", "Kodak Portra 400", "Kodak Portra 800", "Kodak Ektar 100",

@@ -23,11 +23,12 @@ const THUMB_TYPES = ["image/webp", "image/jpeg"];
 const EXPIRES_IN = 600;
 /** Keep in sync with MomentShotInfo.declarableCameras in the app. */
 const DECLARED_CAMERAS = [
-  "GR1", "GR1s", "GR1v", "GR21", "GR10",
+  "GR1", "GR10", "GR1s", "GR21", "GR1v",
   "GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV",
+  "GR", "GR II", "GR III", "GR III HDF", "GR IIIx", "GR IIIx HDF", "GR IV", "GR IV HDF",
 ];
 /** Keep in sync with MomentShotInfo.filmCameras in the app. */
-const FILM_CAMERAS = ["GR1", "GR1s", "GR1v", "GR21", "GR10"];
+const FILM_CAMERAS = ["GR1", "GR10", "GR1s", "GR21", "GR1v"];
 
 function int(v: unknown, name: string, min: number, max: number): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
