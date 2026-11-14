@@ -18,7 +18,7 @@ struct AppIconPicker: View {
     private var choices: [Choice] {
         AppIconCatalog.months.map { month in
             let p = month.split(separator: "-").compactMap { Int($0) }
-            let title = p.count == 2 ? "\(p[0])년 \(p[1])월 당선작" : month
+            let title = p.count == 2 ? "\(p[0])년 \(p[1])월 선정 로고" : month
             return Choice(iconName: "AppIcon-\(month)", preview: "AppIconPreview-\(month)", title: title)
         } + [Choice(iconName: nil, preview: "AppIconPreview", title: "기본 로고")]
     }
@@ -42,7 +42,7 @@ struct AppIconPicker: View {
                     .accessibilityAddTraits(current == choice.iconName ? .isSelected : [])
                 }
             } header: {
-                Text("홈 화면에 보이는 아이콘을 골라 보세요.")
+                Text("홈 화면에 보이는 로고를 골라 보세요.")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if let errorMessage { Text(errorMessage).foregroundStyle(.red) }

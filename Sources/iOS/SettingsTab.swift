@@ -22,12 +22,6 @@ struct SettingsTab: View {
                 MomentAccountSection()
                 MomentGalleryPagingSection()
 
-                Section {
-                    NavigationLink { AppIconPicker() } label: {
-                        Label("앱 로고", systemImage: "app.badge")
-                    }
-                }
-
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     Section {
                         menuChoice("아래 탭", detail: "iPhone처럼 화면 아래에", icon: "dock.rectangle", value: IPadMenu.bottom)
@@ -107,6 +101,12 @@ struct SettingsTab: View {
                     Text("저장 공간")
                 } footer: {
                     Text("카메라 없이도 지난번 사진 목록을 볼 수 있게 남겨 둬요. 비우면 다음 연결 때 다시 받아요.")
+                }
+
+                Section {
+                    NavigationLink { AppIconPicker() } label: {
+                        Label("앱 로고", systemImage: "app.badge")
+                    }
                 }
 
                 Section {
