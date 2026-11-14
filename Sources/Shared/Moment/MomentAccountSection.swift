@@ -4,12 +4,13 @@ import SwiftUI
 /// (names and leaving live there), see the photos I liked and what became of my reports, log out.
 struct MomentAccountSection: View {
     @ObservedObject var account = MomentAccount.shared
+    @ObservedObject private var admin = MomentAdmin.shared
     @State private var sheet: Sheet?
     @State private var confirmSignOut = false
     @State private var confirmDelete = false
 
     enum Sheet: String, Identifiable {
-        case signIn, profile, liked, reports
+        case signIn, profile, liked, reports, admin
         var id: String { rawValue }
     }
 
@@ -30,6 +31,9 @@ struct MomentAccountSection: View {
                 row("좋아요한 사진", icon: "heart") { sheet = .liked }
                 row("신고 내역", icon: "exclamationmark.bubble") { sheet = .reports }
                 signOutRow
+                if admin.isAdmin {
+                    row("어드민", icon: "wrench.and.screwdriver") { sheet = .admin }
+                }
             }
             if let message = account.errorMessage {
                 Text(message).font(.footnote).foregroundStyle(.red)
@@ -37,6 +41,7 @@ struct MomentAccountSection: View {
         } header: {
             Text("계정")
                 .task { if account.state == .loading { await account.load() } }
+                .task(id: account.state == .ready ? account.me?.id : nil) { await admin.refresh(account: account) }
                 .sheet(item: $sheet) { sheet in sheetContent(sheet) }
         }
         .disabled(account.busy)
@@ -126,6 +131,8 @@ struct MomentAccountSection: View {
             SheetFrame(title: "신고 내역", onClose: close) {
                 MomentReportList(account: account)
             }
+        case .admin:
+            MomentAdminView(onClose: close)
         }
     }
 

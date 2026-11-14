@@ -281,8 +281,12 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
             async let left: Int = client.rpc("shares_left").execute().value
             let limits: Limits = try await client.from("app_config").select("value")
                 .eq("key", value: "limits").single().execute().value
-            return try await MomentQuota(wallUsed: used ?? 0, wallLimit: me.wallLimit,
-                                         sharesLeft: left, sharesPerMonth: limits.value.sharesPerMonth)
+            // An admin may have given me my own monthly limit (profiles.shares_per_month).
+            struct Own: Decodable { let shares_per_month: Int? }
+            let own: Own? = try? await client.from("profiles").select("shares_per_month")
+                .eq("id", value: me.id).single().execute().value
+            return try await MomentQuota(wallUsed: used ?? 0, wallLimit: me.wallLimit, sharesLeft: left,
+                                         sharesPerMonth: own?.shares_per_month ?? limits.value.sharesPerMonth)
         } catch {
             throw Self.map(error)
         }
