@@ -81,6 +81,8 @@ final class MomentAccount: ObservableObject {
     let explore: MomentFeed
     /// Photos I liked (설정 › 계정 › 좋아요한 사진).
     let likedFeed: MomentFeed
+    /// 이달의 사진관: the months and their winners (순간들's notice, 탐색's 이전 당선작).
+    let contests: MomentFeed
 
     /// One account for the whole app: the 순간들 tab and 설정 › 계정 show the same sign-in.
     static let shared: MomentAccount = {
@@ -101,6 +103,7 @@ final class MomentAccount: ObservableObject {
         self.feed = MomentFeed(store: store)
         self.explore = MomentFeed(store: store, source: .explore)
         self.likedFeed = MomentFeed(store: store, source: .liked)
+        self.contests = MomentFeed(store: store, source: .winners)
     }
 
     func load() async {

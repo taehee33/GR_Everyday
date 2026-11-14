@@ -89,12 +89,16 @@ struct MomentView: View {
                 pinnedHeader(item)
                 switch item {
                 case .moments:
+                    MomentContestNotice(account: account)
                     MomentPhotoList(account: account, feed: account.feed)
                         .task { if !account.feed.loaded { await account.feed.reload() } }
+                        .task { if !account.contests.loaded { await account.contests.reload() } }
                         .task(id: account.me?.id) { if account.feed.loaded { await account.feed.reload() } }
                 case .explore:
+                    MomentPastWinners(account: account)
                     MomentExploreView(account: account, feed: account.explore)
                         .task { if !account.explore.loaded { await account.explore.reload() } }
+                        .task { if !account.contests.loaded { await account.contests.reload() } }
                         .task(id: account.me?.id) { if account.explore.loaded { await account.explore.reload() } }
                 case .mine:
                     MomentAccountView(account: account)
@@ -112,8 +116,14 @@ struct MomentView: View {
         .scrollClipDisabled()
         .refreshable {
             switch item {
-            case .moments: await account.feed.reload()
-            case .explore: await account.explore.reload()
+            case .moments:
+                async let contests: Void = account.contests.reload()
+                await account.feed.reload()
+                await contests
+            case .explore:
+                async let contests: Void = account.contests.reload()
+                await account.explore.reload()
+                await contests
             case .mine: await account.reloadPhotos()
             }
         }

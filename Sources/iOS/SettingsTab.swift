@@ -22,6 +22,12 @@ struct SettingsTab: View {
                 MomentAccountSection()
                 MomentGalleryPagingSection()
 
+                Section {
+                    NavigationLink { AppIconPicker() } label: {
+                        Label("앱 로고", systemImage: "app.badge")
+                    }
+                }
+
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     Section {
                         menuChoice("아래 탭", detail: "iPhone처럼 화면 아래에", icon: "dock.rectangle", value: IPadMenu.bottom)

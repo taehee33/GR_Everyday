@@ -26,7 +26,10 @@ final class MomentFeed: ObservableObject {
 
     /// What the list holds: everyone's shared photos, 탐색 (sorted and filtered), the ones I
     /// liked, or one person's gallery.
-    enum Source: Equatable { case shared, explore, liked, owner(UUID) }
+    enum Source: Equatable { case shared, explore, liked, owner(UUID), winners }
+
+    /// .winners only: 이달의 사진관, newest month first (the photos are the announced winners).
+    @Published private(set) var contests: [MomentContest] = []
 
     let store: MomentStore
     let source: Source
@@ -85,6 +88,11 @@ final class MomentFeed: ObservableObject {
                 photos = page.filter { !reported.contains($0.id) }
                 reachedEnd = page.count < Self.pageSize
                 liked = (try? await store.likes(among: page.map(\.id), in: place)) ?? []
+            case .winners:
+                contests = try await store.contests(limit: 36)
+                photos = contests.compactMap(\.winner)
+                reachedEnd = true
+                liked = (try? await store.likes(among: photos.map(\.id), in: place)) ?? []
             case .liked:
                 photos = try await store.likedPhotos(limit: 200)
                 reachedEnd = true

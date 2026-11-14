@@ -224,6 +224,33 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         }
     }
 
+    func contests(limit: Int) async throws -> [MomentContest] {
+        struct Row: Decodable {
+            let month: String
+            let title: String
+            let theme: String?
+            let intro: String?
+            let announcedAt: Date?
+            let winner: PhotoRow?
+            enum CodingKeys: String, CodingKey {
+                case month, title, theme, intro, winner, announcedAt = "announced_at"
+            }
+        }
+        do {
+            let rows: [Row] = try await client.from("contests")
+                .select("month,title,theme,intro,announced_at,winner:photos!contests_winner_fkey(\(PhotoRow.columns))")
+                .order("month", ascending: false)
+                .limit(limit).execute().value
+            return rows.map { row in
+                let winner = row.winner.map(\.photo).flatMap { $0.status == .published ? $0 : nil }
+                return MomentContest(month: row.month, title: row.title, theme: row.theme, intro: row.intro,
+                                     winner: row.announcedAt == nil ? nil : winner, announcedAt: row.announcedAt)
+            }
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
     func exploreFacets() async throws -> MomentExploreFacets {
         do {
             return try await client.rpc("explore_facets").execute().value

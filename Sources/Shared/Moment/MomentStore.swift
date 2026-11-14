@@ -437,6 +437,48 @@ struct MomentExploreFacets: Decodable, Equatable {
     }
 }
 
+/// 이달의 사진관: one month's contest. Every photo shared to 순간들 in the month (Korean
+/// time) is a candidate; after the month the operator picks the winner, usually the most
+/// liked, and its icon ships in the next app update (PLAN-contest.md).
+struct MomentContest: Identifiable, Equatable {
+    /// The month's first day, "2026-11-01".
+    let month: String
+    var title: String
+    var theme: String?
+    var intro: String?
+    /// The winning photo, once announced (nil when it was deleted since, or I cannot see it).
+    var winner: MomentPhoto?
+    var announcedAt: Date?
+
+    var id: String { month }
+    var isAnnounced: Bool { announcedAt != nil }
+
+    private var parts: (year: Int, month: Int)? {
+        let p = month.split(separator: "-").compactMap { Int($0) }
+        return p.count >= 2 ? (p[0], p[1]) : nil
+    }
+    /// "11월"
+    var monthTitle: String { parts.map { "\($0.month)월" } ?? month }
+    /// "2026년 11월"
+    var longMonthTitle: String { parts.map { "\($0.year)년 \($0.month)월" } ?? month }
+
+    /// The month this contest runs in, Korean time.
+    static var korea: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        return cal
+    }
+
+    /// "2026-11-01" for the month `date` is in (Korean time).
+    static func monthKey(_ date: Date) -> String {
+        let c = korea.dateComponents([.year, .month], from: date)
+        return String(format: "%04d-%02d-01", c.year ?? 0, c.month ?? 0)
+    }
+
+    /// Is this the month going on now?
+    func isCurrent(now: Date = Date()) -> Bool { month == Self.monthKey(now) }
+}
+
 protocol MomentStore: AnyObject {
     var me: MomentProfile? { get }
     /// How I signed in, for the account screen: "Google · name@example.com".
@@ -474,6 +516,8 @@ protocol MomentStore: AnyObject {
     func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto]
     /// The cameras, looks and regions on 순간들 now, for 탐색's filters.
     func exploreFacets() async throws -> MomentExploreFacets
+    /// 이달의 사진관, newest month first, each with its winner once announced.
+    func contests(limit: Int) async throws -> [MomentContest]
     /// A wall: the owner's published photos and their layout.
     func wall(of owner: UUID) async throws -> (profile: MomentProfile, photos: [MomentPhoto], items: [WallItem])
     func quota() async throws -> MomentQuota
@@ -714,6 +758,20 @@ final class MockMomentStore: MomentStore {
                                    regions: facets { $0.region })
     }
 
+    /// Months of 이달의 사진관 (set by `sample()`); winners are read from `photos`.
+    fileprivate var contestList: [(contest: MomentContest, winner: UUID?)] = []
+
+    func contests(limit: Int) async throws -> [MomentContest] {
+        contestList.sorted { $0.contest.month > $1.contest.month }.prefix(limit).map { row in
+            var contest = row.contest
+            if let id = row.winner, var photo = photos[id], photo.status == .published, !blocked.contains(photo.owner) {
+                photo.author = author(photo.owner)
+                contest.winner = photo
+            }
+            return contest
+        }
+    }
+
     /// Same as `photos.look` on the server.
     private static func look(_ photo: MomentPhoto) -> String? {
         photo.info.film ?? photo.info.imageControl?.name
@@ -932,6 +990,15 @@ extension MockMomentStore {
             placed.region = "일본"
             store.photos[photo.id] = placed
             if n == 0 {
+                // Last month's winner.
+                let now = Date()
+                let last = MomentContest.korea.date(byAdding: .month, value: -1, to: now)!
+                store.contestList = [
+                    (MomentContest(month: MomentContest.monthKey(now), title: "이달의 사진관",
+                                   theme: "오늘 걸은 길", intro: "이번 달 순간들에 공유한 사진이 모두 후보예요."), nil),
+                    (MomentContest(month: MomentContest.monthKey(last), title: "지난달 사진관", theme: "아침",
+                                   announcedAt: now.addingTimeInterval(-86_400 * 10)), photo.id),
+                ]
                 store.commentList.append(MomentComment(id: 1, photoID: photo.id, author: me.id, authorInfo: nil,
                                                        body: "빛이 정말 좋네요!", createdAt: Date()))
             }
