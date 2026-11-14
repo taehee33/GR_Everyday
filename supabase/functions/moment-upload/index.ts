@@ -3,9 +3,10 @@
 // Body (sizes from MomentImage.Rendered, info from MomentShotInfo.shared):
 //   { width, height, thumb_width, thumb_height, display_bytes, thumb_bytes,
 //     thumb_type: "image/webp" | "image/jpeg", caption?, info: { camera?, camera_source?,
-//     exposure?, image_control?, taken_at?, lat?, lon?, place? } }
+//     exposure?, image_control?, taken_at?, lat?, lon?, place?, film? } }
 // camera_source: "exif" (read from a GR original) or "declared" (picked by the owner, only from
-// DECLARED_CAMERAS: GRs whose files carry no GR shot info).
+// DECLARED_CAMERAS: GRs whose files carry no GR shot info). film: only with a declared film GR
+// (FILM_CAMERAS), 1–40 characters.
 // Reply: { id, display: { url, headers }, thumb: { url, headers }, expires_in }
 // The app PUTs both files, then calls moment-publish. Limits are checked in begin_upload.
 
@@ -25,6 +26,8 @@ const DECLARED_CAMERAS = [
   "GR1", "GR1s", "GR1v", "GR21", "GR10",
   "GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV",
 ];
+/** Keep in sync with MomentShotInfo.filmCameras in the app. */
+const FILM_CAMERAS = ["GR1", "GR1s", "GR1v", "GR21", "GR10"];
 
 function int(v: unknown, name: string, min: number, max: number): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
@@ -76,6 +79,15 @@ function shotInfo(v: unknown) {
       (typeof place !== "string" || place.trim().length === 0 || place.trim().length > 40)) {
     throw new HttpError(400, "bad_request", "info.place must be 1–40 characters");
   }
+  const film = info.film;
+  if (film !== undefined && film !== null) {
+    if (typeof film !== "string" || film.trim().length === 0 || film.trim().length > 40) {
+      throw new HttpError(400, "bad_request", "info.film must be 1–40 characters");
+    }
+    if (source !== "declared" || typeof camera !== "string" || !FILM_CAMERAS.includes(camera)) {
+      throw new HttpError(400, "bad_request", "info.film goes only with a film GR");
+    }
+  }
   const lat = optionalNumber(info.lat, "info.lat", -90, 90);
   const lon = optionalNumber(info.lon, "info.lon", -180, 180);
   if ((lat === null) !== (lon === null)) throw new HttpError(400, "bad_request", "info.lat and info.lon go together");
@@ -88,6 +100,7 @@ function shotInfo(v: unknown) {
     lat,
     lon,
     place: typeof place === "string" ? place.trim() : null,
+    film: typeof film === "string" ? film.trim() : null,
   };
 }
 

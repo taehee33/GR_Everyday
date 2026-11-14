@@ -737,7 +737,7 @@ extension MockMomentStore {
             let photo = MomentPhoto(
                 id: UUID(), owner: other.id, status: .published, caption: n == 0 ? "아침 산책" : nil,
                 width: 3072, height: n % 2 == 0 ? 2048 : 3072, thumbWidth: 600, thumbHeight: n % 2 == 0 ? 400 : 600,
-                info: MomentShotInfo(camera: "GR1v", cameraSource: .declared), likeCount: 2,
+                info: MomentShotInfo(camera: "GR1v", cameraSource: .declared, film: "Kodak Portra 400"), likeCount: 2,
                 createdAt: Date().addingTimeInterval(Double(-n) * 7200), sharedAt: n < 2 ? Date().addingTimeInterval(-60) : nil)
             store.photos[photo.id] = photo
             if n == 0 {

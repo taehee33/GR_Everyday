@@ -653,7 +653,7 @@ private struct ProfileRow: Decodable {
 }
 
 private struct PhotoRow: Decodable {
-    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,camera_source,exposure,image_control,taken_at,lat,lon,place,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
+    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,camera_source,exposure,image_control,taken_at,lat,lon,place,film,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
 
     let id: UUID
     let owner: UUID
@@ -667,6 +667,7 @@ private struct PhotoRow: Decodable {
     let takenAt: Date?
     let lat, lon: Double?
     let place: String?
+    let film: String?
     let createdAt: Date
     let sharedAt: Date?
     /// Embedded from profiles (absent in Edge Function replies).
@@ -686,7 +687,7 @@ private struct PhotoRow: Decodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, author
+        case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, film, author
         case thumbWidth = "thumb_width", thumbHeight = "thumb_height", likeCount = "like_count"
         case imageControl = "image_control", takenAt = "taken_at", cameraSource = "camera_source"
         case createdAt = "created_at", sharedAt = "shared_at"
@@ -696,7 +697,7 @@ private struct PhotoRow: Decodable {
         MomentPhoto(id: id, owner: owner, status: status, caption: caption, width: width, height: height,
                     thumbWidth: thumbWidth, thumbHeight: thumbHeight,
                     info: MomentShotInfo(camera: camera, cameraSource: cameraSource, exposure: exposure, imageControl: imageControl,
-                                         takenAt: takenAt, lat: lat, lon: lon, place: place),
+                                         takenAt: takenAt, lat: lat, lon: lon, place: place, film: film),
                     likeCount: likeCount, createdAt: createdAt, sharedAt: sharedAt,
                     author: author?.author)
     }
@@ -761,7 +762,7 @@ private struct InfoUpdate: Encodable {
     let caption: String?
 
     enum CodingKeys: String, CodingKey {
-        case caption, camera, exposure, lat, lon, place
+        case caption, camera, exposure, lat, lon, place, film
         case imageControl = "image_control", takenAt = "taken_at"
     }
 
@@ -775,5 +776,6 @@ private struct InfoUpdate: Encodable {
         try c.encode(info.lat, forKey: .lat)
         try c.encode(info.lon, forKey: .lon)
         try c.encode(info.place, forKey: .place)
+        try c.encode(info.film, forKey: .film)
     }
 }

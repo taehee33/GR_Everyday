@@ -44,6 +44,26 @@ final class MomentUploadModel: ObservableObject {
     /// The camera the owner picked, for a photo without GR shot info.
     var declaredCamera: String? { fullInfo.isCameraDeclared ? fullInfo.camera : nil }
 
+    /// True when the owner picked a film GR: the form then asks for the film.
+    var isFilmCamera: Bool { declaredCamera.map(MomentShotInfo.filmCameras.contains) ?? false }
+
+    /// The film row: nothing, one of `MomentShotInfo.filmChoices`, or typed in `customFilm`.
+    enum FilmChoice: Hashable { case none, preset(String), custom }
+    @Published var filmChoice: FilmChoice = .none
+    @Published var customFilm = ""
+
+    /// The film shared with a film GR photo, or nil.
+    var film: String? {
+        guard isFilmCamera else { return nil }
+        switch filmChoice {
+        case .none: return nil
+        case .preset(let name): return name
+        case .custom:
+            let text = customFilm.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : String(text.prefix(MomentShotInfo.filmLimit))
+        }
+    }
+
     /// Where the location comes from: none, the photo's own GPS, or a spot picked on the map.
     enum LocationChoice: Hashable { case none, photo, map }
     @Published var locationChoice: LocationChoice = .none
@@ -62,6 +82,7 @@ final class MomentUploadModel: ObservableObject {
         // A picked camera is the only thing saying the photo is a GR, so it is always shared.
         if declaredCamera != nil { groups.camera = true }
         var info = fullInfo.shared(groups)
+        info.film = info.camera == nil ? nil : film
         switch locationChoice {
         case .photo:
             if let lat = fullInfo.lat, let lon = fullInfo.lon { info.lat = lat; info.lon = lon }
@@ -85,6 +106,8 @@ final class MomentUploadModel: ObservableObject {
         }
         loaded = nil
         edit = MomentCropEdit()
+        filmChoice = .none
+        customFilm = ""
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 let loaded = try MomentImage.load(files)
@@ -181,6 +204,8 @@ final class MomentUploadModel: ObservableObject {
         mapLocation = nil
         mapPlace = nil
         placeName = ""
+        filmChoice = .none
+        customFilm = ""
     }
 
     /// Copies a picked file into our temporary folder (keeping its name, so the JPG/DNG
@@ -217,6 +242,8 @@ struct MomentUploadView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var pickingLocation = false
     @State private var cropping = false
+    /// The film GR just picked in `cameraChoice`; its film is asked next, before the form.
+    @State private var filmCamera: String?
 
     var body: some View {
         NavigationStack {
@@ -265,7 +292,7 @@ struct MomentUploadView: View {
             ProgressView("GR 원본인지 확인하고 업로드용 이미지를 만드는 중…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .choosingCamera:
-            cameraChoice
+            if let filmCamera { filmChoice(for: filmCamera) } else { cameraChoice }
         case .ready, .uploading:
             form
         case .done:
@@ -377,7 +404,9 @@ struct MomentUploadView: View {
                 ForEach(MomentShotInfo.filmCameras, id: \.self) { cameraButton($0) }
             }
             Section("GR DIGITAL") {
-                ForEach(MomentShotInfo.digitalCameras, id: \.self) { cameraButton($0) }
+                ForEach(MomentShotInfo.digitalCameras, id: \.self) {
+                    cameraButton($0, label: MomentShotInfo.digitalListLabel($0))
+                }
             }
             Section {
                 Button("다른 사진 고르기") { model.reset() }
@@ -388,12 +417,76 @@ struct MomentUploadView: View {
         .formStyle(.grouped)
     }
 
-    private func cameraButton(_ camera: String) -> some View {
+    private func cameraButton(_ camera: String, label: String? = nil) -> some View {
         Button {
-            Task { await model.prepare(camera: camera) }
+            if MomentShotInfo.filmCameras.contains(camera) {
+                filmCamera = camera
+            } else {
+                Task { await model.prepare(camera: camera) }
+            }
         } label: {
             HStack {
-                Text(camera).foregroundStyle(.primary)
+                Text(label ?? camera).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The step after picking a film GR: which film was in it. Can be skipped.
+    private func filmChoice(for camera: String) -> some View {
+        Form {
+            Section {
+                Label("\(camera)에 넣은 필름", systemImage: "film")
+                    .font(.headline)
+                Text("고른 필름은 디지털 GR의 이미지 컨트롤 자리에 보여요. 목록에 없으면 직접 입력해 주세요.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Section("직접 입력") {
+                HStack {
+                    TextField("필름 이름 (예: Kodak Portra 400)", text: $model.customFilm)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { useCustomFilm(camera) }
+                        .onChange(of: model.customFilm) { _, text in
+                            if text.count > MomentShotInfo.filmLimit {
+                                model.customFilm = String(text.prefix(MomentShotInfo.filmLimit))
+                            }
+                        }
+                    Button("다음") { useCustomFilm(camera) }
+                        .disabled(model.customFilm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            Section("필름") {
+                ForEach(MomentShotInfo.filmChoices, id: \.self) { name in
+                    listButton(name) { pickFilm(.preset(name), camera: camera) }
+                }
+            }
+            Section {
+                Button("필름 정보 없이 올리기") { pickFilm(.none, camera: camera) }
+                Button("카메라 다시 고르기") { filmCamera = nil }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func useCustomFilm(_ camera: String) {
+        guard !model.customFilm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        pickFilm(.custom, camera: camera)
+    }
+
+    private func pickFilm(_ choice: MomentUploadModel.FilmChoice, camera: String) {
+        model.filmChoice = choice
+        filmCamera = nil
+        Task { await model.prepare(camera: camera) }
+    }
+
+    private func listButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
             }
@@ -442,6 +535,7 @@ struct MomentUploadView: View {
                             Text("직접 선택 · 항상 공유돼요").font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    if model.isFilmCamera { filmRow }
                 } else {
                     infoToggle("카메라", isOn: $model.options.camera, value: model.fullInfo.camera)
                 }
@@ -569,6 +663,29 @@ struct MomentUploadView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// For a film GR: pick the film from the list, or type it.
+    @ViewBuilder private var filmRow: some View {
+        Picker(selection: $model.filmChoice) {
+            Text("선택 안 함").tag(MomentUploadModel.FilmChoice.none)
+            ForEach(MomentShotInfo.filmChoices, id: \.self) { Text($0).tag(MomentUploadModel.FilmChoice.preset($0)) }
+            Text("직접 입력").tag(MomentUploadModel.FilmChoice.custom)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("필름")
+                Text("이미지 컨트롤 자리에 보여요").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if model.filmChoice == .custom {
+            TextField("필름 이름 (예: Kodak Portra 400)", text: $model.customFilm)
+                .autocorrectionDisabled()
+                .onChange(of: model.customFilm) { _, text in
+                    if text.count > MomentShotInfo.filmLimit {
+                        model.customFilm = String(text.prefix(MomentShotInfo.filmLimit))
+                    }
+                }
+        }
     }
 
     private func infoToggle(_ title: String, isOn: Binding<Bool>, value: String?) -> some View {

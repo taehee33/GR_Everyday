@@ -200,12 +200,12 @@ extension View {
     }
 }
 
-/// "GR IV HDF · 스탠다드", small and grey under the photo's right edge; the rest is behind (i).
+/// "GR IV HDF · 스탠다드" (a film GR: "GR1v · Kodak Portra 400"), small and grey under the photo's right edge; the rest is behind (i).
 struct MomentShotTag: View {
     let info: MomentShotInfo
 
     var body: some View {
-        let parts = [info.camera, info.imageControl?.name].compactMap { $0 }.filter { !$0.isEmpty }
+        let parts = [info.camera, info.imageControl?.name ?? info.film].compactMap { $0 }.filter { !$0.isEmpty }
         if !parts.isEmpty {
             Text(parts.joined(separator: " · "))
                 .font(.caption)
@@ -367,6 +367,9 @@ struct MomentInfoSheet: View {
                 }
                 section("노출", exposure)
                 imageControl
+                if let film = info.film {
+                    Section("필름") { LabeledContent("필름", value: film) }
+                }
                 if let url = MomentPlace.mapsURL(info, name: info.place ?? area) {
                     Section("위치") {
                         Button { openURL(url) } label: {
@@ -378,7 +381,7 @@ struct MomentInfoSheet: View {
                         }
                     }
                 }
-                if basic.isEmpty, exposure.isEmpty, info.imageControl == nil, info.lat == nil, info.place == nil {
+                if basic.isEmpty, exposure.isEmpty, info.imageControl == nil, info.film == nil, info.lat == nil, info.place == nil {
                     Text("올린 사람이 촬영 정보를 공유하지 않았어요.").foregroundStyle(.secondary)
                 }
             }

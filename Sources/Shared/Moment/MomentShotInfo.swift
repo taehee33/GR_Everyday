@@ -45,6 +45,9 @@ struct MomentShotInfo: Codable, Equatable {
     var lon: Double?
     /// A place name the owner typed or picked on the map ("성수동"); not read from the file.
     var place: String?
+    /// The film loaded in a film GR ("Kodak Portra 400"), picked or typed by the owner
+    /// (`photos.film`). Shown where a digital GR shows its image control.
+    var film: String?
 
     enum CameraSource: String, Codable {
         /// Read from a GR original (Ricoh maker note and a GR model name).
@@ -60,6 +63,22 @@ struct MomentShotInfo: Codable, Equatable {
     static let filmCameras = ["GR1", "GR1s", "GR1v", "GR21", "GR10"]
     static let digitalCameras = ["GR DIGITAL", "GR DIGITAL II", "GR DIGITAL III", "GR DIGITAL IV"]
     static var declarableCameras: [String] { filmCameras + digitalCameras }
+    /// The name under the "GR DIGITAL" heading: "GR DIGITAL II" → "GR II". Display only; the
+    /// stored camera keeps the full name.
+    static func digitalListLabel(_ camera: String) -> String {
+        camera.replacingOccurrences(of: " DIGITAL", with: "")
+    }
+
+    /// Films offered for a film GR; anything else can be typed (up to `filmLimit` characters).
+    static let filmChoices = [
+        "Kodak Portra 160", "Kodak Portra 400", "Kodak Portra 800", "Kodak Ektar 100",
+        "Kodak Gold 200", "Kodak UltraMax 400", "Kodak ColorPlus 200", "Kodak Tri-X 400",
+        "Kodak T-Max 400", "Fujifilm Superia X-TRA 400", "Fujifilm C200", "Fujifilm Velvia 50",
+        "Fujifilm Provia 100F", "Fujifilm Acros 100 II", "Ilford HP5 Plus 400", "Ilford FP4 Plus 125",
+        "Ilford Delta 3200", "Ilford XP2 Super 400", "CineStill 800T", "CineStill 400D",
+        "Lomography Color 400",
+    ]
+    static let filmLimit = 40
 
     /// True when the camera was picked by the owner rather than read from the file.
     var isCameraDeclared: Bool { camera != nil && cameraSource == .declared }
@@ -91,7 +110,7 @@ struct MomentShotInfo: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case camera, exposure, lat, lon, place
+        case camera, exposure, lat, lon, place, film
         case cameraSource = "camera_source"
         case imageControl = "image_control"
         case takenAt = "taken_at"
@@ -174,6 +193,7 @@ struct MomentShotInfo: Codable, Equatable {
         if options.camera, let camera {
             out.camera = camera
             out.cameraSource = cameraSource ?? .exif
+            out.film = film
         }
         if options.exposure { out.exposure = exposure }
         if options.imageControl { out.imageControl = imageControl }
