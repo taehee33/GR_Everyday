@@ -21,6 +21,9 @@ struct MomentGalleryPager<Page: View, Actions: View>: View {
     /// than one photo, until the first swipe.
     @State private var showHint = false
     @AppStorage("momentGalleryHintShown") private var hintShown = 0
+    /// How far the photo has been pulled across the paging direction to close it: right for
+    /// up-and-down paging (like going back), down for sideways paging.
+    @GestureState private var pull: CGFloat = 0
     private let start: UUID
 
     init(title: String, ids: [UUID], start: UUID, @ViewBuilder page: @escaping (UUID, Bool) -> Page,
@@ -54,6 +57,11 @@ struct MomentGalleryPager<Page: View, Actions: View>: View {
                     .scrollPosition(id: $current)
                     .scrollIndicators(.hidden)
                     .ignoresSafeArea(edges: .vertical)
+                    #if os(iOS)
+                    .offset(x: paging == .vertical ? pull : 0, y: paging == .horizontal ? pull : 0)
+                    .opacity(1 - min(pull / max(paging == .vertical ? geo.size.width : geo.size.height, 1), 1) * 0.5)
+                    .simultaneousGesture(closeSwipe(geo.size))
+                    #endif
                     // A fresh lazy stack ignores a starting scrollPosition: once it is laid out,
                     // move to the photo opened.
                     .task {
@@ -118,6 +126,31 @@ struct MomentGalleryPager<Page: View, Actions: View>: View {
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 640)
         #endif
+    }
+
+    /// Across the paging direction a swipe closes the photo: to the right when photos page up
+    /// and down, down when they page sideways. Short or slow pulls spring back.
+    private func closeSwipe(_ size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .updating($pull) { value, pull, _ in
+                guard let along = closeDistance(value.translation) else { return }
+                pull = max(along, 0)
+            }
+            .onEnded { value in
+                guard let along = closeDistance(value.translation),
+                      let flung = closeDistance(value.predictedEndTranslation) else { return }
+                let length = paging == .vertical ? size.width : size.height
+                if along > length * 0.25 || flung > length * 0.5 { dismiss() }
+            }
+    }
+
+    /// How far a drag went in the closing direction, or nil when it mostly went along the paging
+    /// direction (that one turns the page).
+    private func closeDistance(_ t: CGSize) -> CGFloat? {
+        switch paging {
+        case .vertical: abs(t.width) > abs(t.height) * 1.2 ? t.width : nil
+        case .horizontal: abs(t.height) > abs(t.width) * 1.2 ? t.height : nil
+        }
     }
 
     private func flashDots() {
