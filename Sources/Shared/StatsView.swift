@@ -61,16 +61,16 @@ struct StatsView: View {
                         summary(day: onDay, all: all)
                     }
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 20, alignment: .top)], spacing: 20) {
-                    table(.mode, day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"])
-                    table(.tone, day: onDay, all: all)
-                    table(.aspect, day: onDay, all: all, fixed: ["3:2", "4:3", "1:1", "16:9"])
-                    table(.crop, day: onDay, all: all, fixed: ["꺼짐", "35mm", "50mm"])
-                    if all.contains(where: { $0.record?.hdf != nil }) {
-                        table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
+                if compact {
+                    // Not lazy: a lazy grid guessed the heights of tables it had not drawn, and
+                    // scrolling back up then stopped short of the top, hiding the title.
+                    VStack(spacing: 20) { tables(day: onDay, all: all) }
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 20, alignment: .top)], spacing: 20) {
+                        tables(day: onDay, all: all)
                     }
                 }
-                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줘요. ‘날’ 숫자를 누르면 선택한 날의 사진만 보여 줘요. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없어요.")
+                Text("줄을 누르면 라이브러리에서 그 사진만 보여 줘요. 날짜 칸의 숫자는 달력에서 고른 날의 사진 수예요. 누르면 그날 사진만 보여 줘요. 흐린 +숫자는 카드에서 지운 사진이라 라이브러리에는 없어요.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(compact ? 16 : 24)
@@ -78,10 +78,11 @@ struct StatsView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear { library.refreshStats() }
-        .confirmationDialog("지운 사진 기록을 지울까요?", isPresented: $confirmClear) {
+        .alert("지운 사진 기록을 지울까요?", isPresented: $confirmClear) {
+            Button("취소", role: .cancel) {}
             Button("기록 지우기", role: .destructive) { stats.clearHistory() }
         } message: {
-            Text("카드에서 지운 사진의 통계가 사라져요. 카드에 남아 있는 사진은 다음에 연결할 때 다시 기록돼요.")
+            Text("이 앱은 카드에서 본 사진의 촬영 정보를 기억해 두었다가, 카드에서 지운 뒤에도 통계에 넣어요. 이 기록을 지우면 지운 사진은 통계에서 빠지고, 카드에 남아 있는 사진만 다시 세요. 사진 파일은 지워지지 않아요.")
         }
         .onChange(of: all.compactMap(\.date).max()) { _, latest in
             // Open on the latest shooting day until the user picks one.
@@ -133,7 +134,7 @@ struct StatsView: View {
             Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
                 GridRow {
                     Text("")
-                    Text(self.day.map { $0.formatted(.dateTime.month().day().weekday()) } ?? "날").foregroundStyle(.secondary)
+                    Text(dayTitle(weekday: true)).foregroundStyle(.secondary)
                     Text("전체").foregroundStyle(.secondary)
                 }
                 .font(.callout)
@@ -155,7 +156,7 @@ struct StatsView: View {
                 HStack {
                     if gone > 0 { Text("카드에서 지운 사진 \(gone)장 포함 · 흐린 숫자가 지운 사진입니다") }
                     Spacer()
-                    Button("기록 지우기…") { confirmClear = true }.linkButtonStyle()
+                    Button("지운 사진 기록 지우기…") { confirmClear = true }.linkButtonStyle()
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 .padding([.horizontal, .bottom], 12)
@@ -169,6 +170,25 @@ struct StatsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private func tables(day onDay: [Entry], all: [Entry]) -> some View {
+        table(.mode, day: onDay, all: all, fixed: ["P", "Av", "Tv", "Sn", "M"])
+        table(.tone, day: onDay, all: all)
+        table(.aspect, day: onDay, all: all, fixed: ["3:2", "4:3", "1:1", "16:9"])
+        table(.crop, day: onDay, all: all, fixed: ["꺼짐", "35mm", "50mm"])
+        if all.contains(where: { $0.record?.hdf != nil }) {
+            table(.hdf, day: onDay, all: all, fixed: ["꺼짐", "켜짐"])
+        }
+    }
+
+    /// The day column's heading: the day picked on the calendar ("오늘" when it is today).
+    private func dayTitle(weekday: Bool) -> String {
+        guard let day else { return "날" }
+        if Calendar.current.isDateInToday(day) {
+            return weekday ? "오늘 · \(day.formatted(.dateTime.month().day()))" : "오늘"
+        }
+        return weekday ? day.formatted(.dateTime.month().day().weekday()) : day.formatted(.dateTime.month().day())
     }
 
     /// A big total with, when some are deleted, "지움 n" under it.
@@ -202,7 +222,7 @@ struct StatsView: View {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
                     Text("").gridColumnAlignment(.leading)
-                    Text("날").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    Text(dayTitle(weekday: false)).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                     Text("전체").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                 }
                 .font(.caption)
@@ -264,12 +284,24 @@ private struct CalendarMonth: View {
                     Button { shift(1) } label: { Image(systemName: "chevron.right") }
                 }
                 .buttonStyle(.borderless)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
-                    ForEach(Array(weekdays.enumerated()), id: \.offset) { _, name in
-                        Text(name).font(.caption).foregroundStyle(.secondary)
+                // A plain grid, not a lazy one: lazy grids guess heights while off screen, which
+                // left the stats page short of its top after scrolling back up.
+                let weeks = stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<min($0 + 7, cells.count)]) }
+                Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+                    GridRow {
+                        ForEach(Array(weekdays.enumerated()), id: \.offset) { _, name in
+                            Text(name).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                        }
                     }
-                    ForEach(Array(cells.enumerated()), id: \.offset) { _, date in
-                        if let date { cell(date, busiest: busiest) } else { Color.clear.frame(height: 40) }
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                        GridRow {
+                            ForEach(0..<7, id: \.self) { i in
+                                Group {
+                                    if i < week.count, let date = week[i] { cell(date, busiest: busiest) } else { Color.clear.frame(height: 40) }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        }
                     }
                 }
             }
