@@ -121,13 +121,14 @@ struct DownloadHistoryView: View {
         .onAppear { history.refreshPresence() }
         .onChange(of: filter) { selected = [] }
         .onChange(of: selecting) { if !selecting { selected = [] } }
-        .confirmationDialog("다운로드 기록을 모두 지울까요?", isPresented: $confirmClear, titleVisibility: .visible) {
+        .alert("다운로드 기록을 모두 지울까요?", isPresented: $confirmClear) {
+            Button("취소", role: .cancel) {}
             Button("기록 지우기", role: .destructive) {
                 history.hide(Set(olderPhotos.map(\.name)))
                 history.clear()
             }
         } message: {
-            Text("사진은 지워지지 않아요. 다만 앱이 저장했던 사진을 기억하지 못해서, 사진 앱에만 있는 사진은 다시 저장 대상으로 보일 수 있어요.")
+            Text("사진은 지워지지 않아요.\n\n다만 앱이 어떤 사진을 저장했는지 잊어버려서, 사진 앱에만 남은 사진은 다시 저장할 사진으로 보일 수 있어요.")
         }
     }
 
