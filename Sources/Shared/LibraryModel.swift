@@ -190,6 +190,8 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var localFiles: [String: URL] = [:]
     /// EXIF orientation of saved files, by file name.
     @Published private(set) var localOrientation: [String: Int] = [:]
+    /// Shooting time of saved files, by file name (EXIF DateTimeOriginal).
+    @Published private(set) var localShotAt: [String: Date] = [:]
     @Published var sort: Sort {
         didSet { UserDefaults.standard.set(sort.rawValue, forKey: "sort") }
     }
@@ -249,7 +251,7 @@ final class LibraryModel: ObservableObject {
         let kinds: Set<Photo.Kind> = Set([(Photo.Kind.jpeg, AutoSave.jpeg), (.raw, AutoSave.raw), (.video, AutoSave.video)]
             .filter { AutoSave.value($0.1) }.map(\.0))
         // Not the ones deleted in the Photos app: that was on purpose.
-        let queue = photos.filter { kinds.contains($0.kind) && !saved.contains($0.name) && !goneFromPhotos.contains($0.name) }
+        let queue = photos.filter { kinds.contains($0.kind) && !isSaved($0) && !isGone($0) }
         DebugLog.write("auto-save: \(queue.count) new of \(photos.count)")
         save(queue)
     }
@@ -414,7 +416,7 @@ final class LibraryModel: ObservableObject {
         case .jpeg: return photo.kind == .jpeg
         case .raw: return photo.kind == .raw
         case .video: return photo.kind == .video
-        case .unsaved: return !saved.contains(photo.name)
+        case .unsaved: return !isSaved(photo)
         }
     }
 
@@ -422,8 +424,8 @@ final class LibraryModel: ObservableObject {
         if let kind = r.kind, photo.kind != kind { return false }
         switch r.saved {
         case .all: break
-        case .unsaved: if saved.contains(photo.name) { return false }
-        case .saved: if !saved.contains(photo.name) { return false }
+        case .unsaved: if isSaved(photo) { return false }
+        case .saved: if !isSaved(photo) { return false }
         }
         if r.from != nil || r.to != nil {
             guard let date = shootingDate(photo) else { return false }
@@ -662,11 +664,13 @@ final class LibraryModel: ObservableObject {
     func refreshSaved() {
         let fm = FileManager.default
         var files: [String: URL] = [:]
-        for name in (try? fm.contentsOfDirectory(atPath: destination.path)) ?? [] {
+        // Hidden names skipped: the Files app keeps what was deleted there in .Trash inside
+        // the folder (최근 삭제된 항목), which isn't a saved copy any more.
+        for name in (try? fm.contentsOfDirectory(atPath: destination.path)) ?? [] where !name.hasPrefix(".") {
             let sub = destination.appendingPathComponent(name)
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: sub.path, isDirectory: &isDir), isDir.boolValue {
-                for inner in (try? fm.contentsOfDirectory(atPath: sub.path)) ?? [] where files[inner] == nil {
+                for inner in (try? fm.contentsOfDirectory(atPath: sub.path)) ?? [] where files[inner] == nil && !inner.hasPrefix(".") {
                     files[inner] = sub.appendingPathComponent(inner)
                 }
             } else {
@@ -680,14 +684,17 @@ final class LibraryModel: ObservableObject {
         saved = Set(files.keys)
         #endif
         Task {
-            let read = await Task.detached(priority: .utility) {
-                files.compactMapValues { url -> Int? in
+            let read = await Task.detached(priority: .utility) { () -> [String: (Int?, Date?)] in
+                files.compactMapValues { url -> (Int?, Date?)? in
                     guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
                           let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
-                    return p[kCGImagePropertyOrientation] as? Int
+                    return (p[kCGImagePropertyOrientation] as? Int, Self.exifShotAt(p))
                 }
             }.value
-            if read != localOrientation { localOrientation = read }
+            let orientation = read.compactMapValues(\.0)
+            let shotAt = read.compactMapValues(\.1)
+            if orientation != localOrientation { localOrientation = orientation }
+            if shotAt != localShotAt { localShotAt = shotAt }
         }
     }
 
@@ -712,13 +719,50 @@ final class LibraryModel: ObservableObject {
     }
     #endif
 
+    /// EXIF DateTimeOriginal (local time unless an offset is given).
+    nonisolated static func exifShotAt(_ props: [CFString: Any]) -> Date? {
+        guard let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any],
+              let text = exif[kCGImagePropertyExifDateTimeOriginal] as? String else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        if let offset = exif[kCGImagePropertyExifOffsetTimeOriginal] as? String {
+            formatter.dateFormat = "yyyy:MM:dd HH:mm:ssZZZZZ"
+            if let date = formatter.date(from: text + offset) { return date }
+        }
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        formatter.timeZone = .current
+        return formatter.date(from: text)
+    }
+
+    /// When the saved photo of this name was taken: from the save record, else the file.
+    private func savedShotAt(_ name: String) -> Date? {
+        #if os(iOS)
+        if let date = SaveHistory.shared.latest(name)?.shotAt { return date }
+        #endif
+        return localShotAt[name]
+    }
+
+    /// The camera's photo is the one saved under its name. After a memory card change the
+    /// same name can be another photo; told apart by shooting time. When either time isn't
+    /// known it's taken as the same, as before.
+    func sameShot(_ photo: Photo) -> Bool {
+        guard let camera = infos[photo.id]?.date, let saved = savedShotAt(photo.name) else { return true }
+        // Two seconds: the camera's time and the file's EXIF can round differently.
+        return abs(camera.timeIntervalSince(saved)) < 2
+    }
+
+    /// Saved, and it's this photo (not one with the same name from another card).
+    func isSaved(_ photo: Photo) -> Bool { saved.contains(photo.name) && sameShot(photo) }
+    /// Saved once, deleted in the Photos app since, and it's this photo.
+    func isGone(_ photo: Photo) -> Bool { goneFromPhotos.contains(photo.name) && sameShot(photo) }
+
     func selectAll() { selection = Set(visible.map(\.id)) }
     var allVisibleSelected: Bool { !visible.isEmpty && visible.allSatisfy { selection.contains($0.id) } }
     func toggleSection(_ photos: [Photo]) {
         let ids = Set(photos.map(\.id))
         if ids.isSubset(of: selection) { selection.subtract(ids) } else { selection.formUnion(ids) }
     }
-    func selectUnsaved() { selection = Set(visible.filter { !saved.contains($0.name) }.map(\.id)) }
+    func selectUnsaved() { selection = Set(visible.filter { !isSaved($0) }.map(\.id)) }
     func clearSelection() { selection = [] }
 
     func saveSelected() { requestSave(visible.filter { selection.contains($0.id) }) }
@@ -730,8 +774,12 @@ final class LibraryModel: ObservableObject {
         if hasChosenDestination { save(photos) } else { pendingSave = photos }
     }
 
-    func save(_ queue: [Photo]) {
+    /// Names to save even though they're already saved (the user said so).
+    private var forceNames = Set<String>()
+
+    func save(_ queue: [Photo], force: Bool = false) {
         guard !queue.isEmpty, !isTransferring else { return }
+        forceNames = force ? Set(queue.map(\.name)) : []
         // Ones with a copy in the Files app can go back into Photos without the camera.
         guard CameraAPI.online || queue.allSatisfy({ localFiles[$0.name] != nil }) else {
             error = "카메라에 연결하면 저장할 수 있어요."
@@ -791,7 +839,7 @@ final class LibraryModel: ObservableObject {
         guard !ids.isEmpty else { resumable = []; return }
         // Only what this card still has and the save folder doesn't: another camera's card,
         // or photos saved some other way since, drop out.
-        resumable = photos.filter { ids.contains($0.id) && !saved.contains($0.name) }
+        resumable = photos.filter { ids.contains($0.id) && !isSaved($0) }
         if resumable.isEmpty { UserDefaults.standard.removeObject(forKey: Self.unfinishedKey) }
     }
 
@@ -897,7 +945,7 @@ final class LibraryModel: ObservableObject {
         for i in transfers.indices {
             if Task.isCancelled { break }
             let photo = transfers[i].photo
-            if skipsSaved, saved.contains(photo.name) {
+            if skipsSaved, isSaved(photo), !forceNames.contains(photo.name) {
                 transfers[i].status = .skipped
                 selection.remove(photo.id)
                 rememberUnfinished()
@@ -909,7 +957,8 @@ final class LibraryModel: ObservableObject {
             savedAny = true
             #if os(iOS)
             // Deleted in Photos but still in the Files app: put that copy back, no download.
-            if target.toPhotos, let local = localFiles[photo.name] {
+            // Only when that copy is this photo: another card's photo of the same name is downloaded.
+            if target.toPhotos, let local = localFiles[photo.name], sameShot(photo) {
                 transfers[i].status = .running(0)
                 do {
                     let id = try await PhotosLibrary.add(local, isVideo: photo.kind == .video)
@@ -985,7 +1034,8 @@ final class LibraryModel: ObservableObject {
         let relative = path.flatMap { $0.hasPrefix(docs) ? String($0.dropFirst(docs.count)) : nil }
         SaveHistory.shared.add(.init(session: saveSession, date: Date(), photo: t.photo, outcome: outcome,
                                      message: message, bytes: t.bytes, assetID: assetID, file: relative,
-                                     checkable: assetID != nil && PhotosLibrary.canRead))
+                                     checkable: assetID != nil && PhotosLibrary.canRead,
+                                     shotAt: infos[t.photo.id]?.date))
     }
     #endif
 

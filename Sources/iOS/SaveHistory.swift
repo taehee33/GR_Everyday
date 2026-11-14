@@ -34,6 +34,9 @@ final class SaveHistory: NSObject, ObservableObject {
         /// The library could be read when it was saved, so the item is known to be visible
         /// to the app: not finding it later means it was deleted.
         var checkable = false
+        /// When the photo was taken, as the camera said. A file name alone can belong to
+        /// another photo after the memory card changes.
+        var shotAt: Date?
 
         var name: String { photo.name }
         var isSave: Bool { outcome == .saved || outcome == .resaved }
@@ -58,6 +61,8 @@ final class SaveHistory: NSObject, ObservableObject {
     /// Files saved before the app kept records, looked up in Photos once by time and name:
     /// the item found, or "" for none. Only filled with full access.
     private var legacy: [String: String] = [:]
+    /// Photos saved before records were kept, taken off the 다운로드 기록 list by the user.
+    @Published private(set) var hidden = Set<String>()
     /// The newest save of each file name.
     private var latestSave: [String: Record] = [:]
     private var checkingLegacy = false
@@ -70,6 +75,7 @@ final class SaveHistory: NSObject, ObservableObject {
     private struct Store: Codable {
         var records: [Record] = []
         var legacy: [String: String] = [:]
+        var hidden: Set<String>? = nil
     }
 
     private static var url: URL {
@@ -83,6 +89,7 @@ final class SaveHistory: NSObject, ObservableObject {
            let store = try? JSONDecoder().decode(Store.self, from: data) {
             records = store.records
             legacy = store.legacy
+            hidden = store.hidden ?? []
         }
         reindex()
         startObserving()
@@ -104,6 +111,13 @@ final class SaveHistory: NSObject, ObservableObject {
         onChange?()
     }
 
+    /// Takes older saves (no record) off the list; the photos themselves stay.
+    func hide(_ names: Set<String>) {
+        guard !names.isEmpty else { return }
+        hidden.formUnion(names)
+        persist()
+    }
+
     func clear() {
         records = []
         reindex()
@@ -117,7 +131,7 @@ final class SaveHistory: NSObject, ObservableObject {
     }
 
     private func persist() {
-        let store = Store(records: records, legacy: legacy)
+        let store = Store(records: records, legacy: legacy, hidden: hidden)
         guard let data = try? JSONEncoder().encode(store) else { return }
         try? FileManager.default.createDirectory(at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: Self.url, options: .atomic)

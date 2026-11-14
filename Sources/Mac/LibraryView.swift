@@ -535,7 +535,7 @@ struct PhotoCell: View {
     let photo: Photo
 
     private var selected: Bool { library.selection.contains(photo.id) }
-    private var saved: Bool { library.saved.contains(photo.name) }
+    private var saved: Bool { library.isSaved(photo) }
 
     var body: some View {
         // The cell's size comes from the grid; the image only fills it, never sizes it.
