@@ -86,10 +86,14 @@ struct TransferBar: View {
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
         Spacer(minLength: 8)
+        // The whole bar opens the list too, but that isn't obvious. With failures it's the
+        // way to what failed and 다시 저장, so it stands out more.
         if left > 0 {
-            // What failed and why; 다시 저장 is in there.
             Button("자세히") { showList = true }
                 .buttonStyle(.borderedProminent).controlSize(.small)
+        } else {
+            Button("자세히") { showList = true }
+                .buttonStyle(.bordered).controlSize(.small)
         }
         Button { library.dismissTransfers() } label: {
             Image(systemName: "xmark").font(.footnote.bold()).foregroundStyle(.secondary)

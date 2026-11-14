@@ -7,12 +7,35 @@ struct DownloadHistoryView: View {
     @EnvironmentObject var library: LibraryModel
     @EnvironmentObject var connection: ConnectionModel
     @ObservedObject private var history = SaveHistory.shared
+    /// 선택 lives in the navigation bar (LibraryTab), where 사진 has its own.
+    @Binding var selecting: Bool
+    /// Row keys: "r:<record id>" for a record, "o:<photo id>" for an older save. The
+    /// navigation bar shows how many.
+    @Binding var selected: Set<String>
     /// Back to 사진, where the save's progress shows.
     var showPhotos: () -> Void = {}
     @State private var filter: Filter = .all
     @State private var confirmClear = false
+    @State private var confirmRemove = false
+    @State private var showWhyNot = false
 
-    enum Filter: String, CaseIterable { case all = "전체", gone = "사진 앱에서 지워짐", failed = "실패" }
+    enum Filter: String, CaseIterable {
+        case all = "전체", gone = "사진 앱에서 지워짐", failed = "실패"
+        var icon: String {
+            switch self {
+            case .all: return "line.3.horizontal.decrease"
+            case .gone: return "trash"
+            case .failed: return "exclamationmark.triangle"
+            }
+        }
+        var tint: Color {
+            switch self {
+            case .all: return .accentColor
+            case .gone: return .orange
+            case .failed: return .red
+            }
+        }
+    }
 
     private struct Session: Identifiable {
         let id: UUID
@@ -23,39 +46,50 @@ struct DownloadHistoryView: View {
     var body: some View {
         let shown = filtered
         // Saved before the app kept records; found missing in Photos by name and time.
-        let older = filter == .gone
-            ? library.photos.filter { library.goneFromPhotos.contains($0.name) && history.latest($0.name) == nil }
-            : []
+        let older = filter == .failed ? [] : olderPhotos
         List {
             if PhotosLibrary.target.toPhotos && history.readStatus != .authorized { accessSection }
-            Section {
-                Picker("보기", selection: $filter) {
-                    ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
-            }
             if shown.isEmpty && older.isEmpty {
                 ContentUnavailableView(emptyTitle, systemImage: "clock.arrow.circlepath",
                                        description: Text(emptyDetail))
                     .listRowBackground(Color.clear)
             } else {
-                if filter != .all { bulkSection(shown.flatMap(\.records), older: older) }
+                if filter != .all, !selecting { bulkSection(shown.flatMap(\.records), older: older) }
                 if !older.isEmpty {
                     Section("예전에 저장한 사진") {
                         ForEach(older) { photo in
                             HStack(spacing: 12) {
+                                if selecting { checkmark(selected.contains("o:" + photo.id)) }
                                 Thumb(photo: photo, showsTransfer: false)
                                     .frame(width: 48, height: 48)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                                     .allowsHitTesting(false)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(photo.name).font(.subheadline.weight(.medium))
-                                    Text("사진 앱에서 지워짐 · 파일 앱").font(.caption).foregroundStyle(.orange)
+                                    Text("사진 앱에서 지워짐 · 파일 앱에 사본 있음").font(.caption).foregroundStyle(.orange)
                                 }
                                 Spacer(minLength: 4)
                                 Image(systemName: "checkmark.circle.badge.xmark").foregroundStyle(.orange)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { tap("o:" + photo.id) }
+                            .contextMenu {
+                                if !selecting {
+                                    if canSave(photo) {
+                                        Button { library.save([photo], force: true); showPhotos() } label: {
+                                            Label("사진 앱에 다시 저장", systemImage: "arrow.clockwise")
+                                        }
+                                        .disabled(library.isTransferring)
+                                    }
+                                    Button(role: .destructive) { history.hide([photo.name]) } label: {
+                                        Label("목록에서 삭제", systemImage: "trash")
+                                    }
+                                }
+                            }
+                            .swipeActions(edge: .trailing) {
+                                if !selecting {
+                                    Button("목록에서 삭제", role: .destructive) { history.hide([photo.name]) }
+                                }
                             }
                         }
                     }
@@ -67,41 +101,108 @@ struct DownloadHistoryView: View {
                         header(session)
                     }
                 }
+                if !selecting {
                 Section {
                     Button("기록 모두 지우기", role: .destructive) { confirmClear = true }
                 } footer: {
                     Text("기록만 지워져요. 사진 앱과 파일 앱의 사진은 그대로 남아요.")
                 }
+                }
             }
         }
         .listStyle(.insetGrouped)
+        // The list's own top gap; the chips above already give the room.
+        .contentMargins(.top, 8, for: .scrollContent)
+        // Pinned right under the page picker, in the same bar, so they stay while scrolling.
+        .safeAreaInset(edge: .top, spacing: 0) { chips }
+        .safeAreaInset(edge: .bottom) {
+            if selecting { selectionBar(shown.flatMap(\.records), older: older) }
+        }
         .onAppear { history.refreshPresence() }
+        .onChange(of: filter) { selected = [] }
+        .onChange(of: selecting) { if !selecting { selected = [] } }
         .confirmationDialog("다운로드 기록을 모두 지울까요?", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("기록 지우기", role: .destructive) { history.clear() }
+            Button("기록 지우기", role: .destructive) {
+                history.hide(Set(olderPhotos.map(\.name)))
+                history.clear()
+            }
         } message: {
             Text("사진은 지워지지 않아요. 다만 앱이 저장했던 사진을 기억하지 못해서, 사진 앱에만 있는 사진은 다시 저장 대상으로 보일 수 있어요.")
         }
     }
 
+    // MARK: Chips
+
+    /// Chips, not a segmented control: right under the page picker that looked like a
+    /// second set of pages.
+    /// A plain row, not a horizontal ScrollView: inside the top inset the scroll view laid its
+    /// content out under the page picker's safe area, so the chips didn't show.
+    private var chips: some View {
+            HStack(spacing: 6) {
+                ForEach(Filter.allCases, id: \.self) { item in
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { filter = item }
+                    } label: {
+                        Group {
+                            if item == .all {
+                                Text("\(item.rawValue) \(count(item))")
+                            } else {
+                                Label("\(item.rawValue) \(count(item))", systemImage: item.icon)
+                            }
+                        }
+                        .monospacedDigit()
+                        .font(.footnote.weight(filter == item ? .semibold : .regular))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .foregroundStyle(filter == item ? Color.white : Color.primary)
+                        .background(Capsule().fill(filter == item ? item.tint : Color(.secondarySystemGroupedBackground)))
+                        .overlay(Capsule().strokeBorder(filter == item ? Color.clear : Color(.separator), lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(filter == item ? .isSelected : [])
+                }
+            }
+            .labelStyle(ChipLabelStyle())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+        .padding(.bottom, 8)
+        .background(.bar)
+    }
+
     // MARK: Data
 
-    private var filtered: [Session] {
-        let records: [SaveHistory.Record]
+    /// Saved before the app kept records; found missing in Photos by name and time.
+    private var olderPhotos: [Photo] {
+        library.photos.filter {
+            library.isGone($0) && history.latest($0.name) == nil && !history.hidden.contains($0.name)
+        }
+    }
+
+    private var filtered: [Session] { sessions(records(for: filter)) }
+
+    private func records(for filter: Filter) -> [SaveHistory.Record] {
         switch filter {
         case .all:
-            records = history.records
+            return history.records
         case .failed:
             // Only failures not saved since.
-            records = history.records.filter { r in
+            return history.records.filter { r in
                 r.outcome == .failed && !library.saved.contains(r.name)
             }
         case .gone:
             // The newest save of each name, when that one is gone from Photos.
-            records = history.records.filter { r in
+            return history.records.filter { r in
                 history.latest(r.name)?.id == r.id && history.photosState(of: r) == .deleted
             }
         }
-        return sessions(records)
+    }
+
+    /// How many rows each chip would show (사진 앱에서 지워짐 also counts photos saved before
+    /// the app kept records).
+    private func count(_ filter: Filter) -> Int {
+        let older = filter == .failed ? 0 : olderPhotos.count
+        return records(for: filter).count + older
     }
 
     private func sessions(_ records: [SaveHistory.Record]) -> [Session] {
@@ -166,7 +267,7 @@ struct DownloadHistoryView: View {
         if !photos.isEmpty {
             Section {
                 Button {
-                    library.save(photos)
+                    library.save(photos, force: true)
                     showPhotos()
                 } label: {
                     Label(filter == .gone ? "\(photos.count)장 사진 앱에 다시 저장" : "\(photos.count)장 다시 저장",
@@ -175,7 +276,7 @@ struct DownloadHistoryView: View {
                 .disabled(library.isTransferring)
             } footer: {
                 if photos.count < Set(records.map(\.name)).count + older.count {
-                    Text("카메라에도 파일 앱에도 없는 사진은 카메라를 연결해야 저장할 수 있어요.")
+                    Text(whyNotText)
                 }
             }
         }
@@ -191,15 +292,117 @@ struct DownloadHistoryView: View {
         }
     }
 
-    private func canSave(_ r: SaveHistory.Record) -> Bool {
-        if library.localURL(r.photo) != nil { return true }
-        return connection.isConnected && library.photos.contains { $0.id == r.photo.id }
+    /// Why a photo can't be saved again. Connected, the camera's list is current, so one
+    /// missing from it was deleted there (or the card changed); offline the app can't tell.
+    private var whyNotText: String {
+        let noCopy = "사진 앱에서 지워졌고 파일 앱에도 사본이 없는 사진이에요. 처음부터 사진 앱에만 저장했거나, 파일 앱에서도 지운 경우예요."
+        let later = "설정 → 저장 위치를 ‘사진 앱 + 파일 앱’으로 해 두면 파일 앱에 사본이 남아서, 앞으로는 카메라 없이도 다시 저장할 수 있어요."
+        if connection.isConnected {
+            return noCopy + " 연결된 카메라에도 없어서(카메라에서 지웠거나 다른 메모리 카드예요) 다시 저장할 수 없어요. " + later
+        }
+        return noCopy + " 카메라에 아직 남아 있다면, 카메라를 연결해서 다시 받아 저장할 수 있어요. " + later
+    }
+
+    private func canSave(_ r: SaveHistory.Record) -> Bool { canSave(r.photo) }
+
+    /// A copy in the Files app, or the camera connected and holding this very photo: same
+    /// name and, when known, same shooting time (another memory card can reuse the name).
+    private func canSave(_ photo: Photo) -> Bool {
+        if library.localURL(photo) != nil { return true }
+        guard connection.isConnected, let onCamera = library.photos.first(where: { $0.id == photo.id }) else { return false }
+        return library.sameShot(onCamera)
+    }
+
+    // MARK: Selecting
+
+    /// A tap selects, starting 선택 if it wasn't on.
+    private func tap(_ key: String) {
+        if !selecting { withAnimation(.snappy(duration: 0.2)) { selecting = true } }
+        toggle(key)
+    }
+
+    private func toggle(_ key: String) {
+        if selected.contains(key) { selected.remove(key) } else { selected.insert(key) }
+    }
+
+    private func checkmark(_ on: Bool) -> some View {
+        Image(systemName: on ? "checkmark.circle.fill" : "circle")
+            .font(.title3)
+            .foregroundStyle(on ? Color.accentColor : Color.secondary)
+            .transition(.move(edge: .leading).combined(with: .opacity))
+    }
+
+    @ViewBuilder private func selectionBar(_ records: [SaveHistory.Record], older: [Photo]) -> some View {
+        let keys = records.map { "r:" + $0.id.uuidString } + older.map { "o:" + $0.id }
+        let pickedRecords = records.filter { selected.contains("r:" + $0.id.uuidString) }
+        let pickedOlder = older.filter { selected.contains("o:" + $0.id) }
+        let photos = savable(pickedRecords) + pickedOlder.filter(canSave)
+        let count = pickedRecords.count + pickedOlder.count
+        HStack(spacing: 10) {
+            // The count is in the navigation bar.
+            let all = !keys.isEmpty && Set(keys).isSubset(of: selected)
+            Button(all ? "선택 해제" : "전체 선택") { selected = all ? [] : Set(keys) }
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: 4)
+            Button(role: .destructive) { confirmRemove = true } label: {
+                Label("삭제", systemImage: "trash").lineLimit(1).fixedSize()
+            }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule)
+            .tint(.red)
+            .disabled(count == 0)
+            Button {
+                library.save(photos, force: true)
+                selecting = false
+                selected = []
+                showPhotos()
+            } label: {
+                Label(photos.isEmpty ? "다시 저장" : "\(photos.count)장 다시 저장", systemImage: "arrow.clockwise")
+                    .lineLimit(1).fixedSize()
+            }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+            .disabled(photos.isEmpty || library.isTransferring)
+            if photos.count < Set(pickedRecords.map(\.name)).count + pickedOlder.count {
+                // Why some (or all) can't be saved again.
+                Button { showWhyNot = true } label: {
+                    Image(systemName: "info.circle").font(.title3)
+                }
+                .accessibilityLabel("다시 저장할 수 없는 이유")
+                .popover(isPresented: $showWhyNot) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("다시 저장할 수 없는 사진이 있어요").font(.headline)
+                        Text(whyNotText).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding()
+                    .frame(width: 300)
+                    .presentationCompactAdaptation(.popover)
+                }
+            }
+        }
+        .padding(.horizontal).padding(.vertical, 10)
+        .background(.bar)
+        .confirmationDialog("\(count)개를 목록에서 삭제할까요?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("목록에서 삭제", role: .destructive) {
+                history.remove(Set(pickedRecords.map(\.id)))
+                history.hide(Set(pickedOlder.map(\.name)))
+                selected = []
+                selecting = false
+            }
+        } message: {
+            Text("기록만 지워져요. 사진 앱과 파일 앱의 사진은 그대로 남아요.")
+        }
     }
 
     private func row(_ r: SaveHistory.Record) -> some View {
         let state = history.photosState(of: r)
-        let file = r.fileURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        // A copy moved to the Files app's 최근 삭제된 항목 (.Trash) is no copy any more.
+        let file = r.fileURL.flatMap {
+            !$0.path.contains("/.") && FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+        }
+        let key = "r:" + r.id.uuidString
         return HStack(spacing: 12) {
+            if selecting { checkmark(selected.contains(key)) }
             Thumb(photo: r.photo, showsTransfer: false)
                 .frame(width: 48, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -214,20 +417,20 @@ struct DownloadHistoryView: View {
             Spacer(minLength: 4)
             icon(r, state: state)
         }
-        .contextMenu { actions(r, state: state, file: file) }
+        .contentShape(Rectangle())
+        .onTapGesture { tap(key) }
+        .contextMenu { if !selecting { actions(r, state: state, file: file) } }
         .swipeActions(edge: .trailing) {
-            Button("기록 지우기", role: .destructive) { history.remove([r.id]) }
-        }
-        .swipeActions(edge: .leading) {
-            if (state == .deleted || r.outcome == .failed), canSave(r), !library.saved.contains(r.name) {
-                Button("다시 저장") { library.save([r.photo]); showPhotos() }.tint(.accentColor)
+            if !selecting {
+                Button("목록에서 삭제", role: .destructive) { history.remove([r.id]) }
             }
         }
+        // 다시 저장 is in the long-press menu; a rightward swipe goes back to 촬영 통계.
     }
 
     @ViewBuilder private func actions(_ r: SaveHistory.Record, state: SaveHistory.PhotosState, file: URL?) -> some View {
-        if !library.saved.contains(r.name), canSave(r) {
-            Button { library.save([r.photo]); showPhotos() } label: {
+        if canSave(r) {
+            Button { library.save([library.photos.first { $0.id == r.photo.id } ?? r.photo], force: true); showPhotos() } label: {
                 Label(state == .deleted ? "사진 앱에 다시 저장" : "다시 저장", systemImage: "arrow.clockwise")
             }
             .disabled(library.isTransferring)
@@ -238,7 +441,7 @@ struct DownloadHistoryView: View {
         if let file {
             Button { PhotosLibrary.showInFiles(file) } label: { Label("파일 앱에서 보기", systemImage: "folder") }
         }
-        Button(role: .destructive) { history.remove([r.id]) } label: { Label("기록 지우기", systemImage: "trash") }
+        Button(role: .destructive) { history.remove([r.id]) } label: { Label("목록에서 삭제", systemImage: "trash") }
     }
 
     private func detail(_ r: SaveHistory.Record, state: SaveHistory.PhotosState, file: URL?) -> String {
@@ -255,7 +458,10 @@ struct DownloadHistoryView: View {
         case .unknown: if r.outcome == .saved { parts.append("사진 앱에 저장함") }
         case .none: break
         }
-        if file != nil { parts.append("파일 앱") } else if r.file != nil { parts.append("파일 앱에서 지워짐") }
+        if file != nil { parts.append("파일 앱에 사본 있음") }
+        else if r.file != nil { parts.append("파일 앱에서도 지워짐") }
+        // Saved to the Photos app only: say so where it matters, when it's gone from there.
+        else if state == .deleted { parts.append("파일 앱엔 저장 안 함") }
         if let bytes = r.bytes { parts.append(TransferText.bytes(bytes)) }
         return parts.joined(separator: " · ")
     }
@@ -284,6 +490,16 @@ struct DownloadHistoryView: View {
             ? "사진 보관함 접근을 허용하면 사진 앱에서 지운 사진을 알 수 있어요."
             : "앱이 저장한 사진이 모두 사진 앱에 있어요."
         case .failed: return "저장하지 못한 사진이 생기면 여기서 다시 저장할 수 있어요."
+        }
+    }
+}
+
+/// Icon and title close together, for the filter chips.
+private struct ChipLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.icon.imageScale(.small)
+            configuration.title
         }
     }
 }

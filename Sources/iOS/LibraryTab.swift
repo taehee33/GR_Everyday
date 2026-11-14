@@ -13,6 +13,9 @@ struct LibraryTab: View {
     @State private var viewing: Photo?
     @State private var showFilter = false
     @State private var page: Page = .photos
+    /// The live swipe. Held in @State without observing it, so only the page bar redraws
+    /// while the finger moves, not the whole library (that made swiping stutter).
+    @State private var swipe = PageSwipe()
     @AppStorage("iosThumbSize") private var thumbSize = 100.0
     @Environment(\.horizontalSizeClass) private var sizeClass
     /// iPad's wider grid gets proportionally larger tiles for the same 작게/보통/크게.
@@ -21,43 +24,98 @@ struct LibraryTab: View {
     enum Page: String, CaseIterable { case photos = "사진", stats = "촬영 통계", history = "다운로드 기록" }
 
     private var online: Bool { connection.isConnected }
+    /// Selected photos waiting on "save again?" because some were saved before.
+    @State private var confirmResave: [Photo]?
+    /// 다운로드 기록's 선택, in the same place as 사진's.
+    @State private var historySelecting = false
+    @State private var historySelected = Set<String>()
+    @ObservedObject private var saveHistory = SaveHistory.shared
+    private var resaveTitle: String {
+        let n = confirmResave?.filter { library.isSaved($0) }.count ?? 0
+        return "\(n)장은 이미 저장했던 사진이에요. 다시 저장할까요?"
+    }
+    /// Offline, photos with a copy in the Files app can still go back into Photos.
+    private var canSaveSelection: Bool {
+        online || library.visible.filter { library.selection.contains($0.id) }.allSatisfy { library.localURL($0) != nil }
+    }
+
+    /// Any sideways swipe may start; one past the first or last page just springs back.
+    private func allowSwipe(start: CGPoint, towardNext: Bool) -> Bool { true }
+
+    /// `commit` is set when the swipe went far or fast enough to change the page.
+    private func endSwipe(towardNext: Bool, commit: Bool) {
+        let pages = Page.allCases
+        let i = pages.firstIndex(of: page) ?? 0
+        let next = towardNext ? i + 1 : i - 1
+        // The page itself switches at once (no cross-fade: drawing both pages at the same
+        // time was the hitch); the bar's highlight animates into place on its own.
+        if commit, pages.indices.contains(next) { page = pages[next] }
+        swipe.dragging = false
+        swipe.progress = 0
+    }
+
+    /// The 사진 · 촬영 통계 · 다운로드 기록 picker, with the photo banners under it.
+    private var pageBar: some View {
+        VStack(spacing: 0) {
+            PageBar(pages: Page.allCases.map(\.rawValue),
+                    selected: Page.allCases.firstIndex(of: page) ?? 0,
+                    swipe: swipe) { i in
+                page = Page.allCases[i]
+            }
+            .padding(.horizontal).padding(.bottom, 8)
+            if page == .photos {
+                if !online && !library.photos.isEmpty { offlineBanner }
+                if library.refine.isActive { filterBanner }
+                if let filter = library.shotFilter { shotFilterBanner(filter) }
+            }
+        }
+        .background(.bar)
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
+            // A VStack, not a Group: modifiers on a Group go to each page, which gave every
+            // page its own swipe recognizer (one swipe then moved two pages).
+            VStack(spacing: 0) {
                 switch page {
                 case .photos: photosPage
                 case .stats:
                     if library.photos.isEmpty {
                         emptyState
                     } else {
-                        StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
+                        // Below the bar rather than under it: as an inset, the stats scroll view
+                        // came back short of the top after scrolling, hiding its title.
+                        VStack(spacing: 0) {
+                            pageBar
+                            StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
+                        }
                     }
                 case .history:
-                    DownloadHistoryView { page = .photos }
+                    DownloadHistoryView(selecting: $historySelecting, selected: $historySelected) { page = .photos }
                 }
             }
             // Short pages (empty states) sit under the picker instead of floating mid-screen.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Swipe sideways to move between 사진 · 촬영 통계 · 다운로드 기록. Off while selecting,
+            // where a sideways drag selects photos.
+            .background(PageSwipeRecognizer(enabled: !selecting, allow: allowSwipe,
+                                            moved: { [swipe] in
+                                                swipe.dragging = true
+                                                swipe.progress = $0
+                                            },
+                                            ended: endSwipe))
+            .sensoryFeedback(.selection, trigger: page)
             .navigationTitle("라이브러리")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { if page == .photos { toolbar } }
+            .toolbar {
+                if page == .photos { toolbar }
+                if page == .history { historyToolbar }
+            }
+            .onChange(of: page) { historySelecting = false }
             // spacing 0: the default gap let a strip of photos show between the banner and
             // the pinned day header.
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    Picker("보기", selection: $page) {
-                        ForEach(Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal).padding(.bottom, 8)
-                    if page == .photos {
-                        if !online && !library.photos.isEmpty { offlineBanner }
-                        if library.refine.isActive { filterBanner }
-                        if let filter = library.shotFilter { shotFilterBanner(filter) }
-                    }
-                }
-                .background(.bar)
+                if !(page == .stats && !library.photos.isEmpty) { pageBar }
             }
             .safeAreaInset(edge: .bottom) { if page == .photos { bottomBar } }
             // Run outside the refresh task: iOS cancels that one when the list redraws
@@ -300,12 +358,32 @@ struct LibraryTab: View {
         }
     }
 
+    @ToolbarContentBuilder private var historyToolbar: some ToolbarContent {
+        if historySelecting {
+            // 완료 where 선택 was, so the button doesn't move.
+            ToolbarItem(placement: .topBarLeading) {
+                Text("\(historySelected.count)개 선택")
+                    .font(.subheadline.weight(.semibold)).monospacedDigit()
+                    .padding(.horizontal, 6)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("완료") { withAnimation(.snappy(duration: 0.2)) { historySelecting = false } }
+                    .fontWeight(.semibold)
+            }
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("선택") { withAnimation(.snappy(duration: 0.2)) { historySelecting = true } }
+                    .disabled(saveHistory.records.isEmpty && library.goneFromPhotos.isEmpty)
+            }
+        }
+    }
+
     /// A 촬영 통계 row or day narrowed the photos; say which and offer a way out.
     private func shotFilterBanner(_ filter: ShotFilter) -> some View {
         HStack {
             Label("\(filter.label) · \(library.visible.count)장", systemImage: "chart.bar.xaxis").lineLimit(1)
             Spacer()
-            Button("해제") { library.shotFilter = nil }
+            Button("해제") { library.shotFilter = nil }.tint(.red)
         }
         .font(.footnote)
         .padding(.horizontal).padding(.vertical, 6)
@@ -345,14 +423,32 @@ struct LibraryTab: View {
                 .foregroundStyle(.primary)
                 Spacer()
                 Button {
-                    library.save(library.visible.filter { library.selection.contains($0.id) })
-                    selecting = false
+                    let picked = library.visible.filter { library.selection.contains($0.id) }
+                    if picked.contains(where: { library.isSaved($0) }) {
+                        confirmResave = picked
+                    } else {
+                        library.save(picked)
+                        selecting = false
+                    }
                 } label: {
                     Label("사진 앱에 저장", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
-                .disabled(library.selection.isEmpty || !online)
+                .disabled(library.selection.isEmpty || !canSaveSelection)
+                .confirmationDialog(resaveTitle, isPresented: Binding(
+                    get: { confirmResave != nil }, set: { if !$0 { confirmResave = nil } }
+                ), titleVisibility: .visible) {
+                    Button("이미 저장한 사진도 다시 저장") {
+                        if let p = confirmResave { library.save(p, force: true) }
+                        confirmResave = nil; selecting = false
+                    }
+                    Button("저장 안 한 사진만 저장") {
+                        if let p = confirmResave?.filter({ !library.isSaved($0) }), !p.isEmpty { library.save(p) }
+                        confirmResave = nil; selecting = false
+                    }
+                    Button("취소", role: .cancel) { confirmResave = nil }
+                }
             }
             .padding(.horizontal).padding(.vertical, 8)
             .background(.bar)
@@ -381,7 +477,7 @@ struct LibraryTab: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button("해제") { library.refine = LibraryModel.Refine() }
+            Button("해제") { library.refine = LibraryModel.Refine() }.tint(.red)
         }
         .font(.footnote)
         .padding(.horizontal).padding(.vertical, 6)
@@ -418,9 +514,9 @@ struct Thumb: View {
                 HStack(spacing: 3) {
                     if photo.kind == .raw { badge("RAW") }
                     if photo.kind == .video { Image(systemName: "video.fill").font(.caption2) }
-                    if library.saved.contains(photo.name) {
+                    if library.isSaved(photo) {
                         Image(systemName: "checkmark.circle.fill").font(.caption2)
-                    } else if library.goneFromPhotos.contains(photo.name) {
+                    } else if library.isGone(photo) {
                         // Saved once, deleted in the Photos app since.
                         Image(systemName: "checkmark.circle.badge.xmark").font(.caption2).opacity(0.85)
                             .accessibilityLabel("사진 앱에서 지워짐")
@@ -569,10 +665,10 @@ struct PhotoPager: View {
         if let photo = currentPhoto {
             HStack {
                 let toPhotos = PhotosLibrary.target.toPhotos
-                if library.saved.contains(photo.name) {
+                if library.isSaved(photo) {
                     Label(toPhotos ? "사진 앱에 저장됨" : "파일 앱에 저장됨", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
-                    let gone = library.goneFromPhotos.contains(photo.name)
+                    let gone = library.isGone(photo)
                     Button { library.save([photo]) } label: {
                         Label(gone ? "사진 앱에서 지워짐 · 다시 저장" : toPhotos ? "사진 앱에 저장" : "파일 앱에 저장",
                               systemImage: "square.and.arrow.down")
@@ -914,5 +1010,177 @@ struct DragSelectRecognizer: UIViewRepresentable {
                 active = false
             }
         }
+    }
+}
+
+/// A sideways swipe anywhere in the library moves between its pages. It sits on the
+/// navigation view and runs alongside the scroll views (a SwiftUI drag lost to them), so
+/// up-and-down scrolling is untouched. Points are in window coordinates.
+struct PageSwipeRecognizer: UIViewRepresentable {
+    var enabled: Bool
+    var allow: (_ start: CGPoint, _ towardNext: Bool) -> Bool
+    /// The swipe so far, as a fraction of the view's width (negative: leftward).
+    var moved: (CGFloat) -> Void
+    var ended: (_ towardNext: Bool, _ commit: Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> Finder {
+        let view = Finder()
+        view.isUserInteractionEnabled = false
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ view: Finder, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    static func dismantleUIView(_ view: Finder, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Finder: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { coordinator?.detach() } else { coordinator?.attach(from: self) }
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            coordinator?.attach(from: self)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: PageSwipeRecognizer
+        private weak var host: UIView?
+        /// This page's own view: a swipe counts only where it is on screen.
+        private weak var finder: UIView?
+        private let pan = UIPanGestureRecognizer()
+        /// Where the finger went down; the pan only counts movement after it begins.
+        private var start: CGPoint = .zero
+
+        init(_ parent: PageSwipeRecognizer) {
+            self.parent = parent
+            super.init()
+            pan.addTarget(self, action: #selector(handle(_:)))
+            pan.delegate = self
+            pan.maximumNumberOfTouches = 1
+            pan.cancelsTouchesInView = false
+        }
+
+        /// The library's navigation view: everything on the page, but not sheets or the
+        /// full-screen photo viewer, which are presented apart from it.
+        func attach(from view: UIView) {
+            finder = view
+            var responder: UIResponder? = view
+            while let r = responder, !(r is UINavigationController) { responder = r.next }
+            guard let found = (responder as? UINavigationController)?.view, found !== host else { return }
+            host?.removeGestureRecognizer(pan)
+            host = found
+            found.addGestureRecognizer(pan)
+        }
+
+        func detach() {
+            host?.removeGestureRecognizer(pan)
+            host = nil
+        }
+
+        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+            guard parent.enabled else { return false }
+            let v = pan.velocity(in: nil)
+            guard abs(v.x) > abs(v.y) * 1.5 else { return false }
+            start = CGPoint(x: pan.location(in: nil).x - pan.translation(in: nil).x,
+                            y: pan.location(in: nil).y - pan.translation(in: nil).y)
+            // Other tabs stay in the window while hidden; only the library on screen counts.
+            guard let finder, isShowing(finder), finder.convert(finder.bounds, to: nil).contains(start) else { return false }
+            return parent.allow(start, v.x < 0)
+        }
+
+        private func isShowing(_ view: UIView) -> Bool {
+            guard view.window != nil else { return false }
+            var next: UIView? = view
+            while let v = next {
+                if v.isHidden || v.alpha < 0.01 { return false }
+                next = v.superview
+            }
+            return true
+        }
+
+        func gestureRecognizer(_ gesture: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+        @objc private func handle(_ gesture: UIPanGestureRecognizer) {
+            let here = gesture.location(in: nil), v = gesture.velocity(in: nil)
+            let dx = here.x - start.x, dy = here.y - start.y
+            let width = max(finder?.bounds.width ?? 1, 1)
+            switch gesture.state {
+            case .began, .changed:
+                parent.moved(dx / width)
+            case .ended:
+                let sideways = abs(dx) > abs(dy) * 1.5
+                let far = abs(dx) > width * 0.3 || (abs(dx) > 30 && abs(v.x) > 400 && (v.x < 0) == (dx < 0))
+                parent.ended(dx < 0, sideways && far)
+            default:
+                parent.ended(dx < 0, false)
+            }
+        }
+    }
+}
+
+/// How far the finger has swiped between library pages, as a fraction of the screen width
+/// (negative: toward the next page).
+final class PageSwipe: ObservableObject {
+    @Published var progress: CGFloat = 0
+    @Published var dragging = false
+}
+
+/// The 사진 · 촬영 통계 · 다운로드 기록 switch. Looks like a segmented control, but its
+/// highlight slides with the finger while swiping between pages.
+struct PageBar: View {
+    let pages: [String]
+    let selected: Int
+    /// The live swipe; the highlight follows it while dragging and animates otherwise.
+    @ObservedObject var swipe: PageSwipe
+    var select: (Int) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let count = CGFloat(max(pages.count, 1))
+            let inset: CGFloat = 3
+            let segment = (proxy.size.width - inset * 2) / count
+            // A finger across the whole screen moves the highlight one segment; it stretches
+            // only a little past the first and last.
+            let raw = CGFloat(selected) - swipe.progress
+            let position = min(max(raw, -0.12), count - 1 + 0.12)
+            let nearest = Int(min(max(raw.rounded(), 0), count - 1))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(.tertiarySystemFill))
+                Capsule()
+                    .fill(Color(.systemBackground))
+                    .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                    .frame(width: segment, height: proxy.size.height - inset * 2)
+                    .offset(x: inset + position * segment)
+                    .animation(swipe.dragging ? nil : .snappy(duration: 0.28), value: position)
+                HStack(spacing: 0) {
+                    ForEach(pages.indices, id: \.self) { i in
+                        Button { select(i) } label: {
+                            Text(pages[i])
+                                .font(.subheadline.weight(i == nearest ? .semibold : .regular))
+                                .foregroundStyle(i == nearest ? Color.primary : Color.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(i == selected ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal, inset)
+            }
+        }
+        .frame(height: 36)
+        .accessibilityElement(children: .contain)
     }
 }
