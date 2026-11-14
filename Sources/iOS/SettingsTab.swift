@@ -20,6 +20,7 @@ struct SettingsTab: View {
         NavigationStack {
             Form {
                 MomentAccountSection()
+                MomentGalleryPagingSection()
 
                 if UIDevice.current.userInterfaceIdiom == .pad {
                     Section {
@@ -36,16 +37,22 @@ struct SettingsTab: View {
                         ForEach(PhotosLibrary.Target.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     if target.toPhotos {
-                        LabeledContent("사진 앱에서 지운 사진 확인") {
-                            switch history.readStatus {
-                            case .authorized: Text("켜짐")
-                            case .limited: Text("새로 저장한 사진만")
-                            case .notDetermined:
-                                Button("허용") { Task { await history.requestRead() } }
-                            default:
-                                Button("설정 앱") {
-                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                                }
+                        // Only iOS Settings can change Photos access once asked, so the
+                        // whole row opens it (or asks, the first time).
+                        Button {
+                            if history.readStatus == .notDetermined {
+                                Task { await history.requestRead() }
+                            } else if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            HStack {
+                                Text("사진 앱에서 지운 사진 확인").foregroundStyle(.primary)
+                                Spacer()
+                                Text(readStatusText).foregroundStyle(.secondary)
+                                Image(systemName: history.readStatus == .notDetermined ? "chevron.right" : "arrow.up.forward.app")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
                             }
                         }
                     }
@@ -117,6 +124,15 @@ struct SettingsTab: View {
 
     private var target: PhotosLibrary.Target { PhotosLibrary.Target(rawValue: saveTarget) ?? .photos }
 
+    private var readStatusText: String {
+        switch history.readStatus {
+        case .authorized: return "켜짐"
+        case .limited: return "새로 저장한 사진만"
+        case .notDetermined: return "허용하기"
+        default: return "꺼짐"
+        }
+    }
+
     private var saveFooter: String {
         var text: String
         switch target {
@@ -126,7 +142,7 @@ struct SettingsTab: View {
         }
         if target.toPhotos {
             text += " ‘한 항목으로’를 켜면 같은 사진의 JPG와 RAW가 사진 앱에서 한 장으로 보여요."
-            text += " ‘지운 사진 확인’을 허용하면 사진 앱에서 지운 사진을 건너뛰지 않고 다시 저장해요."
+            text += " ‘지운 사진 확인’을 허용하면 사진 앱에서 지운 사진을 건너뛰지 않고 다시 저장해요. 허용한 뒤에는 이 줄을 눌러 설정 앱에서 바꿀 수 있어요."
         }
         return text
     }
