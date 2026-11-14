@@ -49,6 +49,41 @@ enum Device {
         #endif
     }
 
+    @MainActor static var isPad: Bool {
+        #if os(macOS)
+        return false
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #endif
+    }
+
+    /// The app window's height on iPhone/iPad (nil on the Mac, whose windows are any size).
+    /// Read it where a width change (rotation) re-renders.
+    @MainActor static var windowHeight: CGFloat? {
+        #if os(macOS)
+        return nil
+        #else
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        return scene?.coordinateSpace.bounds.height
+        #endif
+    }
+
+    /// An iPad whose window stands taller than it is wide. Read it in a body that re-renders on
+    /// a width change (rotation changes the width), since the window itself isn't observed.
+    @MainActor static var isPortraitPad: Bool {
+        #if os(macOS)
+        return false
+        #else
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        else { return false }
+        let size = scene.coordinateSpace.bounds.size
+        return size.height > size.width
+        #endif
+    }
+
     /// With its subject particle: "Mac이", "iPhone이", "iPad가".
     @MainActor static var subject: String { name == "iPad" ? "iPad가" : "\(name)이" }
 

@@ -72,7 +72,7 @@ struct MomentPhotoDetail: View {
                 }
             }
         } image: {
-            MomentFullImage(store: account.store, photo: photo)
+            MomentFullImage(store: account.store, photo: photo, viewHeight: paged ? 0 : viewHeight)
                 .momentOpensFullScreen { viewing = photo }
         } footer: {
             VStack(alignment: .leading, spacing: 10) {
@@ -208,12 +208,29 @@ struct MomentMyPhotoActions: View {
 struct MomentFullImage: View {
     let store: MomentStore
     let photo: MomentPhoto
+    /// The detail screen's height: the photo stays short enough that it, the line above and the
+    /// buttons under it are all on screen at once (a tall photo narrows, centered).
+    var viewHeight: CGFloat = 0
 
     var body: some View {
         MomentRemoteImage(url: store.displayURL(photo), preview: store.thumbURL(photo))
-            .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
+            .aspectRatio(photo.aspect, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .momentFitHeight(viewHeight > 0 ? min(viewHeight - 200, viewHeight * 0.75) : nil, aspect: photo.aspect)
+    }
+}
+
+extension MomentPhoto {
+    /// Width over height.
+    var aspect: CGFloat { CGFloat(width) / CGFloat(max(height, 1)) }
+}
+
+extension View {
+    /// Keeps a photo of this aspect no taller than `maxHeight` (by narrowing it, which works in a
+    /// scroll view too), centered in the full width. A floor keeps it from shrinking to nothing.
+    func momentFitHeight(_ maxHeight: CGFloat?, aspect: CGFloat) -> some View {
+        frame(maxWidth: maxHeight.map { max($0, 240) * aspect } ?? .infinity)
             .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 

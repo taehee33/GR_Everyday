@@ -18,6 +18,8 @@ struct MomentExploreView: View {
     @State private var searchedFor: String?
     @State private var searchError: String?
     @State private var person: MomentPersonRef?
+    /// Tracked so a rotation re-renders the grid (iPad standing up gets three columns).
+    @State private var width: CGFloat = 0
 
     private var searchQuery: String { searchText.trimmingCharacters(in: .whitespaces) }
 
@@ -134,7 +136,8 @@ struct MomentExploreView: View {
             if let message = feed.errorMessage {
                 Text(message).font(.footnote).foregroundStyle(.red)
             }
-            if showsWinners { winnersGrid } else { grid }
+            Group { if showsWinners { winnersGrid } else { grid } }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         }
         .onChange(of: feed.query) { _, new in
             if new.sort == .winners {
@@ -361,7 +364,10 @@ struct MomentExploreView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 220)
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: 3)], spacing: 3) {
+            // iPad: three a row standing up (like 내 갤러리), four lying down.
+            LazyVGrid(columns: Device.isPad && width > 0
+                      ? Array(repeating: GridItem(.flexible(), spacing: 3), count: Device.isPortraitPad ? 3 : 4)
+                      : [GridItem(.adaptive(minimum: 108), spacing: 3)], spacing: 3) {
                 ForEach(feed.photos) { photo in
                     tile(photo)
                         .onAppear {

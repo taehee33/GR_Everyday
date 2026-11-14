@@ -250,7 +250,9 @@ struct MomentPhotoList: View {
             } else if !feed.loaded {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 220)
             } else {
-                let columns = Self.columns(feed.photos, count: min(max(Int(width / 320), 1), 3))
+                // iPad, either way up: one photo a row, like the phone.
+                let count = Device.isPad ? 1 : min(max(Int(width / 320), 1), 3)
+                let columns = Self.columns(feed.photos, count: count)
                 HStack(alignment: .top, spacing: 20) {
                     ForEach(columns.indices, id: \.self) { index in
                         LazyVStack(spacing: 30) {
@@ -327,11 +329,13 @@ private struct MomentCard: View {
 
             Rectangle()
                 .fill(.quaternary)
-                .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
+                .aspectRatio(photo.aspect, contentMode: .fit)
                 .overlay {
                     MomentRemoteImage(url: store.thumbURL(photo), contentMode: .fill)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 3))
+                // The whole card (name, photo, buttons) fits on one screen, with room to spare.
+                .momentFitHeight(Device.windowHeight.map { min($0 - 320, $0 * 0.68) }, aspect: photo.aspect)
                 .overlay {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 64))
@@ -458,7 +462,7 @@ struct MomentFeedDetail: View {
         MomentDetailLayout(paged: paged, viewHeight: viewHeight) {
             authorLine(photo)
         } image: {
-            MomentFullImage(store: feed.store, photo: photo)
+            MomentFullImage(store: feed.store, photo: photo, viewHeight: paged ? 0 : viewHeight)
                 .momentOpensFullScreen { viewing = photo }
         } footer: {
             VStack(alignment: .leading, spacing: 10) {
