@@ -277,9 +277,7 @@ struct MomentPhotoList: View {
         .sheet(item: $opened) { photo in
             MomentFeedDetail(account: account, feed: feed, photoID: photo.id)
         }
-        .sheet(item: $person) { ref in
-            MomentPersonGallery(account: account, owner: ref.id)
-        }
+        .momentPersonGallery(item: $person, account: account)
     }
 
     /// Deals the photos into `count` columns, each next photo going to the shortest column,
@@ -486,9 +484,7 @@ struct MomentFeedDetail: View {
                 }
             }
         }
-        .sheet(item: $person) { ref in
-            MomentPersonGallery(account: account, owner: ref.id)
-        }
+        .momentPersonGallery(item: $person, account: account)
         .sheet(isPresented: $showComments) {
             MomentCommentsSheet(account: account, model: comments, photo: photo) { owner in
                 if !linksAuthor, owner == photo.owner { return }

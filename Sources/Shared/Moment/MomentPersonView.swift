@@ -5,6 +5,46 @@ struct MomentPersonRef: Identifiable, Hashable {
     let id: UUID
 }
 
+extension View {
+    /// Opens someone's 갤러리: on iPhone/iPad the whole screen, coming in from the right with a
+    /// back button and swipe back; on the Mac a sheet.
+    func momentPersonGallery(item: Binding<MomentPersonRef?>, account: MomentAccount) -> some View {
+        modifier(MomentPersonPresenter(item: item, account: account))
+    }
+}
+
+private struct MomentPersonPresenter: ViewModifier {
+    @Binding var item: MomentPersonRef?
+    let account: MomentAccount
+    #if os(iOS)
+    /// `item`, shown without the cover's slide-up, so the gallery can slide in from the side.
+    @State private var shown: MomentPersonRef?
+    #endif
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .onChange(of: item) { _, new in
+                guard new != shown else { return }
+                var quiet = Transaction()
+                quiet.disablesAnimations = true
+                withTransaction(quiet) { shown = new }
+            }
+            .onChange(of: shown) { _, new in
+                if new == nil { item = nil }
+            }
+            .fullScreenCover(item: $shown) { ref in
+                MomentPersonGallery(account: account, owner: ref.id)
+                    .presentationBackground(.clear)
+            }
+        #else
+        content.sheet(item: $item) { ref in
+            MomentPersonGallery(account: account, owner: ref.id)
+        }
+        #endif
+    }
+}
+
 /// Someone's 갤러리, opened from 순간들 (their name or picture) or a comment: their profile on
 /// top, then their photos the way they hung them (갤러리 or 그리드). Photos open with likes and
 /// comments.
@@ -15,6 +55,14 @@ struct MomentPersonGallery: View {
     @Environment(\.dismiss) private var dismiss
     @State private var opened: MomentPhoto?
     @State private var fullScreen = false
+    #if os(iOS)
+    /// How far the page sits to the right: the screen's width while it slides in or out, the
+    /// finger's travel while it is swiped back.
+    @State private var slide: CGFloat = 0
+    @State private var pageWidth: CGFloat = 0
+    /// Whether the current drag is a swipe back (decided on its first move).
+    @State private var swiping: Bool?
+    #endif
 
     init(account: MomentAccount, owner: UUID) {
         self.account = account
@@ -57,7 +105,14 @@ struct MomentPersonGallery: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { close() } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("뒤로")
+                }
+                #else
                 ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
+                #endif
                 if feed.profile?.wallStyle == .free, !feed.photos.isEmpty {
                     ToolbarItem(placement: .primaryAction) {
                         Button { fullScreen = true } label: {
@@ -69,6 +124,19 @@ struct MomentPersonGallery: View {
                 }
             }
         }
+        #if os(iOS)
+        .background(Color(uiColor: .systemBackground))
+        .shadow(color: .black.opacity(slide > 0 ? 0.25 : 0), radius: 12)
+        .offset(x: slide)
+        .simultaneousGesture(swipeBack)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
+        .onAppear {
+            // Comes in from the right, like a page pushed onto a stack.
+            let width = pageWidth > 0 ? pageWidth : 1000
+            slide = width
+            withAnimation(.easeOut(duration: 0.28)) { slide = 0 }
+        }
+        #endif
         .task { await feed.reload() }
         .momentPhotoOpen(item: $opened, alone: feed.profile?.wallStyle == .free) { photo in
             single(photo)
@@ -84,6 +152,44 @@ struct MomentPersonGallery: View {
         .frame(minWidth: 620, idealWidth: 860, minHeight: 680, idealHeight: 820)
         #endif
     }
+
+    #if os(iOS)
+    /// Slides the page off to the right, then takes it away.
+    private func close() {
+        withAnimation(.easeOut(duration: 0.22)) {
+            slide = max(pageWidth, 1000)
+        } completion: {
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) { dismiss() }
+        }
+    }
+
+    /// Swipe right to go back. A gallery that runs sideways scrolls with the same motion, so
+    /// there it has to start at the left edge.
+    private var swipeBack: some Gesture {
+        DragGesture(minimumDistance: 16, coordinateSpace: .global)
+            .onChanged { value in
+                if swiping == nil {
+                    let edge = value.startLocation.x < 40
+                    let sideways = feed.profile?.wallDirection == .horizontal && feed.profile?.wallStyle != .grid
+                    let rightward = value.translation.width > 0
+                        && abs(value.translation.width) > abs(value.translation.height) * 1.5
+                    swiping = rightward && (edge || !sideways)
+                }
+                if swiping == true { slide = max(0, value.translation.width) }
+            }
+            .onEnded { value in
+                defer { swiping = nil }
+                guard swiping == true else { return }
+                if value.translation.width > pageWidth * 0.33 || value.predictedEndTranslation.width > pageWidth * 0.6 {
+                    close()
+                } else {
+                    withAnimation(.spring(duration: 0.25)) { slide = 0 }
+                }
+            }
+    }
+    #endif
 
     @ViewBuilder private func wall(_ profile: MomentProfile) -> some View {
         if feed.photos.isEmpty {

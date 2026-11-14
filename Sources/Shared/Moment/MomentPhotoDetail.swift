@@ -107,9 +107,7 @@ struct MomentPhotoDetail: View {
         .sheet(isPresented: $showComments) {
             MomentCommentsSheet(account: account, model: comments, photo: photo) { person = MomentPersonRef(id: $0) }
         }
-        .sheet(item: $person) { ref in
-            MomentPersonGallery(account: account, owner: ref.id)
-        }
+        .momentPersonGallery(item: $person, account: account)
     }
 
     /// "11월 순간들에 공유됨" (with the year when it is not this year).

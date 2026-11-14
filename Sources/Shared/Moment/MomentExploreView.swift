@@ -40,9 +40,7 @@ struct MomentExploreView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: searchQuery) { await search(searchQuery) }
-        .sheet(item: $person) { ref in
-            MomentPersonGallery(account: account, owner: ref.id)
-        }
+        .momentPersonGallery(item: $person, account: account)
     }
 
     // MARK: Search
