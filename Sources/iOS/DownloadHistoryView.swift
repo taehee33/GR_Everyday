@@ -20,7 +20,7 @@ struct DownloadHistoryView: View {
     @State private var showWhyNot = false
 
     enum Filter: String, CaseIterable {
-        case all = "전체", gone = "사진 앱에서 지워짐", failed = "실패"
+        case all = "전체", gone = "지워짐", failed = "실패"
         var icon: String {
             switch self {
             case .all: return "line.3.horizontal.decrease"
@@ -139,38 +139,15 @@ struct DownloadHistoryView: View {
     /// A plain row, not a horizontal ScrollView: inside the top inset the scroll view laid its
     /// content out under the page picker's safe area, so the chips didn't show.
     private var chips: some View {
-            HStack(spacing: 6) {
-                ForEach(Filter.allCases, id: \.self) { item in
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { filter = item }
-                    } label: {
-                        Group {
-                            if item == .all {
-                                Text("\(item.rawValue) \(count(item))")
-                            } else {
-                                Label("\(item.rawValue) \(count(item))", systemImage: item.icon)
-                            }
-                        }
-                        .monospacedDigit()
-                        .font(.footnote.weight(filter == item ? .semibold : .regular))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .foregroundStyle(filter == item ? Color.white : Color.primary)
-                        .background(Capsule().fill(filter == item ? item.tint : Color(.secondarySystemGroupedBackground)))
-                        .overlay(Capsule().strokeBorder(filter == item ? Color.clear : Color(.separator), lineWidth: 0.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(filter == item ? .isSelected : [])
+        ChipBar {
+            ForEach(Filter.allCases, id: \.self) { item in
+                BarChip(title: "\(item.rawValue) \(count(item))", icon: item == .all ? nil : item.icon,
+                     selected: filter == item, tint: item.tint) {
+                    withAnimation(.snappy(duration: 0.2)) { filter = item }
                 }
+                .accessibilityLabel(item == .gone ? "사진 앱에서 지워짐 \(count(item))" : "\(item.rawValue) \(count(item))")
             }
-            .labelStyle(ChipLabelStyle())
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-        // Room above too: flush against the page picker, the chips' top edge was cut off.
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background(.bar)
+        }
     }
 
     // MARK: Data
@@ -497,12 +474,3 @@ struct DownloadHistoryView: View {
     }
 }
 
-/// Icon and title close together, for the filter chips.
-private struct ChipLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 5) {
-            configuration.icon.imageScale(.small)
-            configuration.title
-        }
-    }
-}

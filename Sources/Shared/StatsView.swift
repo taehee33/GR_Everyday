@@ -51,7 +51,12 @@ struct StatsView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                #if os(iOS)
+                // The chips sit above, in the bar; here only what they open, or the scan.
+                if showAbout || stats.scanning || stats.pending > 0 { header }
+                #else
                 header
+                #endif
                 if compact {
                     CalendarMonth(month: $month, day: $day, counts: perDay, open: openDay)
                     summary(day: onDay, all: all)
@@ -78,6 +83,10 @@ struct StatsView: View {
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        #if os(iOS)
+        // Pinned right under the page picker, like 다운로드 기록's chips.
+        .safeAreaInset(edge: .top, spacing: 0) { chips }
+        #endif
         .onAppear { library.refreshStats() }
         .alert("지운 사진 기록을 지울까요?", isPresented: $confirmClear) {
             Button("취소", role: .cancel) {}
@@ -105,48 +114,76 @@ struct StatsView: View {
         return { open(ShotFilter(day: day)) }
     }
 
+    /// No page title (the tab bar and segment already say where you are): the count picker,
+    /// a fold for the explanation and the history reset, and the scan progress when reading.
     @ViewBuilder private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("촬영 통계").font(.largeTitle.bold())
-            Spacer()
-            if !compact { scanStatus }
-        }
-        if compact { HStack { scanStatus } }
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            #if os(macOS)
+            HStack(spacing: 10) {
                 Picker("", selection: $includeDeleted) {
                     Text("지운 사진 포함").tag(true)
                     Text("카드에 있는 사진만").tag(false)
                 }
-                .pickerStyle(.segmented).fixedSize().labelsHidden()
-                Spacer()
+                .pickerStyle(.segmented).labelsHidden()
+                .frame(maxWidth: compact ? .infinity : 320)
+                if !compact { Spacer() }
                 Button {
                     withAnimation(.snappy) { showAbout.toggle() }
                 } label: {
-                    Image(systemName: "chevron.down")
-                        .rotationEffect(.degrees(showAbout ? 180 : 0))
-                        .font(.body.weight(.semibold))
-                        .frame(width: 32, height: 32)
+                    Image(systemName: "info.circle")
+                        .symbolVariant(showAbout ? .fill : .none)
+                        .font(.title3)
+                        .frame(width: 36, height: 32)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .buttonStyle(.plain).foregroundStyle(showAbout ? Color.accentColor : .secondary)
                 .accessibilityLabel(showAbout ? "설명 접기" : "설명 펼치기")
             }
+            #endif
             if showAbout {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(includeDeleted
                          ? "이 앱이 카드에서 한 번이라도 본 사진은 지운 뒤에도 세어요. 그 전에 지운 사진은 GR WORLD의 GR 로그에만 있어요."
                          : "카드에 남아 있는 사진만 세어요.")
                         .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     if !stats.history.isEmpty {
-                        Button("지운 사진 기록 지우기…") { confirmClear = true }
-                            .buttonStyle(.plain).font(.callout).foregroundStyle(.red)
+                        Divider()
+                        Button(role: .destructive) { confirmClear = true } label: {
+                            Label("지운 사진 기록 지우기…", systemImage: "trash")
+                        }
+                        .buttonStyle(.plain).font(.callout.weight(.medium)).foregroundStyle(.red)
                     }
                 }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                 .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            if stats.scanning || stats.pending > 0 {
+                HStack(spacing: 8) { scanStatus }.font(.callout)
             }
         }
     }
+
+    #if os(iOS)
+    /// The same chip row 사진 and 다운로드 기록 have under the page picker.
+    private var chips: some View {
+        ChipBar {
+            BarChip(title: "지운 사진 포함", selected: includeDeleted) {
+                withAnimation(.snappy(duration: 0.2)) { includeDeleted = true }
+            }
+            BarChip(title: "카드에 있는 사진만", selected: !includeDeleted) {
+                withAnimation(.snappy(duration: 0.2)) { includeDeleted = false }
+            }
+            Spacer(minLength: 0)
+            BarChip(title: "", icon: showAbout ? "info.circle.fill" : "info.circle", selected: showAbout) {
+                withAnimation(.snappy) { showAbout.toggle() }
+            }
+            .accessibilityLabel(showAbout ? "설명 접기" : "설명 펼치기")
+        }
+    }
+    #endif
 
     @ViewBuilder private var scanStatus: some View {
         if stats.scanning {
@@ -163,7 +200,7 @@ struct StatsView: View {
             Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
                 GridRow {
                     Text("")
-                    Text(dayTitle(weekday: true)).foregroundStyle(.secondary)
+                    Text(dayTitle()).foregroundStyle(.secondary)
                     Text("전체").foregroundStyle(.secondary)
                 }
                 .font(.callout)
@@ -200,13 +237,10 @@ struct StatsView: View {
         }
     }
 
-    /// The day column's heading: the day picked on the calendar ("오늘" when it is today).
-    private func dayTitle(weekday: Bool) -> String {
+    /// The day column's heading, the same everywhere: "11월 14일(토)".
+    private func dayTitle() -> String {
         guard let day else { return "날" }
-        if Calendar.current.isDateInToday(day) {
-            return weekday ? "오늘 · \(day.formatted(.dateTime.month().day()))" : "오늘"
-        }
-        return weekday ? day.formatted(.dateTime.month().day().weekday()) : day.formatted(.dateTime.month().day())
+        return "\(day.formatted(.dateTime.month().day()))(\(day.formatted(.dateTime.weekday(.abbreviated))))"
     }
 
     /// A big total with, when some are deleted, "지움 n" under it.
@@ -240,7 +274,7 @@ struct StatsView: View {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
                     Text("").gridColumnAlignment(.leading)
-                    Text(dayTitle(weekday: false)).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    Text(dayTitle()).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                     Text("전체").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                 }
                 .font(.caption)
@@ -298,7 +332,7 @@ private struct CalendarMonth: View {
             if let open, let day {
                 HStack {
                     Spacer()
-                    Button(calendar.isDateInToday(day) ? "오늘 사진 보기" : "선택 날짜 사진 보기", action: open)
+                    Button(calendar.isDateInToday(day) ? "오늘 사진 통계" : "선택 날짜 사진 통계", action: open)
                         .buttonStyle(.borderless).font(.callout.weight(.semibold))
                 }
                 .padding(.horizontal, 6).padding(.top, 2)

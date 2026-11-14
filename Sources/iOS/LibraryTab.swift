@@ -487,12 +487,17 @@ struct LibraryTab: View {
         .padding(.horizontal).padding(.vertical, 6)
     }
 
+    /// Offline: one quiet chip in the same row the other pages use for theirs.
     private var offlineBanner: some View {
-        let when = library.listSavedAt.map { $0.formatted(date: .abbreviated, time: .shortened) }
-        return Label("카메라 연결 안 됨" + (when.map { " · \($0)에 본 목록이에요" } ?? ""), systemImage: "camera.badge.ellipsis")
-            .font(.footnote).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
+        let when = library.listSavedAt.map { date -> String in
+            let c = Calendar.current
+            let day = c.isDateInToday(date) ? "오늘" : "\(c.component(.month, from: date))/\(c.component(.day, from: date))"
+            return "\(day) \(date.formatted(date: .omitted, time: .shortened))"
+        }
+        return ChipBar {
+            BarChip(title: "연결 안 됨" + (when.map { " · \($0) 목록" } ?? ""), icon: "camera.badge.ellipsis", muted: true)
+                .accessibilityLabel("카메라 연결 안 됨" + (when.map { " · \($0)에 본 목록이에요" } ?? ""))
+        }
     }
 }
 

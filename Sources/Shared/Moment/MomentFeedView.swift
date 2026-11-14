@@ -274,7 +274,7 @@ struct MomentPhotoList: View {
         }
         .frame(maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .sheet(item: $opened) { photo in
+        .momentPush(item: $opened) { photo in
             MomentFeedDetail(account: account, feed: feed, photoID: photo.id)
         }
         .momentPersonGallery(item: $person, account: account)
@@ -433,7 +433,7 @@ struct MomentFeedDetail: View {
                     .navigationBarTitleDisplayMode(.inline)
                     #endif
                     .toolbar {
-                        ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
+                        ToolbarItem(placement: .cancellationAction) { MomentCloseButton() }
                         ToolbarItem(placement: .primaryAction) {
                             MomentFeedPhotoActions(account: account, feed: feed, photoID: photoID)
                         }

@@ -144,13 +144,13 @@ struct MomentExploreView: View {
                 Task { await feed.reload() }
             }
         }
-        .sheet(item: $opened) { photo in
+        .momentPush(item: $opened) { photo in
             MomentFeedDetail(account: account, feed: feed, photoID: photo.id)
         }
         .sheet(isPresented: $choosingRegion) {
             MomentExploreRegionSheet(feed: feed)
         }
-        .sheet(item: $openedWinner) { photo in
+        .momentPush(item: $openedWinner) { photo in
             MomentFeedDetail(account: account, feed: contests, photoID: photo.id)
         }
     }
