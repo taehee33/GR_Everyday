@@ -143,6 +143,8 @@ struct MomentPhoto: Codable, Equatable, Identifiable {
     var author: MomentAuthor? = nil
     /// Where it was taken, short ("서울", "일본"): from the shared location, for 탐색's filter.
     var region: String? = nil
+    /// Under `region` ("성동구").
+    var district: String? = nil
 
     enum Status: String, Codable { case uploading, published, hidden }
 
@@ -339,6 +341,16 @@ struct MomentExploreQuery: Equatable {
     /// The image control's name, or the film in a film GR (`photos.look`).
     var look: String?
     var region: String?
+    /// Under `region`: 시·군·구 in Korea, the city abroad.
+    var district: String?
+    /// Only photos taken inside this box: the map as it was when picked, or near me.
+    var area: Area?
+
+    struct Area: Equatable {
+        var minLat, maxLat, minLon, maxLon: Double
+        /// What the chip says: "지도에서 고른 곳" or "내 주변".
+        var label: String
+    }
 
     enum Kind: String, CaseIterable, Identifiable {
         case digital, film
@@ -355,14 +367,19 @@ struct MomentExploreQuery: Equatable {
 
     enum Sort: String, CaseIterable, Identifiable {
         case recommended, likes, latest
+        /// Not an order of 순간들: the months' winners (이달의 사진관), newest first.
+        case winners
         var id: String { rawValue }
         var title: String {
             switch self {
             case .recommended: "추천"
             case .likes: "좋아요"
             case .latest: "최신"
+            case .winners: "이전 당선작"
             }
         }
+        /// The orders of 순간들 (the server's p_sort).
+        static let orders: [Sort] = [.recommended, .likes, .latest]
     }
 
     enum Period: String, CaseIterable, Identifiable {
@@ -387,9 +404,19 @@ struct MomentExploreQuery: Equatable {
         }
     }
 
-    var hasFilter: Bool { camera != nil || kind != nil || look != nil || region != nil }
+    var hasFilter: Bool { camera != nil || kind != nil || look != nil || region != nil || area != nil }
     /// The period the server is asked for: only likes are counted over a period.
     var effectivePeriod: Period { sort == .likes ? period : .all }
+}
+
+/// One point on 탐색's map: photos within about 1 km, at the cell's rounded coordinates.
+struct MomentMapCell: Decodable, Equatable, Identifiable {
+    let lat: Double
+    let lon: Double
+    let count: Int
+    /// The newest photo there, for the thumbnail.
+    let photo: UUID
+    var id: String { "\(lat),\(lon)" }
 }
 
 /// The values 탐색's filters can offer, each with how many photos on 순간들 have it.
@@ -401,16 +428,20 @@ struct MomentExploreFacets: Decodable, Equatable {
     /// Image control names (digital GRs).
     var controls: [Facet] = []
     var regions: [Facet] = []
+    /// 시·군·구 (or cities abroad), each with its region.
+    var districts: [Facet] = []
 
-    init(cameras: [Facet] = [], looks: [Facet] = [], films: [Facet] = [], controls: [Facet] = [], regions: [Facet] = []) {
+    init(cameras: [Facet] = [], looks: [Facet] = [], films: [Facet] = [], controls: [Facet] = [], regions: [Facet] = [],
+         districts: [Facet] = []) {
         self.cameras = cameras
         self.looks = looks
         self.films = films
         self.controls = controls
         self.regions = regions
+        self.districts = districts
     }
 
-    enum CodingKeys: String, CodingKey { case cameras, looks, films, controls, regions }
+    enum CodingKeys: String, CodingKey { case cameras, looks, films, controls, regions, districts }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -419,21 +450,15 @@ struct MomentExploreFacets: Decodable, Equatable {
         films = try c.decodeIfPresent([Facet].self, forKey: .films) ?? []
         controls = try c.decodeIfPresent([Facet].self, forKey: .controls) ?? []
         regions = try c.decodeIfPresent([Facet].self, forKey: .regions) ?? []
-    }
-
-    /// The 화상 values that fit `kind` (both lists when nil).
-    func looks(for kind: MomentExploreQuery.Kind?) -> [Facet] {
-        switch kind {
-        case .film: films
-        case .digital: controls
-        case nil: controls + films
-        }
+        districts = try c.decodeIfPresent([Facet].self, forKey: .districts) ?? []
     }
 
     struct Facet: Decodable, Hashable, Identifiable {
         let value: String
         let count: Int
-        var id: String { value }
+        /// For a district: the region it is in.
+        var region: String? = nil
+        var id: String { (region.map { $0 + "/" } ?? "") + value }
     }
 }
 
@@ -516,6 +541,8 @@ protocol MomentStore: AnyObject {
     func explore(_ query: MomentExploreQuery, offset: Int, limit: Int) async throws -> [MomentPhoto]
     /// The cameras, looks and regions on 순간들 now, for 탐색's filters.
     func exploreFacets() async throws -> MomentExploreFacets
+    /// Where 순간들's photos are, for 탐색's map: about 1 km cells, never an exact spot.
+    func exploreMap(_ query: MomentExploreQuery) async throws -> [MomentMapCell]
     /// 이달의 사진관, newest month first, each with its winner once announced.
     func contests(limit: Int) async throws -> [MomentContest]
     /// A wall: the owner's published photos and their layout.
@@ -731,6 +758,12 @@ final class MockMomentStore: MomentStore {
             }
             .filter { query.look == nil || Self.look($0) == query.look }
             .filter { query.region == nil || $0.region == query.region }
+            .filter { query.district == nil || $0.district == query.district }
+            .filter { p in
+                guard let a = query.area else { return true }
+                guard let lat = p.info.lat, let lon = p.info.lon else { return false }
+                return lat >= a.minLat && lat <= a.maxLat && lon >= a.minLon && lon <= a.maxLon
+            }
             .sorted { a, b in
                 switch query.sort {
                 case .likes where a.momentLikeCount != b.momentLikeCount: return a.momentLikeCount > b.momentLikeCount
@@ -755,7 +788,25 @@ final class MockMomentStore: MomentStore {
         return MomentExploreFacets(cameras: facets { $0.info.camera }, looks: facets(Self.look),
                                    films: facets { $0.info.film },
                                    controls: facets { $0.info.film == nil ? $0.info.imageControl?.name : nil },
-                                   regions: facets { $0.region })
+                                   regions: facets { $0.region },
+                                   districts: Dictionary(grouping: shared.filter { $0.region != nil && $0.district != nil },
+                                                         by: { "\($0.region!)/\($0.district!)" })
+                                       .map { MomentExploreFacets.Facet(value: $0.value[0].district!, count: $0.value.count,
+                                                                        region: $0.value[0].region) }
+                                       .sorted { $0.count > $1.count })
+    }
+
+    func exploreMap(_ query: MomentExploreQuery) async throws -> [MomentMapCell] {
+        var q = query
+        q.region = nil; q.district = nil; q.area = nil
+        let list = try await explore(q, offset: 0, limit: 1000).filter { $0.info.lat != nil }
+        let cells = Dictionary(grouping: list) { p in
+            "\((p.info.lat! * 100).rounded() / 100),\((p.info.lon! * 100).rounded() / 100)"
+        }
+        return cells.values.map { group in
+            MomentMapCell(lat: (group[0].info.lat! * 100).rounded() / 100, lon: (group[0].info.lon! * 100).rounded() / 100,
+                          count: group.count, photo: group[0].id)
+        }
     }
 
     /// Months of 이달의 사진관 (set by `sample()`); winners are read from `photos`.
@@ -972,6 +1023,10 @@ extension MockMomentStore {
                 createdAt: Date().addingTimeInterval(Double(-n) * 3600), sharedAt: n % 3 == 0 ? Date() : nil)
             var placed = photo
             placed.region = n % 2 == 0 ? "서울" : "부산"
+            placed.district = n % 2 == 0 ? (n % 4 == 0 ? "성동구" : "강남구") : "연제구"
+            let spot = n % 2 == 0 ? (n % 4 == 0 ? (37.5445, 127.0560) : (37.5172, 127.0473)) : (35.1796, 129.0756)
+            placed.info.lat = spot.0 + Double(n) * 0.0004
+            placed.info.lon = spot.1
             store.photos[photo.id] = placed
             store.items[photo.id] = WallItem(photoID: photo.id, x: Double(n % 3) * 0.34,
                                              y: Double(n / 3) * 0.3, width: 0.3, gridOrder: -n)
@@ -988,6 +1043,9 @@ extension MockMomentStore {
                 createdAt: Date().addingTimeInterval(Double(-n) * 7200), sharedAt: n < 2 ? Date().addingTimeInterval(-60) : nil)
             var placed = photo
             placed.region = "일본"
+            placed.district = "도쿄"
+            placed.info.lat = 35.6595
+            placed.info.lon = 139.7005
             store.photos[photo.id] = placed
             if n == 0 {
                 // Last month's winner.

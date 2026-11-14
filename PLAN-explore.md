@@ -28,6 +28,21 @@
 - 서버: `20261114040000_moment_explore_kind.sql` — `explore_photos`에 `p_kind`('film'|'digital'),
   `is_film_gr()`, `explore_facets`에 `films`·`controls` 목록 추가(`looks`는 이전 앱용으로 남김).
 
+## 지역: 목록 · 지도 · 내 주변 (2026-11-14)
+
+- 지역 칩을 누르면 시트(`MomentExploreRegionSheet`): **목록 / 지도**.
+- 목록: 전체, 내 주변 3km(iPhone·iPad만, 위치 권한), **국내**(기본 접힘: 시·도 17개),
+  **해외**(기본 펼침: 일본 + 사진이 있는 나라). 시·도를 열면 "서울 전체"와 시·군·구(사진이 있는 곳만),
+  일본을 열면 "일본 전체"와 도쿄·오사카·교토·후쿠오카·홋카이도·오키나와·가나가와·아이치·효고·나라
+  (`MomentRegion.abroadPresets`) + 사진이 있는 다른 곳.
+- 시·군·구(`photos.district`): 앱이 좌표로 계산. 특별·광역시는 MapKit 주소에서 구/군(iOS 26·macOS 26+),
+  도는 시(수원시), 일본은 도·부·현(도쿄, 오사카), 그 밖의 나라는 도시(파리, 타이베이시).
+- 지도: 사진을 약 1km 칸(0.01°)으로 묶어 썸네일로 보여 줌(`explore_map()`), 정확한 지점은 지도에 안 나옴.
+  확대 정도에 따라 가까운 점은 하나로 합침. "이 범위 사진 보기"를 누르면 그 화면 범위가 필터.
+- Mac은 위치 안내 문구가 "위치는 쓰지 않습니다"라서 내 주변을 빼 둠.
+- 서버: `20261114070000_moment_explore_area.sql` — `district`, `explore_photos`에 `p_district`와
+  범위(`p_min_lat`…`p_max_lon`), `explore_map()`, facets에 `districts`.
+
 ## 서버 (`supabase/migrations/20261114030000_moment_explore.sql`)
 
 - `photos.region` (1–20자, 위치가 있을 때만), 소유자가 바꿀 수 있음(`grant update (region)`).

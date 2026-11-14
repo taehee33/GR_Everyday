@@ -33,7 +33,7 @@ struct MomentView: View {
         var line: String {
             switch self {
             case .moments: "누군가의 GR에 담긴, 오늘의 순간"
-            case .explore: "기종과 화상, 지역으로 찾아보는 순간"
+            case .explore: "각자의 방식으로 기억하는 순간들"
             case .mine: "흘러가는 일상 속, 특별한 순간"
             }
         }
@@ -95,7 +95,6 @@ struct MomentView: View {
                         .task { if !account.contests.loaded { await account.contests.reload() } }
                         .task(id: account.me?.id) { if account.feed.loaded { await account.feed.reload() } }
                 case .explore:
-                    MomentPastWinners(account: account)
                     MomentExploreView(account: account, feed: account.explore)
                         .task { if !account.explore.loaded { await account.explore.reload() } }
                         .task { if !account.contests.loaded { await account.contests.reload() } }

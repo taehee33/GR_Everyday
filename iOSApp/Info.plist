@@ -10,6 +10,9 @@
 	<!-- The camera answers at 192.168.0.1 on its own Wi-Fi -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>카메라 Wi-Fi에 연결해 사진을 불러오고 원격으로 촬영해요.</string>
+	<!-- 순간들 › 탐색 › 지역 › 내 주변 (MomentExploreRegionSheet) -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>탐색에서 내 주변에서 찍힌 사진을 찾을 때만 지금 위치를 써요.</string>
 	<!-- Saved photos stay visible in the Files app under "GR Everyday" -->
 	<key>UIFileSharingEnabled</key>
 	<true/>

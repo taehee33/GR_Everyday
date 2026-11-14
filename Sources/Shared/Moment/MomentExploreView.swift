@@ -1,11 +1,24 @@
 import SwiftUI
 
-/// 탐색: what is on 순간들 as a close grid. One row of chips: the order (추천, 좋아요, 최신),
-/// then camera (digital or film GR), look (image control for digital, film for film) and region. Tap a photo for the same detail as 순간들.
+/// 탐색: what is on 순간들 as a close grid. One row of chips: the order (추천, 좋아요, 최신,
+/// or 이전 당선작), then camera (digital or film GR), look (image control for digital, film for
+/// film) and region. Tap a photo for the same detail as 순간들.
 struct MomentExploreView: View {
     @ObservedObject var account: MomentAccount
     @ObservedObject var feed: MomentFeed
+    /// 이달의 사진관: the months and their winners.
+    @ObservedObject private var contests: MomentFeed
     @State private var opened: MomentPhoto?
+    @State private var openedWinner: MomentPhoto?
+    @State private var choosingRegion = false
+
+    init(account: MomentAccount, feed: MomentFeed) {
+        self.account = account
+        self.feed = feed
+        self.contests = account.contests
+    }
+
+    private var showsWinners: Bool { feed.query.sort == .winners }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -16,12 +29,25 @@ struct MomentExploreView: View {
             if let message = feed.errorMessage {
                 Text(message).font(.footnote).foregroundStyle(.red)
             }
-            grid
+            if showsWinners { winnersGrid } else { grid }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onChange(of: feed.query) { Task { await feed.reload() } }
+        .onChange(of: feed.query) { _, new in
+            if new.sort == .winners {
+                // The winners come with 이달의 사진관, not from 탐색's server query.
+                if !contests.loaded { Task { await contests.reload() } }
+            } else {
+                Task { await feed.reload() }
+            }
+        }
         .sheet(item: $opened) { photo in
             MomentFeedDetail(account: account, feed: feed, photoID: photo.id)
+        }
+        .sheet(isPresented: $choosingRegion) {
+            MomentExploreRegionSheet(feed: feed)
+        }
+        .sheet(item: $openedWinner) { photo in
+            MomentFeedDetail(account: account, feed: contests, photoID: photo.id)
         }
     }
 
@@ -32,17 +58,21 @@ struct MomentExploreView: View {
         HStack(alignment: .top, spacing: 8) {
             FlowLayout(spacing: 8) {
                 sortChip
-                cameraChip
-                lookChip
-                plainFilter("지역", selection: $feed.query.region, facets: feed.facets.regions)
+                if !showsWinners {
+                    cameraChip
+                    lookChip
+                    regionChip
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if feed.query.hasFilter {
+            if feed.query.hasFilter, !showsWinners {
                 Button {
                     feed.query.camera = nil
                     feed.query.kind = nil
                     feed.query.look = nil
                     feed.query.region = nil
+                    feed.query.district = nil
+                    feed.query.area = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(.secondary)
                         .frame(height: 33)
@@ -53,15 +83,30 @@ struct MomentExploreView: View {
         }
     }
 
+    /// 지역: opens the list (시·도 › 시·군·구, 내 주변) and the map.
+    private var regionChip: some View {
+        let query = feed.query
+        let label = query.area?.label ?? query.region.map { region in query.district.map { "\(region) \($0)" } ?? region }
+        return Button { choosingRegion = true } label: {
+            chipLabel(label ?? "지역", icon: query.area != nil ? "map" : nil, picked: label != nil)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel(label.map { "지역: \($0)" } ?? "지역 필터")
+    }
+
     /// 추천 · 좋아요 · 최신, and for 좋아요 how far back.
     private var sortChip: some View {
         let query = feed.query
         let label = query.sort == .likes ? "좋아요 · \(query.period.title)" : query.sort.title
         return Menu {
             Section("정렬") {
-                ForEach(MomentExploreQuery.Sort.allCases) { sort in
+                ForEach(MomentExploreQuery.Sort.orders) { sort in
                     check(sort.title, query.sort == sort) { feed.query.sort = sort }
                 }
+            }
+            Section {
+                check(MomentExploreQuery.Sort.winners.title, query.sort == .winners) { feed.query.sort = .winners }
             }
             if query.sort == .likes {
                 Section("기간") {
@@ -80,25 +125,19 @@ struct MomentExploreView: View {
     /// All, all digital GRs, all film GRs, or one camera (digital and film listed apart).
     private var cameraChip: some View {
         let query = feed.query
-        let digital = feed.facets.cameras.filter { MomentExploreQuery.Kind(camera: $0.value) == .digital }
-        let film = feed.facets.cameras.filter { MomentExploreQuery.Kind(camera: $0.value) == .film }
+        let shared = feed.facets.cameras
+        let digital = Self.options(MomentShotInfo.digitalCameras, shared.filter { MomentExploreQuery.Kind(camera: $0.value) == .digital })
+        let film = Self.options(MomentShotInfo.filmCameras, shared.filter { MomentExploreQuery.Kind(camera: $0.value) == .film })
         let label = query.camera ?? query.kind?.title
         return Menu {
             check("전체", query.camera == nil && query.kind == nil) { pickCamera(nil, kind: nil) }
+            // Folded until opened: each kind's "모두" and its cameras.
             ForEach(MomentExploreQuery.Kind.allCases) { kind in
-                check("\(kind.title) 모두", query.camera == nil && query.kind == kind) { pickCamera(nil, kind: kind) }
-            }
-            if !digital.isEmpty {
-                Section("디지털 GR") {
-                    ForEach(digital) { facet in
-                        check("\(facet.value)  \(facet.count)", query.camera == facet.value) { pickCamera(facet.value, kind: nil) }
-                    }
-                }
-            }
-            if !film.isEmpty {
-                Section("필름 GR") {
-                    ForEach(film) { facet in
-                        check("\(facet.value)  \(facet.count)", query.camera == facet.value) { pickCamera(facet.value, kind: nil) }
+                let cameras = kind == .digital ? digital : film
+                folder(kind.title, on: query.effectiveKind == kind) {
+                    check("\(kind.title) 모두", query.camera == nil && query.kind == kind) { pickCamera(nil, kind: kind) }
+                    ForEach(cameras) { facet in
+                        check(Self.title(facet), query.camera == facet.value) { pickCamera(facet.value, kind: nil) }
                     }
                 }
             }
@@ -116,14 +155,12 @@ struct MomentExploreView: View {
         let title = kind == .film ? "필름" : "화상"
         return Menu {
             check("전체", query.look == nil) { feed.query.look = nil }
+            // Folded until opened; only the one that fits a picked camera kind.
             if kind != .film {
-                lookSection(kind == nil ? "이미지 컨트롤" : nil, feed.facets.controls, picked: query.look)
+                lookFolder("이미지 컨트롤", Self.options(Self.imageControls, feed.facets.controls), picked: query.look)
             }
             if kind != .digital {
-                lookSection(kind == nil ? "필름" : nil, feed.facets.films, picked: query.look)
-            }
-            if feed.facets.looks(for: kind).isEmpty {
-                Text(kind == .film ? "아직 고를 수 있는 필름이 없어요" : "아직 고를 수 있는 화상이 없어요")
+                lookFolder("필름", Self.options(MomentShotInfo.filmChoices, feed.facets.films), picked: query.look)
             }
         } label: {
             chipLabel(query.look ?? title, picked: query.look != nil)
@@ -132,17 +169,21 @@ struct MomentExploreView: View {
         .accessibilityLabel(query.look.map { "\(title): \($0)" } ?? "\(title) 필터")
     }
 
-    @ViewBuilder
-    private func lookSection(_ header: String?, _ facets: [MomentExploreFacets.Facet], picked: String?) -> some View {
-        let rows = ForEach(facets) { facet in
-            check("\(facet.value)  \(facet.count)", picked == facet.value) { feed.query.look = facet.value }
+    private func lookFolder(_ title: String, _ facets: [MomentExploreFacets.Facet], picked: String?) -> some View {
+        folder(title, on: facets.contains { $0.value == picked }) {
+            ForEach(facets) { facet in
+                check(Self.title(facet), picked == facet.value) { feed.query.look = facet.value }
+            }
         }
-        if facets.isEmpty {
-            EmptyView()
-        } else if let header {
-            Section(header) { rows }
-        } else {
-            rows
+    }
+
+    /// A folded group inside a filter menu: a row with › that opens to its choices. Checked
+    /// when what is picked now is inside it.
+    private func folder<Content: View>(_ title: String, on: Bool, @ViewBuilder content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            if on { Label(title, systemImage: "checkmark") } else { Text(title) }
         }
     }
 
@@ -151,28 +192,36 @@ struct MomentExploreView: View {
         var query = feed.query
         query.camera = camera
         query.kind = camera == nil ? kind : nil
-        if let look = query.look, !feed.facets.looks(for: query.effectiveKind).contains(where: { $0.value == look }) {
+        if let look = query.look, !Self.looks(for: query.effectiveKind, feed.facets).contains(look) {
             query.look = nil
         }
         feed.query = query
     }
 
-    private func plainFilter(_ title: String, selection: Binding<String?>,
-                             facets: [MomentExploreFacets.Facet]) -> some View {
-        let picked = selection.wrappedValue
-        return Menu {
-            check("전체", picked == nil) { selection.wrappedValue = nil }
-            if facets.isEmpty {
-                Text("아직 고를 수 있는 \(title)이 없어요")
-            }
-            ForEach(facets) { facet in
-                check("\(facet.value)  \(facet.count)", picked == facet.value) { selection.wrappedValue = facet.value }
-            }
-        } label: {
-            chipLabel(picked ?? title, picked: picked != nil)
-        }
-        .chipMenu()
-        .accessibilityLabel(picked.map { "\(title): \($0)" } ?? "\(title) 필터")
+    /// The same choices as the upload screen, in its order, with how many shared photos have
+    /// each; values that are on 순간들 but not in the list (a typed film) come after.
+    static func options(_ all: [String], _ shared: [MomentExploreFacets.Facet]) -> [MomentExploreFacets.Facet] {
+        let counts = Dictionary(shared.map { ($0.value, $0.count) }, uniquingKeysWith: +)
+        var seen = Set<String>()
+        let listed = all.filter { seen.insert($0).inserted }
+            .map { MomentExploreFacets.Facet(value: $0, count: counts[$0] ?? 0) }
+        return listed + shared.filter { !seen.contains($0.value) }
+    }
+
+    /// "GR IV  3", or just "GR IIIx" when no shared photo has it.
+    static func title(_ facet: MomentExploreFacets.Facet) -> String {
+        facet.count > 0 ? "\(facet.value)  \(facet.count)" : facet.value
+    }
+
+    /// Every image control the app can read from a GR (as in the upload screen), in code order.
+    static let imageControls: [String] = MakerNote.imageToneNames.sorted { $0.key < $1.key }.map(\.value)
+
+    /// The 화상 values that fit `kind`.
+    static func looks(for kind: MomentExploreQuery.Kind?, _ facets: MomentExploreFacets) -> Set<String> {
+        var values = Set<String>()
+        if kind != .film { values.formUnion(imageControls); values.formUnion(facets.controls.map(\.value)) }
+        if kind != .digital { values.formUnion(MomentShotInfo.filmChoices); values.formUnion(facets.films.map(\.value)) }
+        return values
     }
 
     private func check(_ title: String, _ on: Bool, action: @escaping () -> Void) -> some View {
@@ -219,6 +268,38 @@ struct MomentExploreView: View {
                 }
             }
             if feed.loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 8) }
+        }
+    }
+
+    /// Every announced month's winner, newest first, with its month under it.
+    @ViewBuilder private var winnersGrid: some View {
+        let winners = contests.contests.compactMap { c in c.isAnnounced ? c.winner.map { (c, $0) } : nil }
+        if !contests.loaded {
+            ProgressView().frame(maxWidth: .infinity, minHeight: 220)
+        } else if winners.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "trophy").font(.title2).foregroundStyle(.tertiary)
+                Text("아직 발표된 당선작이 없어요.").font(.callout).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 220)
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: 3)], spacing: 14) {
+                ForEach(winners, id: \.0.id) { contest, photo in
+                    Button { openedWinner = photo } label: {
+                        VStack(spacing: 6) {
+                            Rectangle()
+                                .fill(.quaternary)
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay { MomentRemoteImage(url: account.store.thumbURL(photo), contentMode: .fill) }
+                                .clipped()
+                            Text(contest.longMonthTitle).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(contest.longMonthTitle) 당선작, \(photo.author?.title ?? "") 님의 순간")
+                }
+            }
         }
     }
 

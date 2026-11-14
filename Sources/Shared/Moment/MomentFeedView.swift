@@ -21,6 +21,8 @@ final class MomentFeed: ObservableObject {
     /// 탐색 only: the order and filters, and what the filters can offer.
     @Published var query = MomentExploreQuery()
     @Published private(set) var facets = MomentExploreFacets()
+    /// 탐색 only: where the photos are, for the region map (about 1 km cells).
+    @Published private(set) var mapCells: [MomentMapCell] = []
     /// 탐색 only: rows the server has given so far (some may be kept off screen), for the next offset.
     private var served = 0
 
@@ -105,6 +107,15 @@ final class MomentFeed: ObservableObject {
                 reachedEnd = true
                 liked = (try? await store.likes(among: photos.map(\.id), in: place)) ?? []
             }
+        } catch {
+            if !error.isCancellation { errorMessage = error.localizedDescription }
+        }
+    }
+
+    /// 탐색's map points for the camera and look filters on now.
+    func loadMap() async {
+        do {
+            mapCells = try await store.exploreMap(query)
         } catch {
             if !error.isCancellation { errorMessage = error.localizedDescription }
         }

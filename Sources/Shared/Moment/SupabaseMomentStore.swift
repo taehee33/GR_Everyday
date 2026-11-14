@@ -210,12 +210,18 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
             let p_limit: Int
             /// Left out when nil (servers before migration 20261114040000 do not know it).
             let p_kind: String?
+            /// Left out when nil (servers before migration 20261114070000 do not know them).
+            let p_district: String?
+            let p_min_lat, p_max_lat, p_min_lon, p_max_lon: Double?
         }
         do {
             let params = Params(p_sort: query.sort.rawValue, p_period: query.effectivePeriod.rawValue,
                                 p_camera: query.camera, p_look: query.look, p_region: query.region,
                                 p_offset: offset, p_limit: limit,
-                                p_kind: query.camera == nil ? query.kind?.rawValue : nil)
+                                p_kind: query.camera == nil ? query.kind?.rawValue : nil,
+                                p_district: query.district,
+                                p_min_lat: query.area?.minLat, p_max_lat: query.area?.maxLat,
+                                p_min_lon: query.area?.minLon, p_max_lon: query.area?.maxLon)
             let rows: [PhotoRow] = try await client.rpc("explore_photos", params: params)
                 .select(PhotoRow.columns).execute().value
             return rows.map(\.photo)
@@ -246,6 +252,21 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
                 return MomentContest(month: row.month, title: row.title, theme: row.theme, intro: row.intro,
                                      winner: row.announcedAt == nil ? nil : winner, announcedAt: row.announcedAt)
             }
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func exploreMap(_ query: MomentExploreQuery) async throws -> [MomentMapCell] {
+        struct Params: Encodable {
+            let p_camera: String?
+            let p_look: String?
+            let p_kind: String?
+        }
+        do {
+            return try await client.rpc("explore_map", params: Params(
+                p_camera: query.camera, p_look: query.look,
+                p_kind: query.camera == nil ? query.kind?.rawValue : nil)).execute().value
         } catch {
             throw Self.map(error)
         }
@@ -309,32 +330,44 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         let published: PublishResult = try await invoke(
             "moment-publish", body: PublishRequest(id: started.id, shareNow: upload.shareNow))
         var photo = published.photo.photo
-        photo.region = await saveRegion(started.id, info: upload.info)
+        let place = await saveRegion(started.id, info: upload.info)
+        photo.region = place.region
+        photo.district = place.district
         return photo
     }
 
-    /// Writes `photos.region` from the shared location (none without one), for 탐색's filter.
-    /// Best effort: a photo without it only stays out of the region filter.
+    /// Writes `photos.region` and `district` from the shared location (none without one), for
+    /// 탐색's filter. Best effort: a photo without them only stays out of the region filter.
     @discardableResult
-    private func saveRegion(_ photo: UUID, info: MomentShotInfo) async -> String? {
-        var region: String?
-        if let lat = info.lat, let lon = info.lon { region = await MomentRegion.name(lat: lat, lon: lon) }
+    private func saveRegion(_ photo: UUID, info: MomentShotInfo) async -> MomentRegion.Place {
+        var place = MomentRegion.Place()
+        if let lat = info.lat, let lon = info.lon { place = await MomentRegion.place(lat: lat, lon: lon) }
         struct Update: Encodable {
             let region: String?
-            enum CodingKeys: String, CodingKey { case region }
-            // A null clears it when the location is taken off.
+            let district: String??
+            enum CodingKeys: String, CodingKey { case region, district }
+            // A null clears them when the location is taken off.
             func encode(to encoder: Encoder) throws {
                 var c = encoder.container(keyedBy: CodingKeys.self)
                 try c.encode(region, forKey: .region)
+                if let district { try c.encode(district, forKey: .district) }
             }
         }
         do {
-            try await client.from("photos").update(Update(region: region), returning: .minimal)
+            try await client.from("photos").update(Update(region: place.region, district: .some(place.district)),
+                                                   returning: .minimal)
                 .eq("id", value: photo).execute()
         } catch {
-            return nil
+            // Before migration 20261114070000 there is no district column: keep the region.
+            do {
+                try await client.from("photos").update(Update(region: place.region, district: nil), returning: .minimal)
+                    .eq("id", value: photo).execute()
+                return MomentRegion.Place(region: place.region)
+            } catch {
+                return MomentRegion.Place()
+            }
         }
-        return region
+        return place
     }
 
     private func put(_ data: Data, to target: PresignedPut) async throws {
