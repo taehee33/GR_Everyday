@@ -7,6 +7,8 @@ struct CameraScreen: View {
     var openLibrary: () -> Void = {}
     /// Opens the shooting screen; nil where there is none to open (the sheet over it).
     var openShoot: (() -> Void)? = nil
+    /// Opens 이미지 컨트롤 (the card's photos by image control).
+    var openTones: (() -> Void)? = nil
     @State private var registering = false
     @State private var removing: SavedCamera?
 
@@ -136,7 +138,7 @@ struct CameraScreen: View {
         }
     }
 
-    /// Big tiles to the shooting screen and the library, there with or without a camera.
+    /// Big tiles to the shooting screen and 이미지 컨트롤, there with or without a camera.
     @ViewBuilder private var shortcuts: some View {
         if let openShoot {
             Section {
@@ -144,9 +146,9 @@ struct CameraScreen: View {
                     tile("원격 촬영", "camera.aperture",
                          note: connection.isConnected && !connection.viaUSB ? "라이브뷰 보기" : "연결하면 쓸 수 있어요",
                          action: openShoot)
-                    tile("라이브러리", "photo.on.rectangle",
-                         note: connection.isConnected ? "카메라 사진 보기" : "지난번 목록 보기",
-                         action: openLibrary)
+                    if let openTones {
+                        tile("이미지 컨트롤", "camera.filters", note: "이미지 컨트롤별 사진", action: openTones)
+                    }
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)

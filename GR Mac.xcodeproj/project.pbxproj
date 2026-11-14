@@ -356,6 +356,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "GR 카메라를 찾고, 카메라 Wi-Fi를 켜는 데 Bluetooth를 사용합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "고른 사진을 사진 앱에 저장합니다.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "앱이 저장한 사진이 사진 앱에 아직 있는지 확인해서, 지운 사진을 다시 저장할 수 있게 합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -389,6 +390,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "GR 카메라를 찾고, 카메라 Wi-Fi를 켜는 데 Bluetooth를 사용합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "카메라 Wi-Fi(192.168.0.1)에서 사진과 라이브뷰를 받아옵니다.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "고른 사진을 사진 앱에 저장합니다.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "앱이 저장한 사진이 사진 앱에 아직 있는지 확인해서, 지운 사진을 다시 저장할 수 있게 합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";

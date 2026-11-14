@@ -50,7 +50,7 @@ struct TransferBar: View {
                 .allowsHitTesting(false)
         }
         VStack(alignment: .leading, spacing: 2) {
-            Text("사진 앱에 저장 중 · \(min(s.finished + 1, s.count))/\(s.count)")
+            Text("\(PhotosLibrary.target.toPhotos ? "사진 앱" : "파일 앱")에 저장 중 · \(min(s.finished + 1, s.count))/\(s.count)")
                 .font(.subheadline.weight(.semibold))
             Text(TransferText.detail(s))
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -211,9 +211,11 @@ struct TransferRow: View {
                     .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
         case .done:
-            Text(sizeText ?? "저장됨").font(.caption).foregroundStyle(.secondary)
+            Text(transfer.resaved ? "사진 앱에서 지워져 있어 다시 넣음" : sizeText ?? "저장됨")
+                .font(.caption).foregroundStyle(.secondary)
         case .skipped:
-            Text("이미 저장돼 있어 건너뜀").font(.caption).foregroundStyle(.secondary)
+            Text(PhotosLibrary.target.toPhotos ? "사진 앱에 이미 있어 건너뜀" : "파일 앱에 이미 있어 건너뜀")
+                .font(.caption).foregroundStyle(.secondary)
         case .cancelled:
             Text("취소됨").font(.caption).foregroundStyle(.secondary)
         case .failed(let message):
@@ -275,10 +277,11 @@ enum TransferText {
         return parts.joined(separator: " · ")
     }
 
-    /// "10장 저장 · 1장 이미 저장됨 · 1장 못 함"
+    /// "10장 저장 · 1장 다시 넣음 · 1장 이미 있음 · 1장 못 함"
     static func result(_ s: LibraryModel.TransferSummary) -> String {
-        var parts = ["\(s.done)장 저장"]
-        if s.skipped > 0 { parts.append("\(s.skipped)장 이미 저장됨") }
+        var parts = ["\(s.done - s.resaved)장 저장"]
+        if s.resaved > 0 { parts.append("\(s.resaved)장 다시 넣음") }
+        if s.skipped > 0 { parts.append("\(s.skipped)장 이미 있음") }
         if s.unsaved > 0 { parts.append("\(s.unsaved)장 못 함") }
         return parts.joined(separator: " · ")
     }

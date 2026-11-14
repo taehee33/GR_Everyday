@@ -1,7 +1,8 @@
 import SwiftUI
 import ImageIO
 
-/// 라이브러리: the camera card, then the card's photos by day, by image control, or 촬영 통계.
+/// 라이브러리: the camera card, then the card's photos by day, 촬영 통계, or 다운로드 기록.
+/// (이미지 컨트롤 lives in the 카메라 tab.)
 /// Tap to view; 선택 to pick several and save them to the Photos app.
 struct LibraryTab: View {
     @EnvironmentObject var library: LibraryModel
@@ -17,7 +18,7 @@ struct LibraryTab: View {
     /// iPad's wider grid gets proportionally larger tiles for the same 작게/보통/크게.
     private var tileSize: CGFloat { sizeClass == .regular ? thumbSize * 1.6 : thumbSize }
 
-    enum Page: String, CaseIterable { case photos = "사진", tones = "이미지 컨트롤", stats = "촬영 통계" }
+    enum Page: String, CaseIterable { case photos = "사진", stats = "촬영 통계", history = "다운로드 기록" }
 
     private var online: Bool { connection.isConnected }
 
@@ -26,17 +27,14 @@ struct LibraryTab: View {
             Group {
                 switch page {
                 case .photos: photosPage
-                case .tones:
-                    ImageControlList(stats: library.stats) { code in
-                        library.refine.tone = code
-                        page = .photos
-                    }
                 case .stats:
                     if library.photos.isEmpty {
                         emptyState
                     } else {
                         StatsView(stats: library.stats, section: Binding(get: { .stats }, set: { if $0 == .library { page = .photos } }))
                     }
+                case .history:
+                    DownloadHistoryView { page = .photos }
                 }
             }
             // Short pages (empty states) sit under the picker instead of floating mid-screen.
@@ -65,6 +63,8 @@ struct LibraryTab: View {
             // Run outside the refresh task: iOS cancels that one when the list redraws
             // mid-refresh, which cancelled the request to the camera.
             .refreshable { if online { await Task { await library.reload() }.value } }
+            // 카메라 → 이미지 컨트롤 picked one: show those photos.
+            .onChange(of: library.refine.tone) { _, tone in if tone != nil { page = .photos } }
             .sheet(isPresented: $showFilter) { FilterSheet() }
             .fullScreenCover(item: $viewing) { photo in
                 PhotoPager(start: photo, photos: library.visible)
@@ -418,7 +418,13 @@ struct Thumb: View {
                 HStack(spacing: 3) {
                     if photo.kind == .raw { badge("RAW") }
                     if photo.kind == .video { Image(systemName: "video.fill").font(.caption2) }
-                    if library.saved.contains(photo.name) { Image(systemName: "checkmark.circle.fill").font(.caption2) }
+                    if library.saved.contains(photo.name) {
+                        Image(systemName: "checkmark.circle.fill").font(.caption2)
+                    } else if library.goneFromPhotos.contains(photo.name) {
+                        // Saved once, deleted in the Photos app since.
+                        Image(systemName: "checkmark.circle.badge.xmark").font(.caption2).opacity(0.85)
+                            .accessibilityLabel("사진 앱에서 지워짐")
+                    }
                 }
                 .foregroundStyle(.white).shadow(radius: 2)
                 .padding(4)
@@ -468,6 +474,8 @@ struct PhotoPager: View {
     @State private var drag: CGSize = .zero
     /// The (i) sheet: EXIF and shooting settings of the photo shown.
     @State private var showInfo = false
+    /// The phone could already turn freely when the viewer opened (left as it was on close).
+    @State private var wasFree = false
 
     private var currentPhoto: Photo? { photos.first { $0.id == current } }
     /// 0 at rest, 1 when dragged far enough to close.
@@ -515,7 +523,13 @@ struct PhotoPager: View {
         .presentationBackground(.clear)
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
-        .onAppear { current = start.id }
+        .onAppear {
+            current = start.id
+            // Turn the phone to see a landscape photo full width, as in the Photos app.
+            wasFree = Orientation.free
+            Orientation.setFree(true)
+        }
+        .onDisappear { if !wasFree { Orientation.setFree(false) } }
         .sheet(isPresented: $showInfo) {
             if let photo = currentPhoto { PhotoInfoSheet(photo: photo) }
         }
@@ -554,13 +568,16 @@ struct PhotoPager: View {
     @ViewBuilder private var bottomBar: some View {
         if let photo = currentPhoto {
             HStack {
+                let toPhotos = PhotosLibrary.target.toPhotos
                 if library.saved.contains(photo.name) {
-                    Label("사진 앱에 저장됨", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Label(toPhotos ? "사진 앱에 저장됨" : "파일 앱에 저장됨", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
+                    let gone = library.goneFromPhotos.contains(photo.name)
                     Button { library.save([photo]) } label: {
-                        Label("사진 앱에 저장", systemImage: "square.and.arrow.down")
+                        Label(gone ? "사진 앱에서 지워짐 · 다시 저장" : toPhotos ? "사진 앱에 저장" : "파일 앱에 저장",
+                              systemImage: "square.and.arrow.down")
                     }
-                    .disabled(!connection.isConnected || library.isTransferring)
+                    .disabled((!connection.isConnected && library.localURL(photo) == nil) || library.isTransferring)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -662,12 +679,11 @@ struct ZoomablePhoto: UIViewRepresentable {
     func makeUIView(context: Context) -> PhotoScrollView {
         let scroll = PhotoScrollView()
         scroll.delegate = context.coordinator
-        scroll.minimumZoomScale = 1
-        scroll.maximumZoomScale = 5
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
         scroll.contentInsetAdjustmentBehavior = .never
-        scroll.imageView.image = image
+        scroll.decelerationRate = .fast
+        scroll.show(image)
         let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
         double.numberOfTapsRequired = 2
         let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.singleTap))
@@ -679,14 +695,7 @@ struct ZoomablePhoto: UIViewRepresentable {
 
     func updateUIView(_ scroll: PhotoScrollView, context: Context) {
         context.coordinator.parent = self
-        if let shown = scroll.imageView.image, shown !== image {
-            // A sharper copy of the same photo keeps the zoom; a different shape resets it.
-            let same = abs(shown.size.width / max(shown.size.height, 1) - image.size.width / max(image.size.height, 1)) < 0.02
-            scroll.imageView.image = image
-            if !same { scroll.setZoomScale(1, animated: false) }
-        } else if scroll.imageView.image == nil {
-            scroll.imageView.image = image
-        }
+        if scroll.imageView.image !== image { scroll.show(image) }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
@@ -696,7 +705,8 @@ struct ZoomablePhoto: UIViewRepresentable {
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? PhotoScrollView)?.imageView }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            let zoomed = scrollView.zoomScale > 1.01
+            (scrollView as? PhotoScrollView)?.centerImage()
+            let zoomed = scrollView.zoomScale > scrollView.minimumZoomScale * 1.01
             if zoomed != parent.zoomed {
                 DispatchQueue.main.async { self.parent.zoomed = zoomed }
                 if zoomed, let onZoomIn = parent.onZoomIn { DispatchQueue.main.async { onZoomIn() } }
@@ -705,11 +715,11 @@ struct ZoomablePhoto: UIViewRepresentable {
 
         @objc func doubleTap(_ tap: UITapGestureRecognizer) {
             guard let scroll = tap.view as? UIScrollView else { return }
-            if scroll.zoomScale > 1.01 {
-                scroll.setZoomScale(1, animated: true)
+            if scroll.zoomScale > scroll.minimumZoomScale * 1.01 {
+                scroll.setZoomScale(scroll.minimumZoomScale, animated: true)
             } else {
                 let point = tap.location(in: (scroll as? PhotoScrollView)?.imageView)
-                let scale: CGFloat = 2.5
+                let scale = scroll.minimumZoomScale * 2.5
                 let size = CGSize(width: scroll.bounds.width / scale, height: scroll.bounds.height / scale)
                 scroll.zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
                                        width: size.width, height: size.height), animated: true)
@@ -720,13 +730,12 @@ struct ZoomablePhoto: UIViewRepresentable {
     }
 }
 
-/// The scroll view holding one photo, fitted to the screen while not zoomed.
+/// The scroll view holding one photo, as in the Photos app: the image view is the photo's own
+/// size, the smallest zoom fits it to the screen, and it stays centred whenever it is smaller
+/// than the screen (so zooming out or turning the phone never leaves it off to one side).
 final class PhotoScrollView: UIScrollView {
-    let imageView: UIImageView = {
-        let view = UIImageView()
-        view.contentMode = .scaleAspectFit
-        return view
-    }()
+    let imageView = UIImageView()
+    private var fittedBounds: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -735,12 +744,67 @@ final class PhotoScrollView: UIScrollView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    /// Shows `image`. A sharper copy of the same photo keeps the zoom and the spot looked at;
+    /// a different shape starts over, fitted.
+    func show(_ image: UIImage) {
+        let old = imageView.image
+        let same = old.map { abs($0.size.width / max($0.size.height, 1) - image.size.width / max(image.size.height, 1)) < 0.02 } ?? false
+        imageView.image = image
+        guard image.size.width > 0, image.size.height > 0 else { return }
+        if same, let old, zoomScale > minimumZoomScale * 1.01 {
+            // Same picture, more pixels: shrink the zoom by the same factor so nothing moves.
+            let factor = old.size.width / image.size.width
+            let offset = contentOffset
+            let zoom = zoomScale * factor
+            zoomScale = 1
+            imageView.frame = CGRect(origin: .zero, size: image.size)
+            contentSize = image.size
+            updateZoomLimits()
+            zoomScale = min(max(zoom, minimumZoomScale), maximumZoomScale)
+            contentOffset = offset
+            centerImage()
+        } else {
+            zoomScale = 1
+            imageView.frame = CGRect(origin: .zero, size: image.size)
+            contentSize = image.size
+            fittedBounds = .zero
+            setNeedsLayout()
+        }
+    }
+
+    private func updateZoomLimits() {
+        guard let size = imageView.image?.size, size.width > 0, size.height > 0,
+              bounds.width > 0, bounds.height > 0 else { return }
+        let fit = min(bounds.width / size.width, bounds.height / size.height)
+        minimumZoomScale = fit
+        // Up to 5× the fitted size, and at least the photo's own pixels.
+        maximumZoomScale = max(fit * 5, 1 / UIScreen.main.scale)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        if zoomScale <= 1.001, imageView.frame.size != bounds.size {
-            imageView.frame = bounds
-            contentSize = bounds.size
+        guard imageView.image != nil, bounds.width > 0 else { return }
+        if bounds.size != fittedBounds {
+            // First layout or the phone turned: fit again unless zoomed in, then keep the zoom in range.
+            let wasFitted = fittedBounds == .zero || zoomScale <= minimumZoomScale * 1.01
+            fittedBounds = bounds.size
+            updateZoomLimits()
+            if wasFitted || zoomScale < minimumZoomScale {
+                zoomScale = minimumZoomScale
+                centerImage()
+                contentOffset = CGPoint(x: -contentInset.left, y: -contentInset.top)
+            }
         }
+        centerImage()
+    }
+
+    /// Keeps the photo in the middle along any side where it is smaller than the screen.
+    func centerImage() {
+        let w = contentSize.width, h = contentSize.height
+        let x = max((bounds.width - w) / 2, 0)
+        let y = max((bounds.height - h) / 2, 0)
+        let inset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
+        if contentInset != inset { contentInset = inset }
     }
 }
 

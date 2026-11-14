@@ -60,7 +60,7 @@ final class BackgroundSave {
                 apply(summary, to: task)
                 let left = summary.failed + summary.cancelled + summary.waiting
                 if left == 0 {
-                    task.updateTitle("저장 완료", subtitle: "\(summary.done)장을 사진 앱에 저장했어요")
+                    task.updateTitle("저장 완료", subtitle: "\(summary.done)장을 \(Self.place)에 저장했어요")
                 } else {
                     task.updateTitle(stoppedBySystem ? "저장 멈춤" : "저장 완료",
                                      subtitle: "\(summary.done)장 저장 · \(left)장 못 함")
@@ -142,7 +142,9 @@ final class BackgroundSave {
         stop?()
     }
 
-    private static let title = "사진 앱에 저장 중"
+    private static var title: String { "\(place)에 저장 중" }
+    /// 사진 앱 or 파일 앱, by 설정 → 저장 위치.
+    static var place: String { PhotosLibrary.target.toPhotos ? "사진 앱" : "파일 앱" }
 
     private static func subtitle(_ s: LibraryModel.TransferSummary) -> String {
         var parts = ["\(min(s.finished + 1, s.count))/\(s.count)장"]
@@ -203,7 +205,7 @@ final class BackgroundSave {
             content.body = "\(names) — 앱에서 다시 저장할 수 있어요."
         } else {
             content.title = "저장을 마쳤어요"
-            content.body = "\(s.done)장을 사진 앱에 저장했어요."
+            content.body = "\(s.done)장을 \(Self.place)에 저장했어요."
         }
         content.sound = .default
         let request = UNNotificationRequest(identifier: "save-finished", content: content, trigger: nil)

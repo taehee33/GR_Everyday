@@ -9,6 +9,8 @@ struct SettingsTab: View {
     @AppStorage(LibraryModel.AutoSave.raw) private var autoRAW = true
     @AppStorage(LibraryModel.AutoSave.video) private var autoVideo = false
     @AppStorage(PhotosLibrary.pairRAWKey) private var pairRAW = false
+    @AppStorage(PhotosLibrary.targetKey) private var saveTarget = PhotosLibrary.Target.photos.rawValue
+    @ObservedObject private var history = SaveHistory.shared
     @AppStorage(ImageCache.sharpThumbnailsKey) private var sharpThumbnails = false
     @State private var cacheSize: Int64 = 0
     @State private var showSharpInfo = false
@@ -30,6 +32,23 @@ struct SettingsTab: View {
                 }
 
                 Section {
+                    Picker("저장 위치", selection: $saveTarget) {
+                        ForEach(PhotosLibrary.Target.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    if target.toPhotos {
+                        LabeledContent("사진 앱에서 지운 사진 확인") {
+                            switch history.readStatus {
+                            case .authorized: Text("켜짐")
+                            case .limited: Text("새로 저장한 사진만")
+                            case .notDetermined:
+                                Button("허용") { Task { await history.requestRead() } }
+                            default:
+                                Button("설정 앱") {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                }
+                            }
+                        }
+                    }
                     Toggle("연결하면 새 사진 자동 저장", isOn: $autoSave)
                     if autoSave {
                         // Indented: these only say what 자동 저장 saves.
@@ -40,11 +59,13 @@ struct SettingsTab: View {
                         }
                         .padding(.leading, 24)
                     }
-                    Toggle("RAW+JPG를 사진 앱에 한 항목으로", isOn: $pairRAW)
+                    if target.toPhotos {
+                        Toggle("RAW+JPG를 사진 앱에 한 항목으로", isOn: $pairRAW)
+                    }
                 } header: {
                     Text("사진 저장")
                 } footer: {
-                    Text("사진 앱과 파일 앱의 ‘GR Everyday’ 폴더에 저장돼요. ‘한 항목으로’를 켜면 같은 사진의 JPG와 RAW가 사진 앱에서 한 장으로 보여요(파일 앱에는 둘 다 따로 남아요).")
+                    Text(saveFooter)
                 }
 
                 Section {
@@ -89,8 +110,25 @@ struct SettingsTab: View {
             .navigationTitle("설정")
             .toolbarTitleDisplayMode(.inlineLarge)
             .task { cacheSize = library.cacheSize }
+            .onChange(of: saveTarget) { library.refreshSaved() }
             .sheet(isPresented: $showSharpInfo) { sharpInfo }
         }
+    }
+
+    private var target: PhotosLibrary.Target { PhotosLibrary.Target(rawValue: saveTarget) ?? .photos }
+
+    private var saveFooter: String {
+        var text: String
+        switch target {
+        case .photos: text = "사진 앱에만 저장해요. 같은 사진이 파일 앱에 한 번 더 쌓이지 않아요."
+        case .both: text = "사진 앱과 파일 앱의 ‘GR Everyday’ 폴더에 함께 저장해요. 사진 앱에서 지워도 파일 앱 사본으로 다시 넣을 수 있어요."
+        case .files: text = "파일 앱의 ‘GR Everyday’ 폴더에만 저장해요. 사진 앱에는 넣지 않아요."
+        }
+        if target.toPhotos {
+            text += " ‘한 항목으로’를 켜면 같은 사진의 JPG와 RAW가 사진 앱에서 한 장으로 보여요."
+            text += " ‘지운 사진 확인’을 허용하면 사진 앱에서 지운 사진을 건너뛰지 않고 다시 저장해요."
+        }
+        return text
     }
 
     private func menuChoice(_ title: String, detail: String, icon: String, value: String) -> some View {

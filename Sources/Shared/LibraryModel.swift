@@ -53,6 +53,8 @@ final class LibraryModel: ObservableObject {
         }
         let photo: Photo
         var status: Status = .waiting
+        /// Was deleted in the Photos app; put back from the Files app copy.
+        var resaved = false
         /// File size once the camera has said it (the photo list doesn't carry sizes).
         var bytes: Int64?
         var received: Int64 = 0
@@ -70,6 +72,8 @@ final class LibraryModel: ObservableObject {
     /// Totals for the progress bar, the transfer list and the system's progress UI.
     struct TransferSummary {
         var count = 0, done = 0, skipped = 0, failed = 0, cancelled = 0, waiting = 0
+        /// Of done: put back into the Photos app after being deleted there.
+        var resaved = 0
         /// The one being received now.
         var current: Transfer?
         var receivedBytes: Int64 = 0
@@ -136,6 +140,9 @@ final class LibraryModel: ObservableObject {
     @Published var selection: Set<String> = []
     @Published var filter: Filter = .all
     @Published private(set) var saved: Set<String> = []
+    /// Saved to the Photos app once and deleted there since (iPhone/iPad, with read access).
+    /// Not in `saved`: saving them again puts them back.
+    @Published private(set) var goneFromPhotos: Set<String> = []
     @Published private(set) var isLoading = false
     @Published var error: String?
     @Published private(set) var transfers: [Transfer] = [] {
@@ -241,7 +248,8 @@ final class LibraryModel: ObservableObject {
         autoSaveOnLoad = false
         let kinds: Set<Photo.Kind> = Set([(Photo.Kind.jpeg, AutoSave.jpeg), (.raw, AutoSave.raw), (.video, AutoSave.video)]
             .filter { AutoSave.value($0.1) }.map(\.0))
-        let queue = photos.filter { kinds.contains($0.kind) && !saved.contains($0.name) }
+        // Not the ones deleted in the Photos app: that was on purpose.
+        let queue = photos.filter { kinds.contains($0.kind) && !saved.contains($0.name) && !goneFromPhotos.contains($0.name) }
         DebugLog.write("auto-save: \(queue.count) new of \(photos.count)")
         save(queue)
     }
@@ -280,6 +288,9 @@ final class LibraryModel: ObservableObject {
             refreshSaved()
         }
         loadStore()
+        #if os(iOS)
+        SaveHistory.shared.onChange = { [weak self] in self?.refreshSaved() }
+        #endif
     }
 
     private struct Store: Codable {
@@ -663,7 +674,11 @@ final class LibraryModel: ObservableObject {
             }
         }
         localFiles = files
+        #if os(iOS)
+        (saved, goneFromPhotos) = Self.savedOnDevice(files: files)
+        #else
         saved = Set(files.keys)
+        #endif
         Task {
             let read = await Task.detached(priority: .utility) {
                 files.compactMapValues { url -> Int? in
@@ -675,6 +690,27 @@ final class LibraryModel: ObservableObject {
             if read != localOrientation { localOrientation = read }
         }
     }
+
+    #if os(iOS)
+    /// What counts as saved depends on 설정 → 저장 위치. Saving to the Photos app: what's
+    /// there (or was put there, when the app can't look), plus Files app copies the app
+    /// knows nothing else about; one deleted in Photos is not saved. Files app only: the
+    /// files in the folder.
+    private static func savedOnDevice(files: [String: URL]) -> (saved: Set<String>, gone: Set<String>) {
+        let history = SaveHistory.shared
+        guard PhotosLibrary.target.toPhotos else { return (Set(files.keys), []) }
+        history.checkLegacy(files)
+        var saved = Set<String>(), gone = Set<String>()
+        for name in Set(files.keys).union(history.savedNames) {
+            switch history.photosState(name) {
+            case .inPhotos, .unknown: saved.insert(name)
+            case .deleted: gone.insert(name)
+            case .none: if files[name] != nil { saved.insert(name) }
+            }
+        }
+        return (saved, gone)
+    }
+    #endif
 
     func selectAll() { selection = Set(visible.map(\.id)) }
     var allVisibleSelected: Bool { !visible.isEmpty && visible.allSatisfy { selection.contains($0.id) } }
@@ -696,7 +732,8 @@ final class LibraryModel: ObservableObject {
 
     func save(_ queue: [Photo]) {
         guard !queue.isEmpty, !isTransferring else { return }
-        guard CameraAPI.online else {
+        // Ones with a copy in the Files app can go back into Photos without the camera.
+        guard CameraAPI.online || queue.allSatisfy({ localFiles[$0.name] != nil }) else {
             error = "카메라에 연결하면 저장할 수 있어요."
             return
         }
@@ -805,7 +842,9 @@ final class LibraryModel: ObservableObject {
             switch t.status {
             case .waiting: s.waiting += 1
             case .running: s.current = t
-            case .done: s.done += 1
+            case .done:
+                s.done += 1
+                if t.resaved { s.resaved += 1 }
             case .skipped: s.skipped += 1
             case .failed: s.failed += 1
             case .cancelled: s.cancelled += 1
@@ -827,6 +866,13 @@ final class LibraryModel: ObservableObject {
 
     private func runTransfers() async {
         var savedAny = false
+        #if os(iOS)
+        let target = PhotosLibrary.target
+        saveSession = UUID()
+        // Saving to the Photos app only: files come in here and go once they're in Photos.
+        let staging: URL? = target.keepsFile ? nil
+            : FileManager.default.temporaryDirectory.appendingPathComponent("Saving", isDirectory: true)
+        #endif
         defer {
             isTransferring = false
             if Task.isCancelled {
@@ -835,6 +881,7 @@ final class LibraryModel: ObservableObject {
             rememberUnfinished()
             refreshSaved()
             #if os(iOS)
+            if let staging { try? FileManager.default.removeItem(at: staging) }
             BackgroundSave.shared.end(transferSummary, unsaved: transfers.filter(\.isRetryable).map(\.photo.name))
             #endif
             rateSamples = []
@@ -844,6 +891,7 @@ final class LibraryModel: ObservableObject {
         }
         try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         #if os(iOS)
+        if let staging { try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true) }
         var waiting: [String: (file: URL, index: Int, kind: Photo.Kind)] = [:]
         #endif
         for i in transfers.indices {
@@ -853,21 +901,55 @@ final class LibraryModel: ObservableObject {
                 transfers[i].status = .skipped
                 selection.remove(photo.id)
                 rememberUnfinished()
+                #if os(iOS)
+                record(i, .skipped)
+                #endif
                 continue
             }
             savedAny = true
+            #if os(iOS)
+            // Deleted in Photos but still in the Files app: put that copy back, no download.
+            if target.toPhotos, let local = localFiles[photo.name] {
+                transfers[i].status = .running(0)
+                do {
+                    let id = try await PhotosLibrary.add(local, isVideo: photo.kind == .video)
+                    transfers[i].status = .done
+                    transfers[i].resaved = true
+                    transfers[i].bytes = (try? FileManager.default.attributesOfItem(atPath: local.path)[.size] as? Int64)
+                    transfers[i].received = transfers[i].bytes ?? 0
+                    record(i, .resaved, assetID: id, file: local)
+                    selection.remove(photo.id)
+                } catch {
+                    transfers[i].status = .failed(error.localizedDescription)
+                    record(i, .failed, message: error.localizedDescription)
+                }
+                rememberUnfinished()
+                BackgroundSave.shared.update(transferSummary)
+                continue
+            }
+            #endif
             transfers[i].status = .running(0)
             do {
+                #if os(iOS)
+                let file = try await download(photo, into: staging) { [weak self] received, expected in
+                    self?.noteReceived(received, expected: expected, at: i)
+                }
+                #else
                 let file = try await download(photo) { [weak self] received, expected in
                     self?.noteReceived(received, expected: expected, at: i)
                 }
+                #endif
                 transfers[i].status = .done
                 if let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) {
                     transfers[i].bytes = size
                     transfers[i].received = size
                 }
                 #if os(iOS)
-                await addToPhotos(photo, file: file, index: i, later: transfers[(i + 1)...], waiting: &waiting)
+                if target.toPhotos {
+                    await addToPhotos(photo, file: file, index: i, later: transfers[(i + 1)...], waiting: &waiting)
+                } else {
+                    record(i, .saved, file: file)
+                }
                 #else
                 _ = file
                 #endif
@@ -876,6 +958,9 @@ final class LibraryModel: ObservableObject {
             } catch {
                 transfers[i].status = Task.isCancelled ? .cancelled : .failed(Self.describe(error))
                 DebugLog.write("save: \(photo.name) \(Task.isCancelled ? "cancelled" : "failed"): \(error)")
+                #if os(iOS)
+                if !Task.isCancelled { record(i, .failed, message: Self.describe(error)) }
+                #endif
             }
             rememberUnfinished()
             #if os(iOS)
@@ -886,6 +971,23 @@ final class LibraryModel: ObservableObject {
         await flushPhotos(waiting)
         #endif
     }
+
+    #if os(iOS)
+    /// The save running now, to group its records in 다운로드 기록.
+    private var saveSession = UUID()
+
+    /// Adds this transfer to 다운로드 기록. `file` is kept only when it stays in the Files app.
+    private func record(_ i: Int, _ outcome: SaveHistory.Record.Outcome, assetID: String? = nil,
+                        file: URL? = nil, message: String? = nil) {
+        let t = transfers[i]
+        let docs = URL.documentsDirectory.standardizedFileURL.path + "/"
+        let path = file?.standardizedFileURL.path
+        let relative = path.flatMap { $0.hasPrefix(docs) ? String($0.dropFirst(docs.count)) : nil }
+        SaveHistory.shared.add(.init(session: saveSession, date: Date(), photo: t.photo, outcome: outcome,
+                                     message: message, bytes: t.bytes, assetID: assetID, file: relative,
+                                     checkable: assetID != nil && PhotosLibrary.canRead))
+    }
+    #endif
 
     private func folder(for photo: Photo) async -> URL {
         guard dateSubfolders else { return destination }
@@ -899,8 +1001,10 @@ final class LibraryModel: ObservableObject {
 
     /// Returns the saved file.
     @discardableResult
-    private func download(_ photo: Photo, progress: @escaping (Int64, Int64) -> Void) async throws -> URL {
-        let folder = await folder(for: photo)
+    private func download(_ photo: Photo, into staging: URL? = nil,
+                          progress: @escaping (Int64, Int64) -> Void) async throws -> URL {
+        var folder = staging ?? destination
+        if staging == nil { folder = await self.folder(for: photo) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(photo.name)
         let (file, response) = try await Downloader.fetch(CameraAPI.photoURL(photo), bytes: { received, expected in
@@ -960,9 +1064,12 @@ final class LibraryModel: ObservableObject {
                 waiting[base] = nil
                 let (jpeg, raw) = photo.kind == .jpeg ? (file, partner.file) : (partner.file, file)
                 do {
-                    try await PhotosLibrary.addPair(jpeg: jpeg, raw: raw)
+                    let id = try await PhotosLibrary.addPair(jpeg: jpeg, raw: raw)
+                    record(index, .saved, assetID: id, file: file)
+                    record(partner.index, .saved, assetID: id, file: partner.file)
                 } catch {
                     transfers[partner.index].status = .failed(error.localizedDescription)
+                    record(partner.index, .failed, message: error.localizedDescription)
                     throw error
                 }
             } else if pairable, later.contains(where: { other in
@@ -971,19 +1078,23 @@ final class LibraryModel: ObservableObject {
             }) {
                 waiting[base] = (file, index, photo.kind)
             } else {
-                try await PhotosLibrary.add(file, isVideo: photo.kind == .video)
+                let id = try await PhotosLibrary.add(file, isVideo: photo.kind == .video)
+                record(index, .saved, assetID: id, file: file)
             }
         } catch {
             transfers[index].status = .failed(error.localizedDescription)
+            record(index, .failed, message: error.localizedDescription)
         }
     }
 
     private func flushPhotos(_ waiting: [String: (file: URL, index: Int, kind: Photo.Kind)]) async {
         for item in waiting.values {
             do {
-                try await PhotosLibrary.add(item.file, isVideo: false)
+                let id = try await PhotosLibrary.add(item.file, isVideo: false)
+                record(item.index, .saved, assetID: id, file: item.file)
             } catch {
                 transfers[item.index].status = .failed(error.localizedDescription)
+                record(item.index, .failed, message: error.localizedDescription)
             }
         }
     }

@@ -17,7 +17,8 @@ struct GRConnectApp: App {
 }
 
 /// 카메라 · 라이브러리 · Moment · 설정. 카메라 connects and, once the camera is on Wi-Fi,
-/// becomes the shooting screen; 촬영 통계 is a view inside 라이브러리.
+/// becomes the shooting screen and holds 이미지 컨트롤; 촬영 통계 and 다운로드 기록 are views
+/// inside 라이브러리.
 struct RootView: View {
     @EnvironmentObject var connection: ConnectionModel
     @EnvironmentObject var library: LibraryModel
@@ -190,13 +191,16 @@ struct CameraTab: View {
     @EnvironmentObject var connection: ConnectionModel
     @State private var path: [Route] = []
 
-    enum Route: Hashable { case shoot }
+    enum Route: Hashable { case shoot, tones }
 
     var body: some View {
         NavigationStack(path: $path) {
-            CameraScreen(openLibrary: openLibrary, openShoot: { path = [.shoot] })
-                .navigationDestination(for: Route.self) { _ in
-                    ShootView(active: active) { path = [] }
+            CameraScreen(openLibrary: openLibrary, openShoot: { path = [.shoot] }, openTones: { path = [.tones] })
+                .navigationDestination(for: Route.self) { route in
+                    switch route {
+                    case .shoot: ShootView(active: active) { path = [] }
+                    case .tones: ImageControlScreen(openLibrary: openLibrary)
+                    }
                 }
         }
     }

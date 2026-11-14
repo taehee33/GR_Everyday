@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 사진 → 이미지 컨트롤, like GR WORLD's 화상 컨트롤 tab: one row per image control on the
+/// 카메라 → 이미지 컨트롤, like GR WORLD's 화상 컨트롤 tab: one row per image control on the
 /// card with its newest shot and count; favourites first. Tapping a row shows those photos.
 struct ImageControlList: View {
     @EnvironmentObject var library: LibraryModel
@@ -84,6 +84,22 @@ struct ImageControlList: View {
         var set = favorites
         if set.contains(code) { set.remove(code) } else { set.insert(code) }
         favoritesText = set.sorted().map(String.init).joined(separator: ",")
+    }
+}
+
+/// 카메라 → 이미지 컨트롤: the list above on its own screen. Tapping one shows its photos in
+/// 라이브러리.
+struct ImageControlScreen: View {
+    @EnvironmentObject var library: LibraryModel
+    let openLibrary: () -> Void
+
+    var body: some View {
+        ImageControlList(stats: library.stats) { code in
+            library.refine.tone = code
+            openLibrary()
+        }
+        .navigationTitle("이미지 컨트롤")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
