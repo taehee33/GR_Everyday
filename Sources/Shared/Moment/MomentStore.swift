@@ -107,6 +107,21 @@ struct MomentProfile: Codable, Equatable, Identifiable {
     }
 }
 
+/// Where a like is given: on the photo in a gallery, or on 순간들. Each keeps its own count,
+/// and 순간들 hearts are yellow so the two never look alike.
+enum MomentLikePlace: String, Codable {
+    case gallery, moment
+}
+
+extension MomentPhoto {
+    func likes(in place: MomentLikePlace) -> Int { place == .moment ? momentLikeCount : likeCount }
+
+    mutating func addLike(_ delta: Int, in place: MomentLikePlace) {
+        if place == .moment { momentLikeCount = max(momentLikeCount + delta, 0) }
+        else { likeCount = max(likeCount + delta, 0) }
+    }
+}
+
 struct MomentPhoto: Codable, Equatable, Identifiable {
     let id: UUID
     let owner: UUID
@@ -117,7 +132,10 @@ struct MomentPhoto: Codable, Equatable, Identifiable {
     let thumbWidth: Int
     let thumbHeight: Int
     var info: MomentShotInfo
+    /// Likes given in 갤러리 (someone's gallery, or mine).
     var likeCount: Int
+    /// Likes given on 순간들, apart from the gallery's; back to 0 when it leaves 순간들.
+    var momentLikeCount: Int = 0
     let createdAt: Date
     /// On the Moment feed since; nil = only on the owner's wall.
     var sharedAt: Date?
@@ -355,10 +373,10 @@ protocol MomentStore: AnyObject {
     func saveWall(style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection,
                   items: [WallItem]) async throws
 
-    func like(_ photo: UUID, _ on: Bool) async throws
-    /// Which of `photos` I have liked (empty when signed out).
-    func likes(among photos: [UUID]) async throws -> Set<UUID>
-    /// Photos I liked that can still be seen, most recently liked first.
+    func like(_ photo: UUID, _ on: Bool, in place: MomentLikePlace) async throws
+    /// Which of `photos` I have liked in `place` (empty when signed out).
+    func likes(among photos: [UUID], in place: MomentLikePlace) async throws -> Set<UUID>
+    /// Photos I liked on 순간들 that can still be seen, most recently liked first.
     func likedPhotos(limit: Int) async throws -> [MomentPhoto]
     /// Reports I filed, newest first.
     func myReports() async throws -> [MomentReport]
@@ -401,7 +419,7 @@ final class MockMomentStore: MomentStore {
     private var reports: [UUID: Set<UUID>] = [:]
     private var filed: [MomentReport] = []
     private var blocked: Set<UUID> = []
-    private var liked: Set<UUID> = []
+    private var liked: [MomentLikePlace: Set<UUID>] = [:]
     var now: () -> Date = Date.init
 
     init(signedInAs handle: String? = "me") {
@@ -611,6 +629,9 @@ final class MockMomentStore: MomentStore {
     func unshare(_ id: UUID) async throws {
         guard photos[id]?.owner == me?.id else { throw MomentError.notFound }
         photos[id]?.sharedAt = nil
+        // Like the server: its 순간들 likes go with it.
+        liked[.moment]?.remove(id)
+        photos[id]?.momentLikeCount = 0
     }
 
     func updateInfo(_ id: UUID, info: MomentShotInfo, caption: String?) async throws {
@@ -633,15 +654,16 @@ final class MockMomentStore: MomentStore {
         for item in newItems where photos[item.photoID]?.owner == me.id { items[item.photoID] = item }
     }
 
-    func like(_ id: UUID, _ on: Bool) async throws {
+    func like(_ id: UUID, _ on: Bool, in place: MomentLikePlace) async throws {
         _ = try requireMe()
-        guard photos[id] != nil else { throw MomentError.notFound }
-        if on, liked.insert(id).inserted { photos[id]?.likeCount += 1 }
-        if !on, liked.remove(id) != nil { photos[id]?.likeCount -= 1 }
+        guard let photo = photos[id] else { throw MomentError.notFound }
+        if on, place == .moment, photo.sharedAt == nil { throw MomentError.notFound }
+        if on, liked[place, default: []].insert(id).inserted { photos[id]?.addLike(1, in: place) }
+        if !on, liked[place]?.remove(id) != nil { photos[id]?.addLike(-1, in: place) }
     }
 
-    func likes(among ids: [UUID]) async throws -> Set<UUID> {
-        me == nil ? [] : liked.intersection(ids)
+    func likes(among ids: [UUID], in place: MomentLikePlace) async throws -> Set<UUID> {
+        me == nil ? [] : liked[place, default: []].intersection(ids)
     }
 
     func report(_ id: UUID, reason: String, note: String?) async throws {
@@ -658,7 +680,7 @@ final class MockMomentStore: MomentStore {
     }
 
     func likedPhotos(limit: Int) async throws -> [MomentPhoto] {
-        photos.values.filter { liked.contains($0.id) && $0.status == .published }.prefix(limit).map { $0 }
+        photos.values.filter { liked[.moment, default: []].contains($0.id) && $0.status == .published }.prefix(limit).map { $0 }
     }
 
     func myReports() async throws -> [MomentReport] { filed }

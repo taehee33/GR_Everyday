@@ -3,26 +3,37 @@ import SwiftUI
 /// A photo opened from a gallery (mine or someone's), full screen: a back button at the top left,
 /// "내 사진 3/8" in the middle, and the gallery's other photos one swipe away, a page each: up and
 /// down or left and right, as picked in 설정 (MomentGalleryPaging).
-/// Each page draws itself (`page(id, isCurrent)`); only the page on screen puts its buttons in
-/// the toolbar.
-struct MomentGalleryPager<Page: View>: View {
+/// Each page draws itself (`page(id, isCurrent)`); the buttons of the photo on screen
+/// (`actions(id)`) sit in the pager's own toolbar. (Pages putting them there themselves left the
+/// toolbar empty now and then after a swipe.)
+struct MomentGalleryPager<Page: View, Actions: View>: View {
     let title: String
     let ids: [UUID]
     @ViewBuilder let page: (UUID, Bool) -> Page
+    @ViewBuilder let actions: (UUID) -> Actions
     @Environment(\.dismiss) private var dismiss
     @AppStorage(MomentGalleryPaging.key) private var paging = MomentGalleryPaging.vertical
     @State private var current: UUID?
+    /// The page dots at the edge, shown on opening and on each swipe, then faded away.
+    @State private var showDots = false
+    @State private var hideDots: Task<Void, Never>?
+    /// The "swipe for the next photo" note, shown the first few times a gallery opens with more
+    /// than one photo, until the first swipe.
+    @State private var showHint = false
+    @AppStorage("momentGalleryHintShown") private var hintShown = 0
     private let start: UUID
 
-    init(title: String, ids: [UUID], start: UUID, @ViewBuilder page: @escaping (UUID, Bool) -> Page) {
+    init(title: String, ids: [UUID], start: UUID, @ViewBuilder page: @escaping (UUID, Bool) -> Page,
+         @ViewBuilder actions: @escaping (UUID) -> Actions) {
         self.title = title
         self.ids = ids.contains(start) ? ids : [start] + ids
         self.page = page
+        self.actions = actions
         self.start = start
     }
 
     private var counter: String {
-        guard let index = ids.firstIndex(of: current ?? start) else { return title }
+        guard ids.count > 1, let index = ids.firstIndex(of: current ?? start) else { return title }
         return "\(title) \(index + 1)/\(ids.count)"
     }
 
@@ -48,8 +59,38 @@ struct MomentGalleryPager<Page: View>: View {
                     .task {
                         proxy.scrollTo(start, anchor: .topLeading)
                         current = start
+                        guard ids.count > 1 else { return }
+                        flashDots()
+                        if hintShown < 3 {
+                            hintShown += 1
+                            try? await Task.sleep(for: .milliseconds(600))
+                            withAnimation(.spring(duration: 0.5)) { showHint = true }
+                        }
                     }
                 }
+            }
+            .overlay(alignment: paging == .vertical ? .trailing : .bottom) {
+                if ids.count > 1 {
+                    MomentPageDots(count: ids.count, index: ids.firstIndex(of: current ?? start) ?? 0,
+                                   axis: paging)
+                        .padding(paging == .vertical ? .trailing : .bottom, 6)
+                        .opacity(showDots ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.35), value: showDots)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if showHint {
+                    MomentSwipeHint(paging: paging)
+                        .padding(.bottom, paging == .vertical ? 24 : 40)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
+            .onChange(of: current) { old, _ in
+                guard old != nil else { return }
+                flashDots()
+                if showHint { withAnimation(.easeOut(duration: 0.25)) { showHint = false } }
             }
             .navigationTitle(counter)
             #if os(iOS)
@@ -59,6 +100,10 @@ struct MomentGalleryPager<Page: View>: View {
                 ToolbarItem(placement: Self.backPlacement) {
                     Button { dismiss() } label: { Image(systemName: "chevron.backward") }
                         .accessibilityLabel("뒤로")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    // A fresh view per photo, so a sheet or question left open never carries over.
+                    actions(current ?? start).id(current ?? start)
                 }
             }
             .onChange(of: ids) { old, new in
@@ -73,6 +118,15 @@ struct MomentGalleryPager<Page: View>: View {
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 640)
         #endif
+    }
+
+    private func flashDots() {
+        showDots = true
+        hideDots?.cancel()
+        hideDots = Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            if !Task.isCancelled { showDots = false }
+        }
     }
 
     private func pages(_ geo: GeometryProxy) -> some View {
@@ -94,7 +148,66 @@ struct MomentGalleryPager<Page: View>: View {
     }
 }
 
+/// Where this photo is among the gallery's: a dot each, the current one long, in a column at the
+/// right edge for up-and-down paging or a row at the bottom for sideways paging.
+private struct MomentPageDots: View {
+    let count: Int
+    let index: Int
+    let axis: MomentGalleryPaging
+
+    var body: some View {
+        let layout = axis == .vertical ? AnyLayout(VStackLayout(spacing: 5)) : AnyLayout(HStackLayout(spacing: 5))
+        layout {
+            ForEach(0..<count, id: \.self) { i in
+                Capsule()
+                    .fill(i == index ? Color.primary : Color.primary.opacity(0.25))
+                    .frame(width: axis == .vertical ? 5 : (i == index ? 14 : 5),
+                           height: axis == .vertical ? (i == index ? 14 : 5) : 5)
+            }
+        }
+        .padding(6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .animation(.spring(duration: 0.3), value: index)
+        .accessibilityHidden(true)
+    }
+}
+
+/// "위로 밀면 다음 사진": a small note with a bobbing arrow, the first few times.
+private struct MomentSwipeHint: View {
+    let paging: MomentGalleryPaging
+    @State private var bob = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: paging == .vertical ? "chevron.up" : "chevron.left")
+                .font(.footnote.bold())
+                .offset(x: paging == .horizontal ? (bob ? -4 : 2) : 0,
+                        y: paging == .vertical ? (bob ? -4 : 2) : 0)
+            Text(paging == .vertical ? "위로 밀면 다음 사진" : "옆으로 밀면 다음 사진")
+                .font(.footnote.weight(.medium))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { bob = true }
+        }
+    }
+}
+
 extension View {
+    /// Opens a gallery photo: from 갤러리 (`alone`) as a sheet with just that photo, the way
+    /// 순간들 opens one; from 그리드 full screen in the pager.
+    func momentPhotoOpen<Item: Identifiable, Single: View, Paged: View>(
+        item: Binding<Item?>, alone: Bool,
+        @ViewBuilder single: @escaping (Item) -> Single,
+        @ViewBuilder paged: @escaping (Item) -> Paged) -> some View {
+        let none = Binding<Item?>(get: { nil }, set: { _ in })
+        return sheet(item: alone ? item : none, content: single)
+            .momentGalleryCover(item: alone ? none : item, content: paged)
+    }
+
     /// Opens a gallery photo: full screen on iPhone and iPad, a sheet on the Mac.
     @ViewBuilder
     func momentGalleryCover<Item: Identifiable, Content: View>(item: Binding<Item?>,
@@ -107,18 +220,15 @@ extension View {
     }
 }
 
-/// The order a gallery's photos are hung in, so swiping goes the way the gallery reads:
-/// grid order for 그리드, top to bottom (left to right on a sideways wall) for 액자.
+/// The photos a gallery photo swipes through, in the order the gallery reads: grid order for
+/// 그리드. A photo opened from 갤러리 (the framed wall) stands alone, one post like on 순간들, so
+/// there is nothing to swipe to.
 enum MomentGalleryOrder {
     static func ids(_ photos: [MomentPhoto], items: [UUID: WallItem],
                     style: MomentProfile.WallStyle, direction: MomentProfile.WallDirection) -> [UUID] {
         switch style {
-        case .grid:
-            return MomentProfileGrid.ordered(photos, items: items).map(\.id)
-        case .free:
-            return WallGeometry(unit: 400, direction: direction).resolved(photos, items: items)
-                .sorted { a, b in abs(a.y - b.y) > 0.02 ? a.y < b.y : a.x < b.x }
-                .map(\.photoID)
+        case .grid: MomentProfileGrid.ordered(photos, items: items).map(\.id)
+        case .free: []
         }
     }
 }

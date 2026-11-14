@@ -314,28 +314,31 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         try await refreshMe()
     }
 
-    func like(_ photo: UUID, _ on: Bool) async throws {
+    func like(_ photo: UUID, _ on: Bool, in place: MomentLikePlace) async throws {
         let me = try requireMe()
         do {
             if on {
-                try await client.from("likes").upsert(["user_id": me.id, "photo_id": photo],
-                                                      onConflict: "user_id,photo_id",
-                                                      returning: .minimal, ignoreDuplicates: true).execute()
+                try await client.from("likes")
+                    .upsert(["user_id": me.id.uuidString, "photo_id": photo.uuidString, "place": place.rawValue],
+                            onConflict: "user_id,photo_id,place", returning: .minimal, ignoreDuplicates: true)
+                    .execute()
             } else {
                 try await client.from("likes").delete(returning: .minimal)
-                    .eq("user_id", value: me.id).eq("photo_id", value: photo).execute()
+                    .eq("user_id", value: me.id).eq("photo_id", value: photo).eq("place", value: place.rawValue)
+                    .execute()
             }
         } catch {
             throw Self.map(error)
         }
     }
 
-    func likes(among photos: [UUID]) async throws -> Set<UUID> {
+    func likes(among photos: [UUID], in place: MomentLikePlace) async throws -> Set<UUID> {
         guard let me, !photos.isEmpty else { return [] }
         struct Row: Decodable { let photoID: UUID; enum CodingKeys: String, CodingKey { case photoID = "photo_id" } }
         do {
             let rows: [Row] = try await client.from("likes").select("photo_id")
-                .eq("user_id", value: me.id).in("photo_id", values: photos).execute().value
+                .eq("user_id", value: me.id).eq("place", value: place.rawValue)
+                .in("photo_id", values: photos).execute().value
             return Set(rows.map(\.photoID))
         } catch {
             throw Self.map(error)
@@ -348,7 +351,8 @@ final class SupabaseMomentStore: MomentStore, @unchecked Sendable {
         do {
             let rows: [Row] = try await client.from("likes")
                 .select("created_at,photo:photos(\(PhotoRow.columns))")
-                .eq("user_id", value: me.id).order("created_at", ascending: false)
+                .eq("user_id", value: me.id).eq("place", value: MomentLikePlace.moment.rawValue)
+                .order("created_at", ascending: false)
                 .limit(limit).execute().value
             return rows.compactMap(\.photo).map(\.photo).filter { $0.status == .published }
         } catch {
@@ -653,13 +657,15 @@ private struct ProfileRow: Decodable {
 }
 
 private struct PhotoRow: Decodable {
-    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,camera_source,exposure,image_control,taken_at,lat,lon,place,film,like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
+    static let columns = "id,owner,status,caption,width,height,thumb_width,thumb_height,camera,camera_source,exposure,image_control,taken_at,lat,lon,place,film,like_count,moment_like_count,created_at,shared_at,author:profiles!photos_owner_fkey(handle,display_name,avatar_version)"
 
     let id: UUID
     let owner: UUID
     let status: MomentPhoto.Status
     let caption: String?
     let width, height, thumbWidth, thumbHeight, likeCount: Int
+    /// Absent in Edge Function replies (a new upload has none).
+    let momentLikeCount: Int?
     let camera: String?
     let cameraSource: MomentShotInfo.CameraSource?
     let exposure: MomentShotInfo.Exposure?
@@ -689,6 +695,7 @@ private struct PhotoRow: Decodable {
     enum CodingKeys: String, CodingKey {
         case id, owner, status, caption, width, height, camera, exposure, lat, lon, place, film, author
         case thumbWidth = "thumb_width", thumbHeight = "thumb_height", likeCount = "like_count"
+        case momentLikeCount = "moment_like_count"
         case imageControl = "image_control", takenAt = "taken_at", cameraSource = "camera_source"
         case createdAt = "created_at", sharedAt = "shared_at"
     }
@@ -698,7 +705,7 @@ private struct PhotoRow: Decodable {
                     thumbWidth: thumbWidth, thumbHeight: thumbHeight,
                     info: MomentShotInfo(camera: camera, cameraSource: cameraSource, exposure: exposure, imageControl: imageControl,
                                          takenAt: takenAt, lat: lat, lon: lon, place: place, film: film),
-                    likeCount: likeCount, createdAt: createdAt, sharedAt: sharedAt,
+                    likeCount: likeCount, momentLikeCount: momentLikeCount ?? 0, createdAt: createdAt, sharedAt: sharedAt,
                     author: author?.author)
     }
 }

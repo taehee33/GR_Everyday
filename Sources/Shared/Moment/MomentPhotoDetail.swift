@@ -10,12 +10,8 @@ struct MomentPhotoDetail: View {
     let photoID: UUID
     /// A page of MomentGalleryPager: no navigation bar of its own, fitted to one screen.
     var paged = false
-    /// The page on screen (only it puts its buttons in the pager's toolbar).
+    /// The page on screen (the pager puts this photo's buttons in its toolbar).
     var isCurrent = true
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirmUnshare = false
-    @State private var confirmDelete = false
-    @State private var showInfo = false
     @State private var person: MomentPersonRef?
     @State private var viewing: MomentPhoto?
     @State private var viewHeight: CGFloat = 0
@@ -35,14 +31,6 @@ struct MomentPhotoDetail: View {
     var body: some View {
         if paged {
             page
-                .toolbar {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        if isCurrent, let photo {
-                            MomentInfoButton { showInfo = true }
-                            moreMenu(photo)
-                        }
-                    }
-                }
         } else {
             NavigationStack {
                 page
@@ -52,11 +40,8 @@ struct MomentPhotoDetail: View {
                     #endif
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                        if let photo {
-                            ToolbarItemGroup(placement: .primaryAction) {
-                                MomentInfoButton { showInfo = true }
-                                moreMenu(photo)
-                            }
+                        ToolbarItem(placement: .primaryAction) {
+                            MomentMyPhotoActions(account: account, photoID: photoID, dismissOnDelete: true)
                         }
                     }
             }
@@ -65,6 +50,8 @@ struct MomentPhotoDetail: View {
             #endif
         }
     }
+
+    @Environment(\.dismiss) private var dismiss
 
     @ViewBuilder private var page: some View {
         if let photo {
@@ -123,21 +110,16 @@ struct MomentPhotoDetail: View {
         .sheet(item: $person) { ref in
             MomentPersonGallery(account: account, owner: ref.id)
         }
-        .sheet(isPresented: $showInfo) {
-            MomentInfoSheet(info: photo.info, sharedAt: photo.sharedAt)
-        }
-        .confirmationDialog("순간들 피드에서 내릴까요?", isPresented: $confirmUnshare, titleVisibility: .visible) {
-            Button("피드에서 내리기", role: .destructive) { Task { await account.unshare(photo) } }
-        } message: {
-            Text("내 갤러리에는 그대로 남아요. 이번 달 공유 횟수는 돌아오지 않아요.")
-        }
-        .confirmationDialog("이 사진을 삭제할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("삭제", role: .destructive) {
-                Task { if await account.delete(photo), !paged { dismiss() } }
-            }
-        } message: {
-            Text("내 갤러리와 피드에서 사라지고 되돌릴 수 없어요. 이번 달 공유 횟수는 돌아오지 않아요.")
-        }
+    }
+
+    /// "11월 순간들에 공유됨" (with the year when it is not this year).
+    static func sharedLine(_ date: Date?) -> String {
+        guard let date else { return "순간들에 공유됨" }
+        let calendar = Calendar.current
+        let month = calendar.component(.month, from: date)
+        let year = calendar.component(.year, from: date)
+        let prefix = year == calendar.component(.year, from: .now) ? "\(month)월" : "\(year)년 \(month)월"
+        return "\(prefix) 순간들에 공유됨"
     }
 
     private func statusLine(_ photo: MomentPhoto) -> some View {
@@ -145,7 +127,7 @@ struct MomentPhotoDetail: View {
             if photo.status == .hidden {
                 Label("신고가 쌓여 숨겨졌어요", systemImage: "eye.slash").foregroundStyle(.orange)
             } else if photo.isShared {
-                Label("순간들에 공유됨", systemImage: "sparkles").foregroundStyle(.tint)
+                Label(Self.sharedLine(photo.sharedAt), systemImage: "sparkles").foregroundStyle(.tint)
             } else {
                 Label("내 갤러리에만 있어요", systemImage: "square.grid.2x2").foregroundStyle(.secondary)
             }
@@ -154,12 +136,53 @@ struct MomentPhotoDetail: View {
         .font(.footnote)
     }
 
+}
+
+/// (i) and ⋯ for one of my photos, with what they open: shot info, 순간들 공유 취소 and 삭제.
+/// It sits in the toolbar of the sheet or of the gallery pager (for the photo on screen).
+struct MomentMyPhotoActions: View {
+    @ObservedObject var account: MomentAccount
+    let photoID: UUID
+    /// Close the sheet once the photo is deleted (the pager moves on to the next photo itself).
+    var dismissOnDelete = false
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmUnshare = false
+    @State private var confirmDelete = false
+    @State private var showInfo = false
+
+    private var photo: MomentPhoto? { account.myPhotos.first { $0.id == photoID } }
+
+    var body: some View {
+        if let photo {
+            HStack(spacing: 16) {
+                MomentInfoButton { showInfo = true }
+                moreMenu(photo)
+            }
+            .sheet(isPresented: $showInfo) {
+                MomentInfoSheet(info: photo.info, sharedAt: photo.sharedAt)
+            }
+            .alert("순간들 공유를 취소할까요?", isPresented: $confirmUnshare) {
+                Button("닫기", role: .cancel) {}
+                Button("공유 취소", role: .destructive) { Task { await account.unshare(photo) } }
+            } message: {
+                Text("순간들에서 내려가고, 순간들에서 받은 좋아요는 지워져요. 다시 공유해도 돌아오지 않아요.\n\n내 갤러리에는 그대로 남고, 갤러리 좋아요도 그대로예요. 이번 달 공유 횟수는 돌아오지 않아요.")
+            }
+            .confirmationDialog("이 사진을 삭제할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("삭제", role: .destructive) {
+                    Task { if await account.delete(photo), dismissOnDelete { dismiss() } }
+                }
+            } message: {
+                Text("내 갤러리와 피드에서 사라지고 되돌릴 수 없어요. 이번 달 공유 횟수는 돌아오지 않아요.")
+            }
+        }
+    }
+
     private func moreMenu(_ photo: MomentPhoto) -> some View {
         Menu {
             if photo.status == .published {
                 if photo.isShared {
                     Button { confirmUnshare = true } label: {
-                        Label("피드에서 내리기", systemImage: "xmark.circle")
+                        Label("순간들 공유 취소", systemImage: "xmark.circle")
                     }
                 } else {
                     let left = account.quota?.sharesLeft ?? 0
@@ -181,6 +204,7 @@ struct MomentPhotoDetail: View {
         .accessibilityLabel("더 보기")
     }
 }
+
 
 /// The full view (3072 px), with the thumbnail and a spinner until it arrives (cached on disk).
 struct MomentFullImage: View {
@@ -269,9 +293,17 @@ struct MomentShotTag: View {
 }
 
 /// The heart under a photo in a detail screen, with the count.
+extension MomentLikePlace {
+    /// Red in a gallery, yellow on 순간들.
+    var tint: Color {
+        self == .moment ? Color(red: 1.0, green: 0.76, blue: 0.0) : .red
+    }
+}
+
 struct MomentHeartButton: View {
     let liked: Bool
     let count: Int
+    var place: MomentLikePlace = .gallery
     var enabled = true
     let action: () -> Void
 
@@ -280,7 +312,7 @@ struct MomentHeartButton: View {
             HStack(spacing: 5) {
                 Image(systemName: liked ? "heart.fill" : "heart")
                     .font(.title3)
-                    .foregroundStyle(liked ? Color.red : Color.primary)
+                    .foregroundStyle(liked ? place.tint : Color.primary)
                     .contentTransition(.symbolEffect(.replace))
                 Text("\(count)").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -289,7 +321,7 @@ struct MomentHeartButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .accessibilityLabel(liked ? "좋아요 취소" : "좋아요")
+        .accessibilityLabel((place == .moment ? "순간들 " : "") + (liked ? "좋아요 취소" : "좋아요"))
         .accessibilityValue("\(count)개")
     }
 }

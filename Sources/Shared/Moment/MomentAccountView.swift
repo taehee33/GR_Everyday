@@ -50,7 +50,7 @@ final class MomentAccount: ObservableObject {
 
     /// Reads whether I liked this photo of mine.
     func loadLike(_ id: UUID) async {
-        guard store.me != nil, let on = try? await store.likes(among: [id]) else { return }
+        guard store.me != nil, let on = try? await store.likes(among: [id], in: .gallery) else { return }
         if on.contains(id) { likedMine.insert(id) } else { likedMine.remove(id) }
     }
 
@@ -60,7 +60,7 @@ final class MomentAccount: ObservableObject {
         let on = !likedMine.contains(id)
         applyLike(id, on)
         do {
-            try await store.like(id, on)
+            try await store.like(id, on, in: .gallery)
         } catch {
             applyLike(id, !on)
             show(error)
@@ -70,7 +70,7 @@ final class MomentAccount: ObservableObject {
     private func applyLike(_ id: UUID, _ on: Bool) {
         if on { likedMine.insert(id) } else { likedMine.remove(id) }
         if let i = myPhotos.firstIndex(where: { $0.id == id }) {
-            myPhotos[i].likeCount = max(myPhotos[i].likeCount + (on ? 1 : -1), 0)
+            myPhotos[i].addLike(on ? 1 : -1, in: .gallery)
         }
     }
 

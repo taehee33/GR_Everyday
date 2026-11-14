@@ -23,6 +23,11 @@ final class MomentFeed: ObservableObject {
 
     let store: MomentStore
     let source: Source
+    /// Where this list's hearts count: 순간들 (and the likes I gave there), or a gallery.
+    var place: MomentLikePlace {
+        if case .owner = source { return .gallery }
+        return .moment
+    }
     static let pageSize = 30
     /// Photos I reported; kept off my feed even after a reload.
     private var reported: Set<UUID> = []
@@ -57,7 +62,7 @@ final class MomentFeed: ObservableObject {
                 }
                 photos = page.filter { !reported.contains($0.id) }
                 reachedEnd = page.count < Self.pageSize
-                liked = (try? await store.likes(among: page.map(\.id))) ?? []
+                liked = (try? await store.likes(among: page.map(\.id), in: place)) ?? []
             case .liked:
                 photos = try await store.likedPhotos(limit: 200)
                 reachedEnd = true
@@ -68,7 +73,7 @@ final class MomentFeed: ObservableObject {
                 items = Dictionary(wall.items.map { ($0.photoID, $0) }, uniquingKeysWith: { a, _ in a })
                 photos = wall.photos.filter { $0.status == .published || owner == store.me?.id }
                 reachedEnd = true
-                liked = (try? await store.likes(among: photos.map(\.id))) ?? []
+                liked = (try? await store.likes(among: photos.map(\.id), in: place)) ?? []
             }
         } catch {
             if !error.isCancellation { errorMessage = error.localizedDescription }
@@ -85,7 +90,7 @@ final class MomentFeed: ObservableObject {
             let known = Set(photos.map(\.id))
             photos += page.filter { !known.contains($0.id) && !reported.contains($0.id) }
             reachedEnd = page.count < Self.pageSize
-            liked.formUnion((try? await store.likes(among: page.map(\.id))) ?? [])
+            liked.formUnion((try? await store.likes(among: page.map(\.id), in: place)) ?? [])
         } catch {
             if !error.isCancellation { errorMessage = error.localizedDescription }
         }
@@ -93,7 +98,7 @@ final class MomentFeed: ObservableObject {
 
     /// Re-reads which photos I liked (after signing in or out).
     func refreshLikes() async {
-        liked = (try? await store.likes(among: photos.map(\.id))) ?? []
+        liked = (try? await store.likes(among: photos.map(\.id), in: place)) ?? []
     }
 
     func photo(_ id: UUID) -> MomentPhoto? { photos.first { $0.id == id } }
@@ -104,7 +109,7 @@ final class MomentFeed: ObservableObject {
         let on = !liked.contains(id)
         apply(id, on)
         do {
-            try await store.like(id, on)
+            try await store.like(id, on, in: place)
         } catch {
             apply(id, !on)
             if !error.isCancellation { errorMessage = error.localizedDescription }
@@ -114,7 +119,7 @@ final class MomentFeed: ObservableObject {
     private func apply(_ id: UUID, _ on: Bool) {
         if on { liked.insert(id) } else { liked.remove(id) }
         if let i = photos.firstIndex(where: { $0.id == id }) {
-            photos[i].likeCount = max(photos[i].likeCount + (on ? 1 : -1), 0)
+            photos[i].addLike(on ? 1 : -1, in: place)
         }
     }
 
@@ -278,10 +283,10 @@ private struct MomentCard: View {
                 Button(action: onLike) {
                     HStack(spacing: 4) {
                         Image(systemName: liked ? "heart.fill" : "heart")
-                            .foregroundStyle(liked ? Color.red : Color.primary)
+                            .foregroundStyle(liked ? MomentLikePlace.moment.tint : Color.primary)
                             .contentTransition(.symbolEffect(.replace))
-                        if photo.likeCount > 0 {
-                            Text("\(photo.likeCount)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                        if photo.momentLikeCount > 0 {
+                            Text("\(photo.momentLikeCount)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
                         }
                     }
                     .font(.body)
@@ -323,13 +328,10 @@ struct MomentFeedDetail: View {
     var showsComments = false
     /// A page of MomentGalleryPager (someone's gallery): no navigation bar of its own, fitted to one screen.
     var paged = false
-    /// The page on screen (only it puts its buttons in the pager's toolbar).
+    /// The page on screen (the pager puts this photo's buttons in its toolbar).
     var isCurrent = true
     @Environment(\.dismiss) private var dismiss
-    @State private var reporting = false
-    @State private var confirmBlock = false
     @State private var person: MomentPersonRef?
-    @State private var showInfo = false
     @State private var viewing: MomentPhoto?
     @State private var viewHeight: CGFloat = 0
     @State private var showComments = false
@@ -354,26 +356,16 @@ struct MomentFeedDetail: View {
     var body: some View {
         if paged {
             page
-                .toolbar {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        if isCurrent {
-                            if photo != nil { MomentInfoButton { showInfo = true } }
-                            if let photo, !isMine, signedIn { moreMenu(photo) }
-                        }
-                    }
-                }
         } else {
             NavigationStack {
                 page
-                    .navigationTitle("순간")
                     #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                     #endif
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-                        ToolbarItemGroup(placement: .primaryAction) {
-                            if photo != nil { MomentInfoButton { showInfo = true } }
-                            if let photo, !isMine, signedIn { moreMenu(photo) }
+                        ToolbarItem(placement: .primaryAction) {
+                            MomentFeedPhotoActions(account: account, feed: feed, photoID: photoID)
                         }
                     }
             }
@@ -425,9 +417,6 @@ struct MomentFeedDetail: View {
         .sheet(item: $person) { ref in
             MomentPersonGallery(account: account, owner: ref.id)
         }
-        .sheet(isPresented: $showInfo) {
-            MomentInfoSheet(info: photo.info, sharedAt: photo.sharedAt)
-        }
         .sheet(isPresented: $showComments) {
             MomentCommentsSheet(account: account, model: comments, photo: photo) { owner in
                 if !linksAuthor, owner == photo.owner { return }
@@ -437,23 +426,6 @@ struct MomentFeedDetail: View {
         .task(id: photo.id) { if showsComments { await comments.reload() } }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewHeight = $0 }
         .momentPhotoViewer($viewing, store: feed.store)
-        .confirmationDialog("신고하는 이유를 골라 주세요", isPresented: $reporting, titleVisibility: .visible) {
-            ForEach(MomentReportReason.allCases) { reason in
-                Button(reason.title, role: .destructive) {
-                    Task { if await feed.report(photo.id, reason) { dismiss() } }
-                }
-            }
-        } message: {
-            Text("신고한 사진은 내 피드에서 바로 사라지고, 신고가 쌓이면 모두에게서 숨겨져요.")
-        }
-        .confirmationDialog("\(photo.author?.title ?? "이 사람") 님을 차단할까요?", isPresented: $confirmBlock,
-                            titleVisibility: .visible) {
-            Button("차단", role: .destructive) {
-                Task { if await feed.block(photo.owner) { dismiss() } }
-            }
-        } message: {
-            Text("이 사람이 올린 사진이 피드와 벽에서 더 이상 보이지 않아요.")
-        }
     }
 
     /// Profile picture and username above the photo, with "나" on my own photos.
@@ -484,8 +456,53 @@ struct MomentFeedDetail: View {
     }
 
     private func likeButton(_ photo: MomentPhoto) -> some View {
-        MomentHeartButton(liked: feed.liked.contains(photo.id), count: photo.likeCount, enabled: signedIn) {
+        MomentHeartButton(liked: feed.liked.contains(photo.id), count: photo.likes(in: feed.place),
+                          place: feed.place, enabled: signedIn) {
             Task { await feed.toggleLike(photo.id) }
+        }
+    }
+
+}
+
+/// (i) and, on someone else's photo once signed in, ⋯ (신고, 차단), with what they open. It sits
+/// in the toolbar of the sheet or of someone's gallery pager (for the photo on screen).
+struct MomentFeedPhotoActions: View {
+    @ObservedObject var account: MomentAccount
+    @ObservedObject var feed: MomentFeed
+    let photoID: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var reporting = false
+    @State private var confirmBlock = false
+    @State private var showInfo = false
+
+    private var photo: MomentPhoto? { feed.photo(photoID) }
+
+    var body: some View {
+        if let photo {
+            HStack(spacing: 16) {
+                MomentInfoButton { showInfo = true }
+                if photo.owner != account.me?.id, account.me != nil { moreMenu(photo) }
+            }
+            .sheet(isPresented: $showInfo) {
+                MomentInfoSheet(info: photo.info, sharedAt: photo.sharedAt)
+            }
+            .confirmationDialog("신고하는 이유를 골라 주세요", isPresented: $reporting, titleVisibility: .visible) {
+                ForEach(MomentReportReason.allCases) { reason in
+                    Button(reason.title, role: .destructive) {
+                        Task { if await feed.report(photo.id, reason) { dismiss() } }
+                    }
+                }
+            } message: {
+                Text("신고한 사진은 내 피드에서 바로 사라지고, 신고가 쌓이면 모두에게서 숨겨져요.")
+            }
+            .confirmationDialog("\(photo.author?.title ?? "이 사람") 님을 차단할까요?", isPresented: $confirmBlock,
+                                titleVisibility: .visible) {
+                Button("차단", role: .destructive) {
+                    Task { if await feed.block(photo.owner) { dismiss() } }
+                }
+            } message: {
+                Text("이 사람이 올린 사진이 피드와 벽에서 더 이상 보이지 않아요.")
+            }
         }
     }
 

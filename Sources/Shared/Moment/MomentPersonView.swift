@@ -6,7 +6,7 @@ struct MomentPersonRef: Identifiable, Hashable {
 }
 
 /// Someone's 갤러리, opened from 순간들 (their name or picture) or a comment: their profile on
-/// top, then their photos the way they hung them (액자 or 그리드). Photos open with likes and
+/// top, then their photos the way they hung them (갤러리 or 그리드). Photos open with likes and
 /// comments.
 struct MomentPersonGallery: View {
     @ObservedObject var account: MomentAccount
@@ -70,7 +70,11 @@ struct MomentPersonGallery: View {
             }
         }
         .task { await feed.reload() }
-        .momentGalleryCover(item: $opened) { photo in pager(photo) }
+        .momentPhotoOpen(item: $opened, alone: feed.profile?.wallStyle == .free) { photo in
+            single(photo)
+        } paged: { photo in
+            pager(photo)
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { fullScreenWall }
         #else
@@ -98,8 +102,13 @@ struct MomentPersonGallery: View {
         MomentWallFullScreen(store: account.store, photos: feed.photos, items: feed.items,
                              direction: feed.profile?.wallDirection ?? .vertical,
                              title: [feed.profile?.displayName, feed.profile?.handle].compactMap { $0 }.joined(separator: "  ")) { photo in
-            pager(photo)
+            single(photo)
         }
+    }
+
+    /// A photo from their 갤러리, alone, the way 순간들 opens one.
+    private func single(_ photo: MomentPhoto) -> some View {
+        MomentFeedDetail(account: account, feed: feed, photoID: photo.id, linksAuthor: false, showsComments: true)
     }
 
     /// The photo full screen, with this person's other photos above and below it in their gallery's order.
@@ -111,6 +120,8 @@ struct MomentPersonGallery: View {
                            start: photo.id) { id, isCurrent in
             MomentFeedDetail(account: account, feed: feed, photoID: id, linksAuthor: false, showsComments: true,
                              paged: true, isCurrent: isCurrent)
+        } actions: { id in
+            MomentFeedPhotoActions(account: account, feed: feed, photoID: id)
         }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 내 갤러리: my photos in one of two views, picked at the top and kept on the server
 /// (profiles.wall_style): 갤러리, framed photos hung on a long wall that I arrange by hand, or
@@ -15,6 +16,8 @@ struct MomentWallView: View {
     @State private var opened: MomentPhoto?
     @State private var width: CGFloat = 0
     @State private var fullScreen = false
+    /// 그리드 순서 편집: the photos in the order being arranged, nil when not editing.
+    @State private var gridDraft: [UUID]?
 
     private var style: MomentProfile.WallStyle { account.me?.wallStyle ?? .grid }
     private var direction: MomentProfile.WallDirection {
@@ -24,12 +27,15 @@ struct MomentWallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Group { if editing { editBar } else { viewBar } }
+            Group {
+                if editing { editBar } else if gridDraft != nil { gridEditBar } else { viewBar }
+            }
                 .frame(maxWidth: 820)
                 .frame(maxWidth: .infinity)
             if style == .grid {
                 MomentProfileGrid(store: account.store, photos: account.myPhotos, items: account.wallItems,
-                                  canUpload: account.quota?.wallFull != true, onUpload: onUpload) { opened = $0 }
+                                  canUpload: gridDraft == nil && account.quota?.wallFull != true,
+                                  onUpload: onUpload, reorder: $gridDraft) { opened = $0 }
             } else if photos.isEmpty {
                 Text("아직 올린 사진이 없어요. 사진을 업로드하면 여기 벽에 액자로 걸려요.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -40,9 +46,13 @@ struct MomentWallView: View {
         }
         .frame(maxWidth: .infinity)
         // While frames are being moved, sideways drags on the wall belong to them.
-        .momentNoRoomSwipe(editing)
+        .momentNoRoomSwipe(editing || gridDraft != nil)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .momentGalleryCover(item: $opened) { photo in pager(photo) }
+        .momentPhotoOpen(item: $opened, alone: style == .free) { photo in
+            MomentPhotoDetail(account: account, photoID: photo.id)
+        } paged: { photo in
+            pager(photo)
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { fullScreenWall }
         #else
@@ -57,17 +67,19 @@ struct MomentWallView: View {
         MomentWallFullScreen(store: account.store, photos: account.myPhotos, items: account.wallItems,
                              direction: account.me?.wallDirection ?? .vertical,
                              title: [account.me?.displayName, account.me?.handle].compactMap { $0 }.joined(separator: "  ")) { photo in
-            pager(photo)
+            MomentPhotoDetail(account: account, photoID: photo.id)
         }
     }
 
-    /// The photo full screen, with my other photos above and below it in the gallery's order.
+    /// The photo full screen; from 그리드, with my other photos above and below it in grid order.
     private func pager(_ photo: MomentPhoto) -> some View {
         MomentGalleryPager(title: "내 사진",
                            ids: MomentGalleryOrder.ids(account.myPhotos, items: account.wallItems,
                                                        style: style, direction: account.me?.wallDirection ?? .vertical),
                            start: photo.id) { id, isCurrent in
             MomentPhotoDetail(account: account, photoID: id, paged: true, isCurrent: isCurrent)
+        } actions: { id in
+            MomentMyPhotoActions(account: account, photoID: id)
         }
     }
 
@@ -78,7 +90,7 @@ struct MomentWallView: View {
             Picker("보기", selection: Binding(get: { style }, set: { new in
                 Task { await account.saveWall(style: new, direction: direction, items: []) }
             })) {
-                Label("액자", systemImage: "photo.artframe").tag(MomentProfile.WallStyle.free)
+                Label("갤러리", systemImage: "photo.artframe").tag(MomentProfile.WallStyle.free)
                 Label("그리드", systemImage: "square.grid.3x3").tag(MomentProfile.WallStyle.grid)
             }
             .pickerStyle(.segmented)
@@ -94,6 +106,41 @@ struct MomentWallView: View {
                 .help("전체화면으로 보기")
                 Button("편집") { startEditing() }
                     .buttonStyle(.bordered)
+            } else if style == .grid, photos.count > 1 {
+                Button("순서 편집") {
+                    withAnimation(.snappy) {
+                        gridDraft = MomentProfileGrid.ordered(photos, items: account.wallItems).map(\.id)
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var gridEditBar: some View {
+        HStack(spacing: 10) {
+            Text("사진을 길게 눌러 원하는 자리로 끌어요.")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button("취소") { withAnimation(.snappy) { gridDraft = nil } }
+            Button("완료") { finishGridEditing() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Saves the arranged order as each photo's grid_order (0 first), keeping its place on the wall.
+    private func finishGridEditing() {
+        guard let order = gridDraft else { return }
+        let items = order.enumerated().map { index, id in
+            var item = account.wallItems[id] ?? WallItem(photoID: id)
+            item.gridOrder = index
+            return item
+        }
+        Task {
+            if await account.saveWall(style: .grid, direction: account.me?.wallDirection ?? .vertical, items: items) {
+                withAnimation(.snappy) { gridDraft = nil }
             }
         }
     }
@@ -469,9 +516,16 @@ struct MomentProfileGrid: View {
     /// Shows the "+" cell (my own gallery with room left).
     var canUpload = false
     var onUpload: () -> Void = {}
+    /// While arranging (my own gallery), the order being made: tiles drag instead of opening.
+    var reorder: Binding<[UUID]?> = .constant(nil)
     var onOpen: (MomentPhoto) -> Void
+    @State private var dragging: UUID?
 
-    private var ordered: [MomentPhoto] { Self.ordered(photos, items: items) }
+    private var ordered: [MomentPhoto] {
+        guard let order = reorder.wrappedValue else { return Self.ordered(photos, items: items) }
+        let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+        return order.compactMap { byID[$0] }
+    }
 
     static func ordered(_ photos: [MomentPhoto], items: [UUID: WallItem]) -> [MomentPhoto] {
         photos.sorted { a, b in
@@ -484,8 +538,20 @@ struct MomentProfileGrid: View {
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
             ForEach(ordered) { photo in
-                Button { onOpen(photo) } label: { tile(photo) }
-                    .buttonStyle(.plain)
+                if reorder.wrappedValue != nil {
+                    tile(photo)
+                        .opacity(dragging == photo.id ? 0.4 : 1)
+                        .overlay { Rectangle().strokeBorder(.white.opacity(0.6), lineWidth: 1) }
+                        .onDrag {
+                            dragging = photo.id
+                            return NSItemProvider(object: photo.id.uuidString as NSString)
+                        }
+                        .onDrop(of: [.text], delegate: GridReorderDrop(target: photo.id, order: reorder,
+                                                                       dragging: $dragging))
+                } else {
+                    Button { onOpen(photo) } label: { tile(photo) }
+                        .buttonStyle(.plain)
+                }
             }
             if canUpload {
                 Button(action: onUpload) {
@@ -501,6 +567,9 @@ struct MomentProfileGrid: View {
                 .accessibilityLabel("사진 업로드")
             }
         }
+        // A drag let go between tiles still ends.
+        .onDrop(of: [.text], isTargeted: nil) { _ in dragging = nil; return true }
+        .onChange(of: reorder.wrappedValue == nil) { _, done in if done { dragging = nil } }
         .frame(maxWidth: 820)
         .frame(maxWidth: .infinity)
     }
@@ -534,6 +603,27 @@ struct MomentProfileGrid: View {
             .foregroundStyle(.white)
             .shadow(color: .black.opacity(0.4), radius: 2)
             .padding(6)
+    }
+}
+
+/// Moves the dragged tile into the spot it is over, as it goes; the drop only ends the drag.
+private struct GridReorderDrop: DropDelegate {
+    let target: UUID
+    let order: Binding<[UUID]?>
+    @Binding var dragging: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target, var list = order.wrappedValue,
+              let from = list.firstIndex(of: dragging), let to = list.firstIndex(of: target) else { return }
+        list.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        withAnimation(.snappy) { order.wrappedValue = list }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
     }
 }
 
@@ -664,7 +754,8 @@ struct MomentWallFullScreen<Detail: View>: View {
         .onAppear { Orientation.setFree(true) }
         .onDisappear { Orientation.setFree(false) }
         #endif
-        .momentGalleryCover(item: $opened) { photo in detail(photo) }
+        // A photo from 갤러리 opens alone, the way 순간들 opens one.
+        .sheet(item: $opened) { photo in detail(photo) }
     }
 
     private func photo(_ id: UUID) -> MomentPhoto? { photos.first { $0.id == id } }
