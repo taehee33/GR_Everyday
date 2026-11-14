@@ -110,7 +110,8 @@ enum MomentImage {
     /// Both upload files from a loaded original, turned and cropped as framed.
     static func render(_ loaded: Loaded, edit: MomentCropEdit,
                        thumbEncoder: ThumbEncoder = .default) throws -> Rendered {
-        guard let turned = rotated(loaded.image, quarterTurns: edit.quarterTurns) else { throw Failure.encodeFailed }
+        guard let quarter = rotated(loaded.image, quarterTurns: edit.quarterTurns),
+              let turned = straightened(quarter, degrees: edit.angle) else { throw Failure.encodeFailed }
         let w = CGFloat(turned.width), h = CGFloat(turned.height)
         let crop = CGRect(x: edit.crop.minX * w, y: edit.crop.minY * h,
                           width: edit.crop.width * w, height: edit.crop.height * h)
@@ -145,6 +146,33 @@ enum MomentImage {
         ctx.translateBy(x: CGFloat(outW) / 2, y: CGFloat(outH) / 2)
         ctx.rotate(by: -CGFloat(turns) * .pi / 2)
         ctx.draw(image, in: CGRect(x: -CGFloat(w) / 2, y: -CGFloat(h) / 2, width: CGFloat(w), height: CGFloat(h)))
+        return ctx.makeImage()
+    }
+
+    /// How much a `width`×`height` image must be enlarged, once tilted by `degrees`, to still
+    /// cover its own frame with no empty corners.
+    static func straightenZoom(width: CGFloat, height: CGFloat, degrees: Double) -> CGFloat {
+        let a = abs(degrees) * .pi / 180
+        guard a > 0.00001, width > 0, height > 0 else { return 1 }
+        let c = CGFloat(cos(a)), s = CGFloat(sin(a))
+        return max(c + s * height / width, c + s * width / height)
+    }
+
+    /// The image tilted clockwise by `degrees` about its centre and enlarged just enough to fill
+    /// the same size, so the corners are never empty (like straightening in Photos).
+    static func straightened(_ image: CGImage, degrees: Double) -> CGImage? {
+        guard abs(degrees) > 0.001 else { return image }
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: sRGB,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        let zoom = straightenZoom(width: w, height: h, degrees: degrees)
+        ctx.translateBy(x: w / 2, y: h / 2)
+        // y is up in Core Graphics, so clockwise on screen is a negative angle.
+        ctx.rotate(by: -CGFloat(degrees) * .pi / 180)
+        ctx.scaleBy(x: zoom, y: zoom)
+        ctx.draw(image, in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h))
         return ctx.makeImage()
     }
 
@@ -197,12 +225,15 @@ enum MomentImage {
     }
 }
 
-/// How the owner framed a photo before uploading: turned in quarter turns, then cropped.
-/// Only framing; colour and tone stay the camera's.
+/// How the owner framed a photo before uploading: turned in quarter turns, tilted by a free
+/// angle, then cropped. Only framing; colour and tone stay the camera's.
 struct MomentCropEdit: Equatable {
     /// Clockwise quarter turns (0–3).
     var quarterTurns = 0
-    /// The part kept, as fractions of the turned image (0–1, origin top left).
+    /// A further clockwise tilt in degrees (−45…45), applied after the quarter turns; the photo
+    /// is enlarged so the corners stay filled (`MomentImage.straightened`).
+    var angle: Double = 0
+    /// The part kept, as fractions of the turned and tilted image (0–1, origin top left).
     var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
     /// The shape picked on the crop screen, to open it the same way again.
     var aspect: MomentCropAspect = .original
@@ -211,7 +242,7 @@ struct MomentCropEdit: Equatable {
     var isCropped: Bool {
         abs(crop.minX) > 0.0005 || abs(crop.minY) > 0.0005 || abs(crop.width - 1) > 0.0005 || abs(crop.height - 1) > 0.0005
     }
-    var isEdited: Bool { quarterTurns % 4 != 0 || isCropped }
+    var isEdited: Bool { quarterTurns % 4 != 0 || abs(angle) > 0.001 || isCropped }
 }
 
 enum MomentCropAspect: String, CaseIterable, Identifiable {

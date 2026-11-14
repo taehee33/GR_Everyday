@@ -248,14 +248,16 @@ struct MomentUploadView: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("사진 업로드")
+                .navigationTitle(model.phase == .done ? "" : "사진 업로드")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(model.phase == .done ? "닫기" : "취소") { dismiss() }
-                            .disabled(model.phase == .uploading)
+                    if model.phase != .done {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("취소") { dismiss() }
+                                .disabled(model.phase == .uploading)
+                        }
                     }
                 }
         }
@@ -503,18 +505,19 @@ struct MomentUploadView: View {
                         .overlay {
                             if model.reframing { ProgressView() }
                         }
-                    HStack {
+                    VStack(spacing: 10) {
                         Text("\(rendered.source.lastPathComponent) · \(Int(rendered.displaySize.width))×\(Int(rendered.displaySize.height)) · \(rendered.display.count / 1024) KB")
                             .font(.caption).foregroundStyle(.secondary)
-                        Spacer()
+                            .frame(maxWidth: .infinity)
                         Button {
                             cropping = true
                         } label: {
                             Label(model.edit.isEdited ? "다시 자르기" : "자르기·회전", systemImage: "crop.rotate")
+                                .frame(maxWidth: .infinity)
                         }
+                        .disabled(model.loaded == nil || model.reframing || model.phase == .uploading)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .disabled(model.loaded == nil || model.reframing || model.phase == .uploading)
                     }
                 }
             }
@@ -596,31 +599,9 @@ struct MomentUploadView: View {
             } footer: {
                 Text("공유하지 않으면 내 갤러리에만 올라가요. 나중에 갤러리에서 공유할 수도 있어요.")
             }
-            Section {
-                Button {
-                    Task {
-                        await model.upload(with: account.store)
-                        await account.reloadPhotos()
-                        if account.feed.loaded { await account.feed.reload() }
-                    }
-                } label: {
-                    HStack {
-                        Spacer()
-                        if model.phase == .uploading {
-                            ProgressView().controlSize(.small)
-                            Text("올리는 중…")
-                        } else {
-                            Text("올리기").bold()
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(model.phase == .uploading || model.reframing)
-                Button("다른 사진 고르기") { model.reset() }
-                    .disabled(model.phase == .uploading)
-            }
         }
         .formStyle(.grouped)
+        .safeAreaInset(edge: .bottom, spacing: 0) { uploadBar }
         .sheet(isPresented: $cropping) {
             if let loaded = model.loaded {
                 MomentPhotoCropper(original: loaded.image, start: model.edit) { edit in
@@ -641,26 +622,56 @@ struct MomentUploadView: View {
         }
     }
 
-    private var doneView: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48)).foregroundStyle(.green)
-            Text(model.uploaded?.isShared == true ? "갤러리에 올리고 순간들에 공유했어요" : "내 갤러리에 올렸어요")
-                .font(.headline)
-            if model.shareNow, model.uploaded?.isShared == false {
-                Text("이번 달 공유 횟수를 다 써서 피드에는 공유되지 않았어요.")
-                    .font(.footnote).foregroundStyle(.orange)
+    /// Always in reach at the bottom, so the form can scroll under it.
+    private var uploadBar: some View {
+        VStack(spacing: 6) {
+            Button {
+                Task {
+                    await model.upload(with: account.store)
+                    await account.reloadPhotos()
+                    if account.feed.loaded { await account.feed.reload() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if model.phase == .uploading {
+                        ProgressView().controlSize(.small).tint(.white)
+                        Text("올리는 중…")
+                    } else {
+                        Image(systemName: model.shareNow ? "sparkles" : "arrow.up")
+                        Text(model.shareNow ? "올리고 순간들에 공유" : "내 갤러리에 올리기")
+                    }
+                }
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
             }
-            if let rendered = model.rendered {
-                PreviewImage(data: rendered.thumb).frame(height: 180)
-            }
-            HStack {
-                Button("하나 더 올리기") { model.reset() }
-                Button("닫기") { dismiss() }.buttonStyle(.borderedProminent)
-            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
+            .disabled(model.phase == .uploading || model.reframing || model.rendered == nil)
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private var doneView: some View {
+        UploadDoneView(
+            display: model.rendered?.display,
+            shared: model.uploaded?.isShared == true,
+            shareMissed: model.shareNow && model.uploaded?.isShared == false,
+            caption: model.uploaded == nil ? nil : {
+                let text = model.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }(),
+            details: [model.sharedInfo.camera, model.sharedInfo.film, model.sharedInfo.place].compactMap { $0 },
+            again: { model.reset() },
+            close: { dismiss() }
+        )
     }
 
     /// For a film GR: pick the film from the list, or type it.
@@ -731,18 +742,149 @@ private struct CaptionBox: View {
     }
 }
 
+/// After uploading: the photo itself, large and lifted off a soft wash of its own colours, with
+/// where it went underneath. It settles in with a little spring and a success tap.
+private struct UploadDoneView: View {
+    let display: Data?
+    let shared: Bool
+    let shareMissed: Bool
+    let caption: String?
+    let details: [String]
+    let again: () -> Void
+    let close: () -> Void
+
+    @State private var shown = false
+
+    var body: some View {
+        ZStack {
+            // Ambient wash: the photo, blurred far out.
+            if let display {
+                Color.clear
+                    .overlay { PreviewImage(data: display, fill: true) }
+                    .clipped()
+                    .blur(radius: 70)
+                    .opacity(shown ? 0.55 : 0)
+                    .ignoresSafeArea()
+                    .accessibilityHidden(true)
+            }
+            Rectangle().fill(.background.opacity(0.35)).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 16)
+                if let display {
+                    PreviewImage(data: display)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white))
+                        .shadow(color: .black.opacity(0.28), radius: 28, y: 18)
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: shared ? "sparkles" : "checkmark")
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(Circle().fill(shared ? Color.accentColor : .green))
+                                .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+                                .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                                .offset(x: 14, y: 14)
+                                .scaleEffect(shown ? 1 : 0.2)
+                                .opacity(shown ? 1 : 0)
+                                .animation(.spring(response: 0.45, dampingFraction: 0.55).delay(0.35), value: shown)
+                        }
+                        .frame(maxHeight: 420)
+                        .padding(.horizontal, 40)
+                        .rotationEffect(.degrees(shown ? 0 : -3))
+                        .scaleEffect(shown ? 1 : 0.86)
+                        .offset(y: shown ? 0 : 40)
+                        .opacity(shown ? 1 : 0)
+                }
+
+                VStack(spacing: 8) {
+                    Text(shared ? "순간들에 공유했어요" : "내 갤러리에 올렸어요")
+                        .font(.title2.weight(.bold))
+                    if let caption {
+                        Text("\u{201C}\(caption)\u{201D}")
+                            .font(.callout).italic()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+                    if !details.isEmpty {
+                        Text(details.joined(separator: "  ·  "))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        chip("내 갤러리", on: true)
+                        chip("순간들 피드", on: shared)
+                    }
+                    .padding(.top, 4)
+                    if shareMissed {
+                        Text("이번 달 공유 횟수를 다 써서 피드에는 올리지 못했어요.\n다음 달에 갤러리에서 공유할 수 있어요.")
+                            .font(.footnote).foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 34)
+                .opacity(shown ? 1 : 0)
+                .offset(y: shown ? 0 : 12)
+                .animation(.easeOut(duration: 0.4).delay(0.2), value: shown)
+
+                Spacer(minLength: 16)
+
+                VStack(spacing: 4) {
+                    Button(action: close) {
+                        Text("완료").font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    Button(action: again) {
+                        Label("한 장 더 올리기", systemImage: "plus")
+                            .font(.callout.weight(.medium))
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 420)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+                .opacity(shown ? 1 : 0)
+                .animation(.easeOut(duration: 0.35).delay(0.45), value: shown)
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.78)) { shown = true }
+        }
+        .sensoryFeedback(.success, trigger: shown) { _, new in new }
+    }
+
+    private func chip(_ title: String, on: Bool) -> some View {
+        Label(title, systemImage: on ? "checkmark" : "minus")
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .foregroundStyle(on ? Color.primary : Color.secondary)
+            .background(Capsule().fill(.thinMaterial))
+            .opacity(on ? 1 : 0.7)
+    }
+}
+
 /// Shows encoded image data (the upload preview) on either platform.
 private struct PreviewImage: View {
     let data: Data
+    var fill = false
 
     var body: some View {
         #if canImport(UIKit)
         if let image = UIImage(data: data) {
-            Image(uiImage: image).resizable().scaledToFit()
+            Image(uiImage: image).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
         }
         #else
         if let image = NSImage(data: data) {
-            Image(nsImage: image).resizable().scaledToFit()
+            Image(nsImage: image).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
         }
         #endif
     }

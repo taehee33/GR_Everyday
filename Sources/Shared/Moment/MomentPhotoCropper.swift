@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Framing a photo before it is uploaded: turn it a quarter at a time, pick a shape (or 자유 to
+/// Framing a photo before it is uploaded: turn it a quarter at a time or tilt it to any angle
+/// on the dial, pick a shape (or 자유 to
 /// drag the frame's corners and edges to any shape), then drag to move and pinch (or the
 /// slider) to zoom. The photo always fills the frame, and the crop can't get so small that the
 /// photo would drop under MomentImage.minimumEdge.
@@ -12,6 +13,10 @@ struct MomentPhotoCropper: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var turns = 0
+    /// Free tilt in degrees, clockwise (−45…45).
+    @State private var angle: Double = 0
+    @State private var tilting = false
+    @State private var tool: Tool = .crop
     @State private var aspect: MomentCropAspect = .original
     /// For fixed shapes other than 원본 and 1:1: frame taller than wide.
     @State private var portrait = false
@@ -71,8 +76,13 @@ struct MomentPhotoCropper: View {
 
     /// The most it may zoom: the crop keeps a long side of at least minimumEdge pixels.
     private var maxZoom: CGFloat {
-        let longAtCover = max(frameSize.width, frameSize.height) / coverScale
+        let longAtCover = max(frameSize.width, frameSize.height) / coverScale / tiltZoom
         return max(1, min(5, longAtCover / CGFloat(MomentImage.minimumEdge)))
+    }
+
+    /// How much the tilted photo is enlarged to keep its corners filled.
+    private var tiltZoom: CGFloat {
+        MomentImage.straightenZoom(width: turnedSize.width, height: turnedSize.height, degrees: angle)
     }
 
     private var shownSize: CGSize {
@@ -85,9 +95,14 @@ struct MomentPhotoCropper: View {
                 GeometryReader { proxy in
                     ZStack {
                         if let image = turnedPreview {
+                            // Tilted live here; MomentImage.straightened does the same on upload.
                             Image(decorative: image, scale: 1)
                                 .resizable()
                                 .frame(width: shownSize.width, height: shownSize.height)
+                                .scaleEffect(tiltZoom)
+                                .rotationEffect(.degrees(angle))
+                                .frame(width: shownSize.width, height: shownSize.height)
+                                .clipped()
                                 .offset(offset)
                         }
                         // Dim what will be cut off, then draw the frame and thirds.
@@ -103,8 +118,9 @@ struct MomentPhotoCropper: View {
                                     .compositingGroup()
                             }
                             .allowsHitTesting(false)
-                        ThirdsGuide()
-                            .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                        ThirdsGuide(divisions: tilting ? 6 : 3)
+                            .stroke(Color.white.opacity(tilting ? 0.5 : 0.35), lineWidth: 0.5)
+                            .animation(.easeOut(duration: 0.15), value: tilting)
                             .frame(width: frameSize.width, height: frameSize.height)
                             .offset(frameShift)
                             .allowsHitTesting(false)
@@ -156,61 +172,160 @@ struct MomentPhotoCropper: View {
         #endif
     }
 
+    /// The three tools; only the picked one's controls show, so each stays big and clear.
+    private enum Tool: String, CaseIterable, Identifiable {
+        case crop = "자르기", rotate = "회전", zoom = "확대"
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .crop: return "crop"
+            case .rotate: return "rotate.left"
+            case .zoom: return "plus.magnifyingglass"
+            }
+        }
+    }
+
+    private var isPristine: Bool {
+        turns == 0 && angle == 0 && aspect == .original && zoom < 1.001 && result.crop == CGRect(x: 0, y: 0, width: 1, height: 1)
+    }
+
     private var controls: some View {
         VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                ForEach(MomentCropAspect.allCases) { item in
-                    Button { setAspect(item) } label: {
-                        Text(item.title)
-                            .font(.footnote.weight(aspect == item ? .semibold : .regular))
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(aspect == item ? Color.white.opacity(0.22) : Color.white.opacity(0.06),
-                                        in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(aspect == item ? .isSelected : [])
+            ZStack {
+                switch tool {
+                case .crop: cropPanel
+                case .rotate: rotatePanel
+                case .zoom: zoomPanel
                 }
             }
-            HStack(spacing: 22) {
-                Button { turn() } label: {
-                    Label("회전", systemImage: "rotate.right")
+            .frame(height: 96)
+            .frame(maxWidth: 460)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.18), value: tool)
+
+            HStack(spacing: 0) {
+                ForEach(Tool.allCases) { item in
+                    Button {
+                        tool = item
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: item.icon).font(.system(size: 20, weight: .medium))
+                            Text(item.rawValue).font(.caption2.weight(.medium))
+                        }
+                        .foregroundStyle(tool == item ? Color.yellow : Color.white.opacity(0.6))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(tool == item ? .isSelected : [])
                 }
-                .accessibilityLabel("오른쪽으로 90도 회전")
+            }
+            .frame(maxWidth: 360)
+
+            Text(hint)
+                .font(.footnote).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 36, alignment: .top)
+                .padding(.horizontal)
+        }
+    }
+
+    private var hint: String {
+        switch tool {
+        case .crop:
+            return aspect == .free
+                ? "모서리나 변을 끌어 원하는 모양으로 자르고, 사진을 끌어 위치를 맞춰 주세요."
+                : "비율을 고르고 사진을 끌어 위치를 맞춰 주세요."
+        case .rotate:
+            return "눈금을 좌우로 끌어 기울기를 맞춰 주세요. 두 번 탭하면 수평으로 돌아가요."
+        case .zoom:
+            return "막대나 두 손가락으로 크기를, 사진을 끌어 위치를 맞춰 주세요."
+        }
+    }
+
+    private var cropPanel: some View {
+        VStack(spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MomentCropAspect.allCases) { item in
+                        Button { setAspect(item) } label: {
+                            Text(item.title)
+                                .font(.footnote.weight(aspect == item ? .semibold : .regular))
+                                .foregroundStyle(aspect == item ? Color.black : Color.white)
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(aspect == item ? Color.yellow : Color.white.opacity(0.1), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(aspect == item ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal)
+                .frame(minWidth: 0)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            HStack(spacing: 12) {
                 Button {
                     portrait.toggle()
                     resetFraming()
                 } label: {
-                    Label(portrait ? "세로" : "가로",
-                          systemImage: portrait ? "rectangle.portrait" : "rectangle")
+                    Label(portrait ? "세로" : "가로", systemImage: portrait ? "rectangle.portrait" : "rectangle")
                 }
                 .disabled(aspect.ratio == nil || aspect == .square)
                 .accessibilityLabel("가로 세로 바꾸기")
-                Button {
-                    turns = 0
-                    aspect = .original
-                    portrait = false
-                    makePreview()
-                    resetFraming()
-                } label: {
-                    Label("처음대로", systemImage: "arrow.uturn.backward")
-                }
+                resetButton
             }
             .buttonStyle(.bordered)
             .font(.footnote)
+        }
+    }
+
+    private var rotatePanel: some View {
+        VStack(spacing: 10) {
+            StraightenDial(angle: $angle, editing: $tilting)
+                .padding(.horizontal)
+            HStack(spacing: 12) {
+                Button { turn() } label: {
+                    Label("90° 회전", systemImage: "rotate.left")
+                }
+                .accessibilityLabel("왼쪽으로 90도 회전")
+                resetButton
+            }
+            .buttonStyle(.bordered)
+            .font(.footnote)
+        }
+    }
+
+    private var zoomPanel: some View {
+        VStack(spacing: 10) {
+            Text(String(format: "%.1f×", zoom))
+                .font(.footnote.monospacedDigit().weight(.semibold))
+                .foregroundStyle(zoom > 1.001 ? Color.yellow : Color.secondary)
             HStack(spacing: 12) {
                 Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
                 Slider(value: Binding(get: { zoom }, set: setZoom), in: 1...max(maxZoom, 1.0001))
+                    .tint(.yellow)
                     .disabled(maxZoom <= 1.01)
                 Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 360)
-            Text(aspect == .free
-                 ? "모서리나 변을 끌어 원하는 모양으로 자르고, 사진을 끌어 위치를 맞춰 주세요."
-                 : "끌어서 위치를, 두 손가락이나 막대로 크기를 맞춰 주세요. 색과 보정은 카메라 원본 그대로예요.")
-                .font(.footnote).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            .padding(.horizontal)
+            if maxZoom <= 1.01 {
+                Text("업로드 최소 크기 때문에 더 확대할 수 없어요.").font(.caption).foregroundStyle(.secondary)
+            }
         }
+    }
+
+    private var resetButton: some View {
+        Button {
+            turns = 0
+            angle = 0
+            aspect = .original
+            portrait = false
+            makePreview()
+            resetFraming()
+        } label: {
+            Label("처음대로", systemImage: "arrow.uturn.backward")
+        }
+        .disabled(isPristine)
     }
 
     // MARK: Gestures
@@ -299,6 +414,7 @@ struct MomentPhotoCropper: View {
 
     private func restore() {
         turns = ((start.quarterTurns % 4) + 4) % 4
+        angle = start.angle
         aspect = start.aspect
         portrait = start.portrait ?? (turnedSize.height > turnedSize.width)
         makePreview()
@@ -325,7 +441,8 @@ struct MomentPhotoCropper: View {
     }
 
     private func turn() {
-        turns = (turns + 1) % 4
+        // Counter-clockwise, like the Photos app's rotate button.
+        turns = (turns + 3) % 4
         portrait.toggle()
         makePreview()
         resetFraming()
@@ -384,7 +501,7 @@ struct MomentPhotoCropper: View {
         let crop = CGRect(x: x / turnedSize.width, y: y / turnedSize.height,
                           width: w / turnedSize.width, height: h / turnedSize.height)
             .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        return MomentCropEdit(quarterTurns: turns, crop: crop, aspect: aspect, portrait: portrait)
+        return MomentCropEdit(quarterTurns: turns, angle: angle, crop: crop, aspect: aspect, portrait: portrait)
     }
 }
 
@@ -405,16 +522,109 @@ private struct CornerMark: Shape {
     }
 }
 
-/// Rule-of-thirds lines inside the crop frame.
+/// Rule-of-thirds lines inside the crop frame (a finer grid while tilting, to line up horizons).
 private struct ThirdsGuide: Shape {
+    var divisions = 3
+
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        for i in 1...2 {
-            let x = rect.minX + rect.width * CGFloat(i) / 3
-            let y = rect.minY + rect.height * CGFloat(i) / 3
+        let n = max(divisions, 2)
+        for i in 1..<n {
+            let x = rect.minX + rect.width * CGFloat(i) / CGFloat(n)
+            let y = rect.minY + rect.height * CGFloat(i) / CGFloat(n)
             path.move(to: CGPoint(x: x, y: rect.minY)); path.addLine(to: CGPoint(x: x, y: rect.maxY))
             path.move(to: CGPoint(x: rect.minX, y: y)); path.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
         return path
+    }
+}
+
+/// A ruler for tilting the photo: drag it sideways, one tick per degree, −45° to 45°.
+/// It clicks into 0° when passing it; double-tap (or tap the number) to level it again.
+private struct StraightenDial: View {
+    @Binding var angle: Double
+    @Binding var editing: Bool
+    @State private var dragStart: Double?
+
+    private static let range: ClosedRange<Double> = -45...45
+    private static let spacing: CGFloat = 7
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.25)) { angle = 0 }
+            } label: {
+                Text(label)
+                    .font(.footnote.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(angle == 0 ? Color.secondary : Color.yellow)
+                    .contentTransition(.numericText(value: angle))
+                    .frame(minWidth: 56)
+            }
+            .buttonStyle(.plain)
+            .disabled(angle == 0)
+
+            GeometryReader { proxy in
+                let mid = proxy.size.width / 2
+                Canvas { ctx, size in
+                    for deg in Int(Self.range.lowerBound)...Int(Self.range.upperBound) {
+                        let x = mid + (CGFloat(deg) - CGFloat(angle)) * Self.spacing
+                        guard x > -2, x < size.width + 2 else { continue }
+                        let major = deg % 5 == 0
+                        let h: CGFloat = deg == 0 ? 18 : (major ? 13 : 7)
+                        var line = Path()
+                        line.move(to: CGPoint(x: x, y: (size.height - h) / 2))
+                        line.addLine(to: CGPoint(x: x, y: (size.height + h) / 2))
+                        ctx.stroke(line, with: .color(.white.opacity(major ? 0.75 : 0.35)), lineWidth: major ? 1.2 : 1)
+                    }
+                    // The fixed needle in the middle.
+                    var needle = Path()
+                    needle.move(to: CGPoint(x: mid, y: 0))
+                    needle.addLine(to: CGPoint(x: mid, y: size.height))
+                    ctx.stroke(needle, with: .color(.yellow), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                }
+                .mask {
+                    LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.18),
+                                           .init(color: .black, location: 0.82), .init(color: .clear, location: 1)],
+                                   startPoint: .leading, endPoint: .trailing)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            let start = dragStart ?? angle
+                            dragStart = start
+                            editing = true
+                            var next = start - Double(value.translation.width / Self.spacing)
+                            next = min(max(next, Self.range.lowerBound), Self.range.upperBound)
+                            if abs(next) < 0.4 { next = 0 }
+                            angle = (next * 10).rounded() / 10
+                        }
+                        .onEnded { _ in
+                            dragStart = nil
+                            editing = false
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.snappy(duration: 0.25)) { angle = 0 }
+                }
+            }
+            .frame(height: 30)
+        }
+        .sensoryFeedback(.selection, trigger: angle == 0)
+        .sensoryFeedback(.selection, trigger: Int((angle / 5).rounded(.towardZero)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("기울기")
+        .accessibilityValue(label)
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: angle = min(angle + 1, Self.range.upperBound)
+            case .decrement: angle = max(angle - 1, Self.range.lowerBound)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var label: String {
+        angle == 0 ? "0°" : String(format: "%+.1f°", angle)
     }
 }
