@@ -40,6 +40,8 @@ struct RootView: View {
                 }
             }
         }
+        // 순간들 → 사진 업로드 with nothing saved yet: 라이브러리로 가기.
+        .onReceive(NotificationCenter.default.publisher(for: .openLibraryTab)) { _ in section = .library }
         .onChange(of: connection.state) { _, state in
             if state == .connected {
                 library.prepareAutoSave(viaUSB: connection.viaUSB)
@@ -204,6 +206,10 @@ struct CameraTab: View {
                 }
         }
     }
+}
+
+extension Notification.Name {
+    static let openLibraryTab = Notification.Name("openLibraryTab")
 }
 
 /// iPhone stays in portrait; the shooting screen's 가로 모드 button turns it to landscape

@@ -106,6 +106,45 @@ enum PhotosLibrary {
         return match
     }
 
+    struct NotFound: LocalizedError {
+        var errorDescription: String? { "사진 앱에서 이 사진을 찾지 못했어요. 지워졌을 수 있어요." }
+    }
+
+    /// The camera files this Photos item was made from, written byte for byte to a temporary
+    /// folder: the JPEG and, for a RAW+JPG item, its DNG. Nothing is re-encoded, so the
+    /// maker note that marks a GR original is still there. Needs read access.
+    static func exportOriginals(_ id: String) async throws -> [URL] {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { throw NotFound() }
+        let resources = PHAssetResource.assetResources(for: asset).filter { $0.type == .photo || $0.type == .alternatePhoto }
+        guard !resources.isEmpty else { throw NotFound() }
+        let dir = FileManager.default.temporaryDirectory.appending(path: "moment-upload/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true  // An original kept only in iCloud.
+        var files: [URL] = []
+        for resource in resources {
+            let target = dir.appending(path: resource.originalFilename)
+            try await PHAssetResourceManager.default().writeData(for: resource, toFile: target, options: options)
+            files.append(target)
+        }
+        return files
+    }
+
+    /// A square thumbnail of a Photos item.
+    static func thumbnail(_ id: String, side: CGFloat) async -> UIImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { return nil }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat  // One callback only.
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+        return await withCheckedContinuation { done in
+            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: side, height: side),
+                                                  contentMode: .aspectFill, options: options) { image, _ in
+                done.resume(returning: image)
+            }
+        }
+    }
+
     /// Opens the Photos app (it can't be sent to one item).
     @MainActor static func openApp() {
         if let url = URL(string: "photos-redirect://") { UIApplication.shared.open(url) }

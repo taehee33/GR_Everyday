@@ -283,6 +283,47 @@ struct MomentUploadView: View {
         }
     }
 
+    #if os(iOS)
+    /// The app's saved photos first; Photos and Files pickers below for anything else.
+    private var pickButtons: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("GR 원본(JPG·DNG)만 올릴 수 있어요. 자르기와 회전은 올리기 전에 해요.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    if let q = account.quota {
+                        Text("벽 \(q.wallUsed)/\(q.wallLimit)")
+                            .font(.footnote.monospacedDigit()).foregroundStyle(q.wallFull ? .red : .secondary)
+                    }
+                }
+                SavedPhotosGrid(folder: saveFolder, onPick: { await model.prepare($0) }, openLibrary: {
+                    dismiss()
+                    NotificationCenter.default.post(name: .openLibraryTab, object: nil)
+                })
+                Divider()
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        PhotosPicker(selection: $photoItem, matching: .images, preferredItemEncoding: .current) {
+                            Label("사진 앱에서", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity)
+                        }
+                        Button {
+                            showFileImporter = true
+                        } label: {
+                            Label("다른 위치에서", systemImage: "folder").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    Text("필름 GR 스캔본이나 GR DIGITAL 사진은 여기서 고르면 카메라를 직접 지정해 올릴 수 있어요.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(20)
+        }
+        .disabled(account.quota?.wallFull == true)
+    }
+    #else
     private var pickButtons: some View {
         VStack(spacing: 14) {
             Text("GR로 찍은 원본 사진(JPG 또는 DNG)을 골라 주세요. 편집하지 않은 카메라 원본만 올릴 수 있어요. 올리기 전에 자르기와 회전은 할 수 있어요.\n필름 GR 스캔본이나 GR DIGITAL 사진은 카메라를 직접 골라 올릴 수 있어요.")
@@ -321,6 +362,7 @@ struct MomentUploadView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .disabled(account.quota?.wallFull == true)
     }
+    #endif
 
     /// The "popup" for a photo without GR shot info: pick the camera, or pick another photo.
     private var cameraChoice: some View {
