@@ -162,23 +162,15 @@ struct MomentPhotoDetail: View {
     }
 }
 
-/// The full view (3072 px), with the thumbnail blurred underneath until it arrives.
+/// The full view (3072 px), with the thumbnail and a spinner until it arrives (cached on disk).
 struct MomentFullImage: View {
     let store: MomentStore
     let photo: MomentPhoto
 
     var body: some View {
-        AsyncImage(url: store.displayURL(photo)) { image in
-            image.resizable().scaledToFit()
-        } placeholder: {
-            AsyncImage(url: store.thumbURL(photo)) { image in
-                image.resizable().scaledToFit().blur(radius: 2)
-            } placeholder: {
-                Rectangle().fill(.quaternary)
-                    .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
-            }
-        }
-        .frame(maxWidth: .infinity)
+        MomentRemoteImage(url: store.displayURL(photo), preview: store.thumbURL(photo))
+            .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
+            .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

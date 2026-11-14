@@ -254,11 +254,7 @@ private struct MomentCard: View {
                 .fill(.quaternary)
                 .aspectRatio(CGFloat(photo.width) / CGFloat(max(photo.height, 1)), contentMode: .fit)
                 .overlay {
-                    AsyncImage(url: store.thumbURL(photo)) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.clear
-                    }
+                    MomentRemoteImage(url: store.thumbURL(photo), contentMode: .fill)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 3))
                 .overlay {

@@ -62,16 +62,8 @@ struct MomentPhotoViewer: View {
     }
 
     private var image: some View {
-        AsyncImage(url: store.displayURL(photo)) { image in
-            image.resizable().scaledToFit()
-        } placeholder: {
-            AsyncImage(url: store.thumbURL(photo)) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                ProgressView()
-            }
-        }
-        .accessibilityLabel(photo.caption ?? "사진")
+        MomentRemoteImage(url: store.displayURL(photo), preview: store.thumbURL(photo))
+            .accessibilityLabel(photo.caption ?? "사진")
     }
 
     private func fittedSize(in size: CGSize) -> CGSize {

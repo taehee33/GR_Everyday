@@ -19,7 +19,7 @@ enum MomentImage {
     static let thumbEdge = 600
     /// Below this the source is too small to be worth showing (or is a DNG's 160 px preview).
     static let minimumEdge = 1080
-    static let displayQuality = 0.9
+    static let displayQuality = 0.8
 
     struct Rendered {
         let display: Data

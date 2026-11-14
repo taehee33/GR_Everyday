@@ -420,15 +420,9 @@ struct WallFrame: View {
         let imageHeight = imageWidth * CGFloat(photo.height) / CGFloat(max(photo.width, 1))
         VStack(alignment: .leading, spacing: 0) {
             // The 600 px thumbnail is enough up to ~220 pt; larger frames load the full view.
-            AsyncImage(url: size.width > 220 ? store.displayURL(photo) : store.thumbURL(photo)) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                AsyncImage(url: store.thumbURL(photo)) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.gray.opacity(0.25)
-                }
-            }
+            MomentRemoteImage(url: size.width > 220 ? store.displayURL(photo) : store.thumbURL(photo),
+                              preview: size.width > 220 ? store.thumbURL(photo) : nil,
+                              contentMode: .fill, showsProgress: false)
             .frame(width: imageWidth, height: imageHeight)
             .clipped()
             .padding(mat)
