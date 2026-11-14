@@ -5,6 +5,7 @@
 
 MOCK_FAIL=R0001002.JPG,R0001005.JPG makes those files fail when saved: the first one listed
 drops the connection halfway, the rest answer 500 (to try the app's failure UI).
+MOCK_COUNT=60 puts that many photos on the card (8 by default).
 MOCK_RATE=2000000 sends full-size files at about that many bytes per second (progress UI).
 
 Sample photos are rendered from macOS desktop pictures with `sips`.
@@ -215,8 +216,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    for src in SOURCES[:8]:
-        add_photo(src)
+    # MOCK_COUNT=60 for a longer card (scrolling, drag selecting).
+    for i in range(int(os.environ.get("MOCK_COUNT", "8"))):
+        add_photo(SOURCES[i % len(SOURCES)])
     add_movie()
     print(f"mock GR on http://127.0.0.1:{PORT} with {len(files)} files ({work})", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

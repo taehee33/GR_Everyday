@@ -111,22 +111,136 @@ struct LibraryTab: View {
     }
 
     private var grid: some View {
-        ScrollView {
-            CameraStatusCard(ble: connection.ble, openCamera: openCamera)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 2)], spacing: 2,
-                      pinnedViews: [.sectionHeaders]) {
-                ForEach(library.sections) { section in
-                    Section {
-                        ForEach(section.photos) { photo in
-                            Thumb(photo: photo, selecting: selecting)
-                                .onTapGesture {
-                                    if selecting { library.toggle(photo) } else { viewing = photo }
-                                }
+        ScrollViewReader { proxy in
+            ScrollView {
+                CameraStatusCard(ble: connection.ble, openCamera: openCamera)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 2)], spacing: 2,
+                          pinnedViews: [.sectionHeaders]) {
+                    ForEach(library.sections) { section in
+                        Section {
+                            ForEach(section.photos) { photo in
+                                Thumb(photo: photo, selecting: selecting)
+                                    .id(photo.id)
+                                    .onTapGesture {
+                                        if selecting { library.toggle(photo) } else { viewing = photo }
+                                    }
+                                    // Where each tile is on screen, for drag selecting.
+                                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                                        layout.tiles[photo.id] = frame
+                                    }
+                                    .onDisappear { layout.tiles[photo.id] = nil }
+                            }
+                        } header: {
+                            if !section.title.isEmpty { header(section) }
                         }
-                    } header: {
-                        if !section.title.isEmpty { header(section) }
                     }
                 }
+                .background(DragSelectRecognizer(enabled: selecting,
+                                                 began: { start, band in
+                                                     layout.band = band
+                                                     return beginDragSelect(at: start, proxy: proxy)
+                                                 },
+                                                 moved: { moveDragSelect(to: $0) },
+                                                 ended: endDragSelect))
+            }
+        }
+    }
+
+    // MARK: Drag selecting (as in the Photos app)
+
+    /// Where tiles are on screen; a plain object, so recording them while scrolling doesn't
+    /// redraw the library.
+    @State private var layout = GridLayout()
+
+    final class GridLayout {
+        /// Tile frames on screen (window coordinates, as the drag recognizer reports).
+        var tiles: [String: CGRect] = [:]
+        /// The part of the scroll view not under the bars.
+        var band: ClosedRange<CGFloat> = 0...0
+    }
+    @State private var dragSelect: DragSelect?
+    @State private var autoScroll: Task<Void, Never>?
+
+    private struct DragSelect {
+        /// Photos in grid order, and where the drag started in it.
+        let order: [Photo]
+        let anchor: Int
+        /// Starting on an unselected photo selects; on a selected one, deselects.
+        let adding: Bool
+        /// The selection before the drag; the dragged range is added to / taken from it.
+        let base: Set<String>
+        var location: CGPoint
+    }
+
+    /// A sideways drag on a photo starts selecting (DragSelectRecognizer); moving up and
+    /// down then widens the range over whole rows, and holding near the top or bottom edge
+    /// scrolls. Returns false when the drag didn't start on a photo.
+    private func beginDragSelect(at start: CGPoint, proxy: ScrollViewProxy) -> Bool {
+        let order = library.sections.flatMap(\.photos)
+        guard let id = tileID(at: start), let anchor = order.firstIndex(where: { $0.id == id }) else {
+            DebugLog.write("drag select: no tile at \(start), \(layout.tiles.count) tiles known")
+            return false
+        }
+        dragSelect = DragSelect(order: order, anchor: anchor, adding: !library.selection.contains(id),
+                                base: library.selection, location: start)
+        UISelectionFeedbackGenerator().selectionChanged()
+        applyDragSelect()
+        startAutoScroll(proxy)
+        return true
+    }
+
+    private func moveDragSelect(to point: CGPoint) {
+        dragSelect?.location = point
+        applyDragSelect()
+    }
+
+    private func endDragSelect() {
+        dragSelect = nil
+        autoScroll?.cancel()
+        autoScroll = nil
+    }
+
+    private func tileID(at point: CGPoint) -> String? {
+        layout.tiles.first { $0.value.insetBy(dx: -1, dy: -1).contains(point) }?.key
+    }
+
+    /// The tile under the finger, or (between tiles, over a header) the nearest one.
+    private func tileIndex(at point: CGPoint, in order: [Photo]) -> Int? {
+        let id = tileID(at: point) ?? layout.tiles.min { a, b in
+            hypot(a.value.midX - point.x, a.value.midY - point.y) < hypot(b.value.midX - point.x, b.value.midY - point.y)
+        }?.key
+        return id.flatMap { id in order.firstIndex { $0.id == id } }
+    }
+
+    private func applyDragSelect() {
+        guard let drag = dragSelect, let current = tileIndex(at: drag.location, in: drag.order) else { return }
+        let range = drag.order[min(drag.anchor, current)...max(drag.anchor, current)].map(\.id)
+        let selection = drag.adding ? drag.base.union(range) : drag.base.subtracting(range)
+        if selection != library.selection { library.selection = selection }
+    }
+
+    /// While the finger is within 60pt of the top or bottom of the visible grid, scroll a row
+    /// at a time and keep widening the selection.
+    private func startAutoScroll(_ proxy: ScrollViewProxy) {
+        autoScroll?.cancel()
+        autoScroll = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(90))
+                guard let drag = dragSelect else { return }
+                let y = drag.location.y
+                let up = y < layout.band.lowerBound + 60, down = y > layout.band.upperBound - 60
+                guard up || down else { continue }
+                let visible = layout.tiles.filter { $0.value.maxY > layout.band.lowerBound && $0.value.minY < layout.band.upperBound }
+                let indices = visible.keys.compactMap { id in drag.order.firstIndex { $0.id == id } }
+                guard let first = indices.min(), let last = indices.max() else { continue }
+                let columns = max(1, visible.values.filter { abs($0.minY - (visible.values.map(\.minY).min() ?? 0)) < 1 }.count)
+                let target = up ? max(0, first - columns) : min(drag.order.count - 1, last + columns)
+                guard target != (up ? first : last) else { continue }
+                withAnimation(.linear(duration: 0.09)) {
+                    proxy.scrollTo(drag.order[target].id, anchor: up ? .top : .bottom)
+                }
+                try? await Task.sleep(for: .milliseconds(30))
+                applyDragSelect()
             }
         }
     }
@@ -626,6 +740,115 @@ final class PhotoScrollView: UIScrollView {
         if zoomScale <= 1.001, imageView.frame.size != bounds.size {
             imageView.frame = bounds
             contentSize = bounds.size
+        }
+    }
+}
+
+/// A pan recognizer on the grid's UIScrollView that takes sideways drags for selecting,
+/// as the Photos app does; up and down drags still scroll. SwiftUI's own drag gesture lost
+/// to the scroll view's pan (the grid scrolled, or pulled to refresh, instead).
+/// Points are in window coordinates, like SwiftUI's .global frames.
+struct DragSelectRecognizer: UIViewRepresentable {
+    var enabled: Bool
+    /// Where the drag started, and the part of the scroll view not under the bars.
+    var began: (CGPoint, ClosedRange<CGFloat>) -> Bool
+    var moved: (CGPoint) -> Void
+    var ended: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> Finder {
+        let view = Finder()
+        view.isUserInteractionEnabled = false
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ view: Finder, context: Context) {
+        context.coordinator.parent = self
+        // Turning 선택 on is when it must be ready; check the scroll view is still the one.
+        DispatchQueue.main.async { context.coordinator.attach(from: view) }
+    }
+
+    /// Finds the enclosing scroll view. SwiftUI can put this view in the window before it
+    /// sits inside the scroll view (seen on iPhone: the first drag after opening the
+    /// library selected nothing), so it looks again whenever it moves or is laid out.
+    final class Finder: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            coordinator?.attach(from: self)
+        }
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            coordinator?.attach(from: self)
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            coordinator?.attach(from: self)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: DragSelectRecognizer
+        private weak var scrollView: UIScrollView?
+        private let pan = UIPanGestureRecognizer()
+        private var active = false
+
+        init(_ parent: DragSelectRecognizer) {
+            self.parent = parent
+            super.init()
+            pan.addTarget(self, action: #selector(handle(_:)))
+            pan.delegate = self
+            pan.maximumNumberOfTouches = 1
+        }
+
+        func attach(from view: UIView) {
+            var next = view.superview
+            while let v = next, !(v is UIScrollView) { next = v.superview }
+            guard let found = next as? UIScrollView, found !== scrollView else { return }
+            DebugLog.write("drag select: attached to scroll view (\(scrollView == nil ? "first" : "changed"))")
+            scrollView?.removeGestureRecognizer(pan)
+            scrollView = found
+            found.addGestureRecognizer(pan)
+            // The scroll waits for this one to fail, which it does at once unless selecting
+            // and the drag starts sideways.
+            found.panGestureRecognizer.require(toFail: pan)
+        }
+
+        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+            guard parent.enabled else { return false }
+            guard let scrollView else {
+                DebugLog.write("drag select: no scroll view yet")
+                return false
+            }
+            let v = pan.velocity(in: scrollView)
+            return abs(v.x) > abs(v.y)
+        }
+
+        @objc private func handle(_ gesture: UIPanGestureRecognizer) {
+            guard let scrollView else { return }
+            let here = gesture.location(in: nil)
+            switch gesture.state {
+            case .began:
+                let moved = gesture.translation(in: scrollView)
+                let insets = scrollView.adjustedContentInset
+                let frame = scrollView.convert(scrollView.bounds, to: nil)
+                let top = frame.minY + insets.top, bottom = max(top, frame.maxY - insets.bottom)
+                active = parent.began(CGPoint(x: here.x - moved.x, y: here.y - moved.y), top...bottom)
+                if !active {
+                    // Not on a photo: give the touch back so the grid can still scroll.
+                    DebugLog.write("drag select: start not on a photo")
+                    gesture.isEnabled = false
+                    gesture.isEnabled = true
+                }
+                if active { parent.moved(here) }
+            case .changed:
+                if active { parent.moved(here) }
+            default:
+                if active { parent.ended() }
+                active = false
+            }
         }
     }
 }
